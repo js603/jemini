@@ -28,7 +28,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8",
   authDomain: "text-adventure-game-cb731.firebaseapp.com",
   projectId: "text-adventure-game-cb731",
-  storageBucket: "text-adventure-game-cb731.firebasestorage.app",
+  storageBucket: "text-adventure-game-cb731.firebaseapis.com",
   messagingSenderId: "1092941614820",
   appId: "1:1092941614820:web:5545f36014b73c268026f1",
   measurementId: "G-FNGF42T1FP"
@@ -521,6 +521,9 @@ function App() {
     }
   };
 
+  // Helper function to check if an object is empty
+  const isObjectEmpty = (obj) => Object.keys(obj).length === 0 && obj.constructor === Object;
+
   // Player choice button click handler
   const handleChoiceClick = async (choice) => {
     if (isTextLoading) return; // Do not process if text is loading
@@ -566,12 +569,13 @@ function App() {
 
         setPlayerCharacter(prev => ({
           ...prev,
-          inventory: llmResponse.inventoryUpdates || prev.inventory,
-          stats: llmResponse.statChanges || prev.stats,
+          // Check if the LLM response provides a non-empty update, otherwise keep previous state
+          inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+          stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
           currentLocation: llmResponse.location || prev.currentLocation,
-          reputation: llmResponse.reputationUpdates || prev.reputation,
-          activeQuests: llmResponse.activeQuestsUpdates || prev.activeQuests,
-          companions: llmResponse.companionsUpdates || prev.companions,
+          reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+          activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+          companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
         }));
         setCurrentChoices(llmResponse.choices || []);
         setGamePhase('playing'); // Change game phase
@@ -611,12 +615,13 @@ function App() {
 
       setPlayerCharacter(prev => ({
         ...prev,
-        inventory: llmResponse.inventoryUpdates || prev.inventory,
-        stats: llmResponse.statChanges || prev.stats,
+        // Check if the LLM response provides a non-empty update, otherwise keep previous state
+        inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+        stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
         currentLocation: llmResponse.location || prev.currentLocation,
-        reputation: llmResponse.reputationUpdates || prev.reputation,
-        activeQuests: llmResponse.activeQuestsUpdates || prev.activeQuests,
-        companions: llmResponse.companionsUpdates || prev.companions,
+        reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+        activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+        companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
       }));
       setCurrentChoices(llmResponse.choices || []);
     }
