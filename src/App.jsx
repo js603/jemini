@@ -33,17 +33,11 @@ const defaultFirebaseConfig = {
 };
 
 // Canvas 환경에서 제공되는 전역 변수 사용
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : defaultFirebaseConfig;
+const firebaseConfig = defaultFirebaseConfig;
 
-const appId = typeof __app_id !== 'undefined' 
-  ? __app_id 
-  : firebaseConfig.projectId;
+const appId = firebaseConfig.projectId;
 
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' 
-  ? __initial_auth_token 
-  : null;
+const initialAuthToken = null;
 // ====================================================================
 
 // 게임의 초기 직업 정보 및 동기
@@ -352,7 +346,7 @@ function App() {
     플레이어에게 잠재적인 동료를 소개합니다. 동료가 영입되면, 그들의 존재와 플레이어 및 세계와의 상호작용을 묘사합니다.
     퀘스트 진행 상황, 평판 변화, 동료 상호작용을 JSON 출력에 명확히 포함하여 게임 로직이 이를 추적할 수 있도록 합니다.
 
-    당신은 항상 유효한 JSON 형식으로 응문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
+    당신은 항상 유효한 JSON 형식으로 응답해야 합니다. 구문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
     {
       "story": "현재 상황에 대한 스토리 텍스트 (3인칭으로 서술).",
       "choices": ["선택지 1", "선택지 2", ...],
@@ -628,6 +622,64 @@ function App() {
     setShowPlayerChatModal(false);
   };
 
+  // 개인 대화 종료 및 시나리오 반영 함수 (가장 중요한 변경점)
+  const handleEndPrivateChatAndReflectScenario = async () => {
+    if (isTextLoading || !selectedPlayerForChat || privateChatMessages.length === 0) {
+      console.warn("개인 대화 종료 및 시나리오 반영을 처리할 수 없습니다. 로딩 중이거나, 대화 상대가 없거나, 메시지가 없습니다.");
+      return;
+    }
+
+    setGameLog(prev => [...prev, `\n> ${selectedPlayerForChat.displayName}님과의 대화가 종료되었습니다. 이 대화가 시나리오에 반영됩니다.\n`]);
+    setIsTextLoading(true);
+    
+    // LLM에 전달할 promptData 구성
+    const promptData = {
+      phase: 'playing',
+      playerChoice: `플레이어 ${selectedPlayerForChat.displayName}님과의 대화 종료.`, // LLM이 인식할 수 있는 명확한 선택지
+      character: playerCharacter,
+      history: gameLog,
+      activeUsers: activeUsers.filter(user => user.id !== userId),
+      privateChatHistory: privateChatMessages // 현재 개인 대화 내용 전체를 LLM에 전달
+    };
+
+    try {
+      const llmResponse = await callGeminiTextLLM(promptData);
+      setGameLog(prev => [...prev, llmResponse.story]);
+
+      // LLM 응답을 공유 로그에 추가 (멀티플레이어 기능)
+      if (db && userId) {
+        try {
+          const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
+          await addDoc(sharedLogCollectionRef, {
+            userId: userId,
+            displayName: `플레이어 ${userId.substring(0, 4)}`,
+            content: `[${playerCharacter.profession}]이(가) ${selectedPlayerForChat.displayName}님과 대화 후: ${llmResponse.story}`,
+            timestamp: serverTimestamp(),
+          });
+        } catch (error) {
+          console.error("Failed to add to shared log after private chat:", error);
+        }
+      }
+
+      setPlayerCharacter(prev => ({
+        ...prev,
+        inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+        stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
+        currentLocation: llmResponse.location || prev.currentLocation,
+        reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+        activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+        companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
+      }));
+      setCurrentChoices(llmResponse.choices || []); // LLM이 새로운 선택지를 제공하도록 함
+    } catch (error) {
+      console.error("Error processing private chat with LLM:", error);
+      setGameLog(prev => [...prev, `\n오류: 개인 대화 내용을 시나리오에 반영하는 중 문제가 발생했습니다: ${error.message}`]);
+    } finally {
+      setIsTextLoading(false);
+      closePlayerChatModal(); // 대화 종료 후 모달 닫기
+    }
+  };
+
   // Helper function to check if an object is empty
   const isObjectEmpty = (obj) => Object.keys(obj).length === 0 && obj.constructor === Object;
 
@@ -669,7 +721,7 @@ function App() {
           character: initialCharacterState, // Pass the updated character state to LLM
           history: gameLog,
           activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
-          privateChatHistory: privateChatMessages.filter(msg => msg.senderId === userId || msg.receiverId === userId) // 현재 플레이어와 관련된 개인 대화 내용
+          privateChatHistory: [] // 캐릭터 선택 시에는 개인 대화 내용 없음
         };
 
         // Call LLM
@@ -701,7 +753,7 @@ function App() {
         character: playerCharacter, // Pass the current character state to LLM
         history: gameLog,
         activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
-        privateChatHistory: privateChatMessages.filter(msg => msg.senderId === userId || msg.receiverId === userId) // 현재 플레이어와 관련된 개인 대화 내용
+        privateChatHistory: [] // 일반 선택지 클릭 시에는 개인 대화 내용을 LLM에 전달하지 않음
       };
 
       // Call LLM
@@ -994,10 +1046,18 @@ function App() {
                 보내기
               </button>
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-3 mt-4"> {/* Added gap-3 and mt-4 for spacing */}
+              <button
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md transition duration-300"
+                onClick={handleEndPrivateChatAndReflectScenario} // 새로운 버튼 추가
+                disabled={isTextLoading || privateChatMessages.length === 0}
+              >
+                대화 종료 및 시나리오 반영
+              </button>
               <button
                 className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-bold rounded-md transition duration-300"
                 onClick={closePlayerChatModal}
+                disabled={isTextLoading}
               >
                 닫기
               </button>
