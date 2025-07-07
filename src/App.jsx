@@ -18,14 +18,14 @@ import {
   addDoc,
   getDocs, // 추가: 문서 목록을 가져오기 위해
   deleteDoc, // 추가: 문서를 삭제하기 위해
-  collectionGroup, // collectionGroup 임포트
+  // collectionGroup은 더 이상 사용하지 않음
   where // [수정] where 임포트 추가
 } from 'firebase/firestore';
 
 // ====================================================================
-// Firebase 구성 정보 (Canvas 환경에서 제공되지 않을 경우 기본값)
+// Firebase configuration information (default if not provided by Canvas environment)
 const defaultFirebaseConfig = {
-  apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8", // 실제 Firebase API 키로 교체하세요
+  apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8", // Replace with your actual Firebase API key
   authDomain: "text-adventure-game-cb731.firebaseapp.com",
   projectId: "text-adventure-game-cb731",
   storageBucket: "text-adventure-game-cb731.firebaseapis.com",
@@ -34,15 +34,13 @@ const defaultFirebaseConfig = {
   measurementId: "G-FNGF42T1FP"
 };
 
-// Canvas 환경에서 제공되는 전역 변수 사용
+// Use global variables provided by Canvas environment
 const firebaseConfig = defaultFirebaseConfig;
-
 const appId = firebaseConfig.projectId;
-
 const initialAuthToken = null;
 // ====================================================================
 
-// 게임의 초기 직업 정보 및 동기
+// Initial profession information and motivations for the game
 const professions = {
   '1': { name: '몰락한 귀족/기사', motivation: '가문의 몰락 원인을 조사하고, 잃어버린 가문의 보물을 찾아야 합니다.' },
   '2': { name: '평범한 마을 사람/농부', motivation: '갑자기 마을에 나타난 괴생명체로부터 마을을 지켜야 합니다.' },
@@ -53,65 +51,68 @@ const professions = {
 };
 
 function App() {
-  // 게임의 현재 텍스트 로그 (개인)
+  // Current game text log (private)
   const [gameLog, setGameLog] = useState([]);
-  // LLM 텍스트 응답 로딩 상태
+  // LLM text response loading state
   const [isTextLoading, setIsTextLoading] = useState(false);
-  // 게임 단계: 'characterSelection' 또는 'playing'
+  // Game phase: 'characterSelection' or 'playing'
   const [gamePhase, setGamePhase] = useState('characterSelection');
-  // 플레이어 캐릭터 정보
+  // Player character information
   const [playerCharacter, setPlayerCharacter] = useState({
     profession: '',
-    stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 }, // 기본 능력치
+    stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 }, // Base stats
     inventory: [],
     initialMotivation: '',
-    currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
-    reputation: {}, // NPC/세력 평판 (LLM이 관리)
-    activeQuests: [], // 활성 퀘스트 (LLM이 관리)
-    companions: [], // 동료 (LLM이 관리)
+    currentLocation: '방랑자의 안식처', // Set initial location to 'Wanderer's Rest'
+    reputation: {}, // NPC/faction reputation (managed by LLM)
+    activeQuests: [], // Active quests (managed by LLM)
+    companions: [], // Companions (managed by LLM)
   });
-  // 현재 플레이어에게 제시되는 선택지들
+  // Current choices presented to the player
   const [currentChoices, setCurrentChoices] = useState([]);
-  // 피드백 모달 표시 여부
+  // Feedback modal display status
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  // 피드백 텍스트
+  // Feedback text
   const [feedbackText, setFeedbackText] = useState('');
-  // 공유 게임 로그 (멀티플레이어)
+  // Shared game log (multiplayer)
   const [sharedGameLog, setSharedGameLog] = useState([]);
-  // 활성 사용자 목록 (멀티플레이어)
+  // List of active users (multiplayer)
   const [activeUsers, setActiveUsers] = useState([]);
-  // 채팅 메시지 목록 (공개 채팅)
+  // List of chat messages (public chat)
   const [chatMessages, setChatMessages] = useState([]);
-  // 현재 채팅 입력 값 (공개 채팅)
+  // Current chat input value (public chat)
   const [currentChatMessage, setCurrentChatMessage] = useState('');
 
-  // 개인 대화 관련 상태
+  // Private chat related states
   const [showPlayerChatModal, setShowPlayerChatModal] = useState(false);
   const [selectedPlayerForChat, setSelectedPlayerForChat] = useState(null); // { id, displayName, profession }
   const [privateChatMessages, setPrivateChatMessages] = useState([]);
   const [currentPrivateChatMessage, setCurrentPrivateChatMessage] = useState('');
+  // [수정] 개인 채팅 모달이 사용자에게 의해 닫혔는지 여부를 추적하는 상태
+  const [isPrivateChatModalManuallyClosed, setIsPrivateChatModalManuallyClosed] = useState(false);
 
-  // [추가] 동료 간 시나리오 진행 상태
+
+  // [추가] Companion scenario progress status
   const [isCompanionActionInProgress, setIsCompanionActionInProgress] = useState(false);
-  const [actingPlayer, setActingPlayer] = useState(null); // [추가] 현재 행동 중인 플레이어 정보
+  const [actingPlayer, setActingPlayer] = useState(null); // [추가] Information of the player currently acting
 
 
-  // Firebase 및 인증 상태
+  // Firebase and authentication status
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
-  // 스크롤을 최하단으로 유지하기 위한 ref
+  // Refs to keep scroll at the bottom
   const logEndRef = useRef(null);
   const sharedLogEndRef = useRef(null);
-  const chatEndRef = useRef(null); // 공개 채팅 로그를 위한 ref
-  const privateChatEndRef = useRef(null); // 개인 채팅 로그를 위한 ref
+  const chatEndRef = useRef(null); // Ref for public chat log
+  const privateChatEndRef = useRef(null); // Ref for private chat log
 
-  // Firebase 초기화 및 인증 처리
+  // Firebase initialization and authentication handling
   useEffect(() => {
     try {
-      // Firebase API 키가 플레이스홀더인지 확인합니다.
+      // Check if Firebase API key is a placeholder.
       if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.apiKey) {
         console.error("Firebase initialization error: firebaseConfig.apiKey must be replaced with your actual Firebase API key.");
         setGameLog(prev => [...prev, "오류: Firebase API 키가 올바르게 설정되지 않았습니다. 코드를 확인해주세요."]);
@@ -151,23 +152,23 @@ function App() {
     }
   }, []);
 
-  // Firebase 인증 완료 후 멀티플레이어 데이터 리스너 설정
+  // Set multiplayer data listeners after Firebase authentication is complete
   useEffect(() => {
     if (!db || !isAuthReady || !userId || !auth) return;
 
-    // [수정] 게임 상태(시나리오 진행 등)를 감시하는 리스너 추가
+    // [수정] Add listener to monitor game status (scenario progress, etc.)
     const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
     const unsubscribeGameStatus = onSnapshot(gameStatusDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const data = docSnap.data();
             setIsCompanionActionInProgress(data.isActionInProgress || false);
-            setActingPlayer(data.actingPlayer || null); // 행동 중인 플레이어 정보 업데이트
+            setActingPlayer(data.actingPlayer || null); // Update acting player information
         }
     }, (error) => {
         console.error("Game status snapshot error:", error);
     });
 
-    // 1. 공유 게임 로그 리스너
+    // 1. Shared game log listener
     // Firestore security rules adjust the path.
     // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
     const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
@@ -181,22 +182,22 @@ function App() {
       console.error("Shared game log snapshot error:", error);
     });
 
-    // 2. 활성 사용자 목록 리스너
+    // 2. Active user list listener
     // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
     const activeUsersCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
     const qActiveUsers = query(activeUsersCollectionRef);
     const unsubscribeActiveUsers = onSnapshot(qActiveUsers, (snapshot) => {
-      // 60초 이내에 활동한 사용자만 필터링하여 UI에 표시합니다.
-      const cutoffTime = Date.now() - 60 * 1000; // 60초 (1분)
+      // Filter to show only users active within the last 60 seconds.
+      const cutoffTime = Date.now() - 60 * 1000; // 60 seconds (1 minute)
       const users = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(user => user.lastActive && user.lastActive.toMillis() > cutoffTime); // lastActive 타임스탬프를 기준으로 필터링
+        .filter(user => user.lastActive && user.lastActive.toMillis() > cutoffTime); // Filter by lastActive timestamp
       setActiveUsers(users);
     }, (error) => {
       console.error("Active users snapshot error:", error);
     });
 
-    // 3. 공개 채팅 메시지 리스너
+    // 3. Public chat message listener
     const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
     const qChatMessages = query(chatCollectionRef);
     const unsubscribeChatMessages = onSnapshot(qChatMessages, (snapshot) => {
@@ -216,8 +217,8 @@ function App() {
           await setDoc(userDocRef, {
             lastActive: serverTimestamp(),
             displayName: `플레이어 ${userId.substring(0, 4)}`, // Display only part of the user ID
-            profession: playerCharacter.profession, // 플레이어 직업 추가
-            isCompanion: playerCharacter.companions.length > 0, // [추가] 동료 여부
+            profession: playerCharacter.profession, // Add player profession
+            isCompanion: playerCharacter.companions.length > 0, // [추가] Companion status
           }, { merge: true });
         } catch (error) {
           console.error("Failed to update user presence:", error);
@@ -231,47 +232,47 @@ function App() {
     return () => {
       unsubscribeSharedLog();
       unsubscribeActiveUsers();
-      unsubscribeChatMessages(); // 채팅 리스너 정리
-      unsubscribeGameStatus(); // [수정] 게임 상태 리스너 정리
+      unsubscribeChatMessages(); // Clean up chat listener
+      unsubscribeGameStatus(); // [수정] Clean up game status listener
       clearInterval(presenceInterval);
     };
-  }, [db, isAuthReady, userId, auth, playerCharacter.profession, playerCharacter.companions]); // playerCharacter.companions를 의존성 배열에 추가
+  }, [db, isAuthReady, userId, auth, playerCharacter.profession, playerCharacter.companions]); // Add playerCharacter.companions to dependency array
 
-  // 비활성 사용자 정리 함수 (클라이언트 측)
-  // 이 함수는 클라이언트 측에서 실행되므로, 앱이 실행 중일 때만 작동합니다.
-  // 더 견고하고 안전한 방법은 Firebase Cloud Functions를 사용하는 것입니다.
+  // Cleanup inactive users function (client-side)
+  // This function runs client-side, so it only works when the app is running.
+  // A more robust and secure method would be to use Firebase Cloud Functions.
   const cleanupInactiveUsers = async () => {
     if (!db || !isAuthReady || !userId) return;
 
-    const inactiveThreshold = 1 * 60 * 1000; // 1분 (60초)
+    const inactiveThreshold = 1 * 60 * 1000; // 1 minute (60 seconds)
     const cutoffTime = Date.now() - inactiveThreshold;
 
     try {
       const activeUsersCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
-      const querySnapshot = await getDocs(activeUsersCollectionRef); // 모든 문서를 가져옵니다.
+      const querySnapshot = await getDocs(activeUsersCollectionRef); // Get all documents.
 
       querySnapshot.forEach(async (docSnapshot) => {
         const userData = docSnapshot.data();
-        // lastActive 타임스탬프가 5분보다 오래된 사용자를 삭제합니다.
+        // Delete users whose lastActive timestamp is older than 5 minutes.
         if (userData.lastActive && userData.lastActive.toMillis() < cutoffTime) {
-          console.log(`DEBUG: 비활성 사용자 삭제 중: ${docSnapshot.id}`);
+          console.log(`DEBUG: Deleting inactive user: ${docSnapshot.id}`);
           await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', docSnapshot.id));
         }
       });
     } catch (error) {
-      console.error("비활성 사용자 정리 중 오류 발생:", error);
+      console.error("Error cleaning up inactive users:", error);
     }
   };
 
-  // 비활성 사용자 정리를 위한 인터벌 설정
+  // Set interval for cleaning up inactive users
   useEffect(() => {
     if (!db || !isAuthReady || !userId) return;
 
-    // 1분마다 비활성 사용자 정리 함수를 실행합니다.
-    const cleanupInterval = setInterval(cleanupInactiveUsers, 1 * 60 * 1000); // 1분마다 실행
+    // Run cleanup function every 1 minute.
+    const cleanupInterval = setInterval(cleanupInactiveUsers, 1 * 60 * 1000); // Run every 1 minute
 
-    return () => clearInterval(cleanupInterval); // 컴포넌트 언마운트 시 인터벌 정리
-  }, [db, isAuthReady, userId]); // db, isAuthReady, userId가 변경될 때마다 재실행
+    return () => clearInterval(cleanupInterval); // Clean up interval on component unmount
+  }, [db, isAuthReady, userId]); // Re-run whenever db, isAuthReady, userId change
 
   // Set initial message and profession choices when the game starts
   useEffect(() => {
@@ -305,23 +306,23 @@ function App() {
     }
   }, [chatMessages]);
 
-  // 개인 채팅 메시지 스크롤
+  // Scroll private chat messages
   useEffect(() => {
     if (privateChatEndRef.current) {
       privateChatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [privateChatMessages]);
 
-  // 개인 채팅방 ID 생성 함수 (두 사용자 ID를 정렬하여 일관된 ID 생성)
+  // Function to generate private chat room ID (sorts two user IDs for consistent ID generation)
   const getPrivateChatRoomId = (user1Id, user2Id) => {
     const sortedIds = [user1Id, user2Id].sort();
     return `${sortedIds[0]}_${sortedIds[1]}`;
   };
 
-  // 기존 개인 채팅 리스너 (선택된 플레이어와의 대화만 수신)
+  // Existing private chat listener (receives only conversations with the selected player)
   useEffect(() => {
     if (!db || !isAuthReady || !userId || !selectedPlayerForChat) {
-      setPrivateChatMessages([]); // 선택된 플레이어가 없으면 메시지 초기화
+      setPrivateChatMessages([]); // Initialize messages if no player is selected
       return;
     }
 
@@ -341,48 +342,49 @@ function App() {
     return () => unsubscribePrivateChat();
   }, [db, isAuthReady, userId, selectedPlayerForChat]);
 
-  // 새로운 useEffect: 자신에게 온 개인 메시지를 감지하여 모달을 강제로 열기
+  // [NEW] 수신 메시지 알림 리스너 (collectionGroup 사용하지 않음)
   useEffect(() => {
-    if (!db || !isAuthReady || !userId || showPlayerChatModal) {
-      return; // 필수 조건이 충족되지 않았거나 이미 모달이 열려있으면 실행하지 않음
+    if (!db || !isAuthReady || !userId) {
+      return;
     }
 
-    // [수정] collectionGroup 쿼리에 where 조건을 추가하여 현재 사용자에게 온 메시지만 가져옵니다.
-    // 이렇게 하면 Firestore 보안 규칙 위반을 방지할 수 있습니다.
-    const incomingPrivateMessagesQuery = query(
-      collectionGroup(db, 'messages'),
-      where('receiverId', '==', userId)
-    );
+    // 현재 사용자의 incomingMessages 컬렉션을 감시합니다.
+    const incomingMessagesCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'incomingMessages');
+    const qIncomingMessages = query(incomingMessagesCollectionRef);
 
-    const unsubscribeIncomingPrivateMessages = onSnapshot(incomingPrivateMessagesQuery, (snapshot) => {
+    const unsubscribeIncomingMessages = onSnapshot(qIncomingMessages, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === "added") {
-          const message = change.doc.data();
-          // 현재 사용자에게 온 메시지이고, 자신이 보낸 메시지가 아니며,
-          // 아직 해당 발신자와의 대화 모달이 열려있지 않은 경우
-          if (message.receiverId === userId && message.senderId !== userId && !selectedPlayerForChat) {
-            const senderInfo = activeUsers.find(user => user.id === message.senderId);
+          const notification = change.doc.data();
+          const senderId = change.doc.id; // 문서 ID가 senderId가 됩니다.
+
+          // 모달이 이미 열려있거나 수동으로 닫힌 상태가 아니라면
+          if (!showPlayerChatModal && !isPrivateChatModalManuallyClosed) {
+            const senderInfo = activeUsers.find(user => user.id === senderId);
             if (senderInfo) {
-              // 해당 발신자와의 대화 모달을 강제로 엽니다.
               openPlayerChatModal(senderInfo);
             } else {
-              // 활성 사용자 목록에 없는 경우, 메시지에서 정보 추출
+              // activeUsers에 없는 경우, 알림 정보로 임시 플레이어 정보 생성
               openPlayerChatModal({
-                id: message.senderId,
-                displayName: message.displayName || `알 수 없는 플레이어 ${message.senderId.substring(0, 4)}`,
-                profession: '알 수 없음' // 직업 정보는 activeUsers에서 가져와야 함
+                id: senderId,
+                displayName: notification.senderDisplayName || `알 수 없는 플레이어 ${senderId.substring(0, 4)}`,
+                profession: '알 수 없음' // activeUsers에서 가져올 수 없으므로 기본값
               });
             }
+            // 알림을 처리했으므로 해당 알림 문서를 삭제합니다.
+            deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'incomingMessages', senderId)).catch(error => {
+              console.error("Error deleting incoming message notification:", error);
+            });
           }
         }
       });
     }, (error) => {
-      // 이제 이 오류는 발생하지 않아야 합니다.
-      console.error("Incoming private messages snapshot error:", error);
+      console.error("Incoming private messages notification error:", error);
     });
 
-    return () => unsubscribeIncomingPrivateMessages();
-  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers, appId]);
+    return () => unsubscribeIncomingMessages();
+  }, [db, isAuthReady, userId, showPlayerChatModal, isPrivateChatModalManuallyClosed, activeUsers, appId]);
+
 
   // Define the system prompt to send to the LLM
     const systemPrompt = `
@@ -582,7 +584,7 @@ function App() {
           stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
           inventory: [],
           initialMotivation: '',
-          currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
+          currentLocation: '방랑자의 안식처', // Set initial location to 'Wanderer's Rest'
           reputation: {},
           activeQuests: [],
           companions: [],
@@ -643,9 +645,9 @@ function App() {
         message: currentChatMessage,
         timestamp: serverTimestamp(),
       });
-      setCurrentChatMessage(''); // 메시지 전송 후 입력 필드 초기화
+      setCurrentChatMessage(''); // Clear input field after sending message
     } catch (error) {
-      console.error("채팅 메시지 전송 중 오류 발생:", error);
+      console.error("Error sending chat message:", error);
     }
   };
 
@@ -662,43 +664,109 @@ function App() {
 
       await addDoc(privateChatCollectionRef, {
         senderId: userId,
-        receiverId: selectedPlayerForChat.id, // 수신자 ID 명시
+        receiverId: selectedPlayerForChat.id, // Explicit receiver ID
         displayName: `플레이어 ${userId.substring(0, 4)}`,
         message: currentPrivateChatMessage,
         timestamp: serverTimestamp(),
       });
-      setCurrentPrivateChatMessage(''); // 메시지 전송 후 입력 필드 초기화
+
+      // [NEW] 수신자에게 새 메시지 알림 플래그 추가
+      const receiverNotificationDocRef = doc(db, 'artifacts', appId, 'users', selectedPlayerForChat.id, 'incomingMessages', userId);
+      await setDoc(receiverNotificationDocRef, {
+        lastMessageTimestamp: serverTimestamp(),
+        senderDisplayName: `플레이어 ${userId.substring(0, 4)}`,
+        senderId: userId // 알림 규칙을 위해 senderId 필드를 추가합니다.
+      }, { merge: true });
+
+      setCurrentPrivateChatMessage(''); // Clear input field after sending message
     } catch (error) {
-      console.error("개인 메시지 전송 중 오류 발생:", error);
+      console.error("Error sending private message:", error);
     }
   };
 
-  // 개인 채팅 모달 열기
+  // Open private chat modal
   const openPlayerChatModal = (player) => {
     setSelectedPlayerForChat(player);
     setShowPlayerChatModal(true);
+    setIsPrivateChatModalManuallyClosed(false); // Reset manual close state when opening
+
+    // [NEW] 모달을 열 때 해당 발신자로부터의 알림 플래그를 삭제합니다.
+    if (db && userId && player.id) {
+      deleteDoc(doc(db, 'artifacts', appId, 'users', userId, 'incomingMessages', player.id)).catch(error => {
+        console.error("Error deleting incoming message notification on modal open:", error);
+      });
+    }
   };
 
-  // 개인 채팅 모달 닫기
-  const closePlayerChatModal = () => {
-    setSelectedPlayerForChat(null);
-    setPrivateChatMessages([]);
-    setCurrentPrivateChatMessage('');
-    setShowPlayerChatModal(false);
+  // Close private chat modal
+  const closePlayerChatModal = async () => {
+    if (!db || !userId || !selectedPlayerForChat) return;
+
+    try {
+      const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
+      // Update the status in Firestore to indicate the chat is closed by this user
+      const chatStatusRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId, 'status');
+      await setDoc(chatStatusRef, {
+        [`closedBy.${userId}`]: true, // Mark this user as having closed the chat
+        lastClosedBy: userId, // Keep track of who closed it last
+        lastClosedAt: serverTimestamp()
+      }, { merge: true });
+
+      setSelectedPlayerForChat(null);
+      setPrivateChatMessages([]);
+      setCurrentPrivateChatMessage('');
+      setShowPlayerChatModal(false);
+      setIsPrivateChatModalManuallyClosed(true); // Set manual close state
+    } catch (error) {
+      console.error("Error closing private chat modal:", error);
+    }
   };
 
-  // 개인 대화 종료 및 시나리오 반영 함수 (수정됨)
+  // New useEffect: Listen for private chat close signals from the other user
+  useEffect(() => {
+    if (!db || !isAuthReady || !userId || !selectedPlayerForChat) return;
+
+    const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
+    const chatStatusRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId, 'status');
+
+    const unsubscribeChatStatus = onSnapshot(chatStatusRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const otherUserId = selectedPlayerForChat.id;
+
+        // If the other user has closed the chat and it's not me who closed it last
+        if (data.closedBy && data.closedBy[otherUserId] && data.lastClosedBy !== userId) {
+          // Close the modal if it's open and the other user closed it
+          if (showPlayerChatModal) {
+            setSelectedPlayerForChat(null);
+            setPrivateChatMessages([]);
+            setCurrentPrivateChatMessage('');
+            setShowPlayerChatModal(false);
+            setIsPrivateChatModalManuallyClosed(false); // Reset manual close state
+            setGameLog(prev => [...prev, `\n> ${selectedPlayerForChat.displayName}님이 대화를 종료했습니다.`]);
+          }
+        }
+      }
+    }, (error) => {
+      console.error("Private chat status snapshot error:", error);
+    });
+
+    return () => unsubscribeChatStatus();
+  }, [db, isAuthReady, userId, selectedPlayerForChat, showPlayerChatModal]);
+
+
+  // Private chat end and scenario reflection function (modified)
   const handleEndPrivateChatAndReflectScenario = async () => {
       if (!selectedPlayerForChat) return;
 
-      // [수정] LLM 호출 전에 모달을 먼저 닫아 사용자 경험 개선
+      // [수정] Close modal first to improve user experience before LLM call
       closePlayerChatModal();
 
-      // 로딩 상태 시작
+      // Start loading state
       setIsTextLoading(true);
       setGameLog(prev => [...prev, `\n> ${selectedPlayerForChat.displayName}님과의 대화 내용을 바탕으로 시나리오를 진행합니다...\n`]);
 
-      // LLM에 전달할 promptData 구성
+      // Construct promptData to send to LLM
       const promptData = {
           phase: 'playing',
           playerChoice: `플레이어 ${selectedPlayerForChat.displayName}님과의 대화 종료.`,
@@ -709,7 +777,7 @@ function App() {
       };
 
       try {
-          // [수정] 공유 시나리오 진행 상태를 Firestore에 업데이트
+          // [수정] Update shared scenario progress status in Firestore
           const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
           await setDoc(gameStatusDocRef, {
               isActionInProgress: true,
@@ -718,8 +786,8 @@ function App() {
 
           const llmResponse = await callGeminiTextLLM(promptData);
 
-          // 여러 플레이어의 상태를 업데이트해야 하므로, Cloud Function을 사용하는 것이 이상적입니다.
-          // 클라이언트 측에서는 우선 자신의 상태와 공유 로그만 업데이트합니다.
+          // Ideally, Cloud Functions should be used to update multiple players' states.
+          // For now, update only current player's state and shared log on the client side.
           setGameLog(prev => [...prev, llmResponse.story]);
 
           if (db && userId) {
@@ -747,20 +815,20 @@ function App() {
           console.error("Error processing private chat with LLM:", error);
           setGameLog(prev => [...prev, `\n오류: 개인 대화 내용을 시나리오에 반영하는 중 문제가 발생했습니다: ${error.message}`]);
       } finally {
-          // [수정] 시나리오 진행 완료 후 상태를 다시 false로 변경
+          // [수정] Change status back to false after scenario progress is complete
           const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
           await setDoc(gameStatusDocRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
 
-          setIsTextLoading(false); // 로딩 상태 종료
+          setIsTextLoading(false); // End loading state
       }
   };
 
   // Helper function to check if an object is empty
   const isObjectEmpty = (obj) => Object.keys(obj).length === 0 && obj.constructor === Object;
 
-  // Player choice button click handler (수정됨)
+  // Player choice button click handler (modified)
   const handleChoiceClick = async (choice) => {
-    // [수정] 다른 플레이어가 행동 중일 때는 선택 불가
+    // [수정] Cannot select if another player is acting
     if (isTextLoading || isCompanionActionInProgress) return;
 
     setGameLog(prev => [...prev, `\n> 당신의 선택: ${choice}\n`]);
@@ -769,7 +837,7 @@ function App() {
     let promptData;
 
     try {
-        // [수정] 시나리오 진행 상태를 true로 설정
+        // [수정] Set scenario progress status to true
         if (db && userId) {
             const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
             await setDoc(gameStatusDocRef, {
@@ -866,7 +934,7 @@ function App() {
         console.error("Error during choice handling:", error);
         setGameLog(prev => [...prev, `\n오류가 발생했습니다: ${error.message}`]);
     } finally {
-        // [수정] 시나리오 진행 완료 후 상태를 다시 false로 변경
+        // [수정] Change status back to false after scenario progress is complete
         if (db && userId) {
             const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
             await setDoc(gameStatusDocRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
@@ -902,7 +970,7 @@ function App() {
                 </span>
               </div>
             )}
-            {/* [추가] 동료 행동 대기 메시지 */}
+            {/* [추가] Companion action waiting message */}
             {isCompanionSystemActive && isCompanionActionInProgress && !isMyTurn && (
                 <div className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
                     {actingPlayer ? `${actingPlayer.displayName}님이 선택하고 있습니다...` : "동료가 선택하고 있습니다..."}
@@ -931,7 +999,7 @@ function App() {
                 key={index}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => handleChoiceClick(choice)}
-                // [수정] 동료가 행동 중일 때 비활성화
+                // [수정] Disable when companion is acting
                 disabled={isTextLoading || (isCompanionSystemActive && !isMyTurn)}
               >
                 {choice}
@@ -982,10 +1050,10 @@ function App() {
                   >
                     <span>
                       <span className="font-medium text-blue-300">{user.displayName}</span>
-                       {/* [추가] 동료 표시 */}
+                       {/* [추가] Companion display */}
                        {user.isCompanion && <span className="text-green-400 ml-2">(동료)</span>}
                     </span>
-                    {user.id !== userId && ( // 자신에게는 채팅 버튼을 표시하지 않음
+                    {user.id !== userId && ( // Do not show chat button for self
                       <button
                         className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
                         onClick={() => openPlayerChatModal(user)}
@@ -1099,7 +1167,7 @@ function App() {
         </div>
       )}
 
-      {/* Private Chat Modal (수정됨) */}
+      {/* Private Chat Modal (modified) */}
       {showPlayerChatModal && selectedPlayerForChat && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 flex flex-col h-3/4 max-h-[80vh]">
@@ -1146,7 +1214,7 @@ function App() {
                 보내기
               </button>
             </div>
-            {/* [수정] 버튼 영역 수정 */}
+            {/* [수정] Modified button area */}
             <div className="flex justify-end gap-3 mt-4">
               <button
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1158,7 +1226,7 @@ function App() {
               <button
                 className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-bold rounded-md transition duration-300"
                 onClick={closePlayerChatModal}
-                // [수정] 닫기 버튼은 항상 활성화
+                // [수정] Close button is always active
               >
                 닫기
               </button>
