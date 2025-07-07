@@ -18,7 +18,6 @@ import {
   addDoc,
   getDocs, // 추가: 문서 목록을 가져오기 위해
   deleteDoc, // 추가: 문서를 삭제하기 위해
-  // collectionGroup은 더 이상 사용하지 않음
   where // [수정] where 임포트 추가
 } from 'firebase/firestore';
 
@@ -340,7 +339,7 @@ function App() {
     });
 
     return () => unsubscribePrivateChat();
-  }, [db, isAuthReady, userId, selectedPlayerForChat]);
+  }, [db, isAuthReady, userId, selectedPlayerForChat, appId]); // Added appId to dependency array
 
   // [NEW] 수신 메시지 알림 리스너 (collectionGroup 사용하지 않음)
   useEffect(() => {
@@ -359,7 +358,10 @@ function App() {
           const senderId = change.doc.id; // 문서 ID가 senderId가 됩니다.
 
           // 모달이 이미 열려있거나 수동으로 닫힌 상태가 아니라면
-          if (!showPlayerChatModal && !isPrivateChatModalManuallyClosed) {
+          // [수정] isPrivateChatModalManuallyClosed를 의존성 배열에서 제거했으므로,
+          // 이 useEffect는 해당 상태 변화에 직접 반응하지 않습니다.
+          // 따라서, 모달이 닫힌 상태에서만 알림을 처리하도록 로직을 유지합니다.
+          if (!showPlayerChatModal) { // Removed !isPrivateChatModalManuallyClosed from here
             const senderInfo = activeUsers.find(user => user.id === senderId);
             if (senderInfo) {
               openPlayerChatModal(senderInfo);
@@ -383,7 +385,7 @@ function App() {
     });
 
     return () => unsubscribeIncomingMessages();
-  }, [db, isAuthReady, userId, showPlayerChatModal, isPrivateChatModalManuallyClosed, activeUsers, appId]);
+  }, [db, isAuthReady, userId, showPlayerChatModal, activeUsers, appId]); // Removed isPrivateChatModalManuallyClosed from dependency array
 
 
   // Define the system prompt to send to the LLM
@@ -688,7 +690,8 @@ function App() {
   const openPlayerChatModal = (player) => {
     setSelectedPlayerForChat(player);
     setShowPlayerChatModal(true);
-    setIsPrivateChatModalManuallyClosed(false); // Reset manual close state when opening
+    // [수정] 모달을 열 때 isPrivateChatModalManuallyClosed를 항상 false로 설정
+    setIsPrivateChatModalManuallyClosed(false); 
 
     // [NEW] 모달을 열 때 해당 발신자로부터의 알림 플래그를 삭제합니다.
     if (db && userId && player.id) {
@@ -704,19 +707,22 @@ function App() {
 
     try {
       const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
-      // Update the status in Firestore to indicate the chat is closed by this user
-      const chatStatusRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId, 'status');
-      await setDoc(chatStatusRef, {
-        [`closedBy.${userId}`]: true, // Mark this user as having closed the chat
-        lastClosedBy: userId, // Keep track of who closed it last
-        lastClosedAt: serverTimestamp()
+      // [수정] chatRoomId 문서 자체를 참조하고, 그 안에 status 필드를 업데이트
+      const chatRoomDocRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId);
+      await setDoc(chatRoomDocRef, {
+        status: { // status 필드 안에 객체로 저장
+          [`closedBy.${userId}`]: true, 
+          lastClosedBy: userId, 
+          lastClosedAt: serverTimestamp()
+        }
       }, { merge: true });
 
       setSelectedPlayerForChat(null);
       setPrivateChatMessages([]);
       setCurrentPrivateChatMessage('');
       setShowPlayerChatModal(false);
-      setIsPrivateChatModalManuallyClosed(true); // Set manual close state
+      // [수정] 모달을 닫을 때 isPrivateChatModalManuallyClosed를 true로 설정
+      setIsPrivateChatModalManuallyClosed(true); 
     } catch (error) {
       console.error("Error closing private chat modal:", error);
     }
@@ -727,15 +733,18 @@ function App() {
     if (!db || !isAuthReady || !userId || !selectedPlayerForChat) return;
 
     const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
-    const chatStatusRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId, 'status');
+    // [수정] chatRoomId 문서 자체를 참조
+    const chatRoomDocRef = doc(db, 'artifacts', appId, 'privateChats', chatRoomId);
 
-    const unsubscribeChatStatus = onSnapshot(chatStatusRef, (docSnap) => {
+    const unsubscribeChatStatus = onSnapshot(chatRoomDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        // [수정] status 필드 내의 데이터에 접근
+        const statusData = data.status || {}; 
         const otherUserId = selectedPlayerForChat.id;
 
         // If the other user has closed the chat and it's not me who closed it last
-        if (data.closedBy && data.closedBy[otherUserId] && data.lastClosedBy !== userId) {
+        if (statusData.closedBy && statusData.closedBy[otherUserId] && statusData.lastClosedBy !== userId) {
           // Close the modal if it's open and the other user closed it
           if (showPlayerChatModal) {
             setSelectedPlayerForChat(null);
@@ -752,7 +761,7 @@ function App() {
     });
 
     return () => unsubscribeChatStatus();
-  }, [db, isAuthReady, userId, selectedPlayerForChat, showPlayerChatModal]);
+  }, [db, isAuthReady, userId, selectedPlayerForChat, showPlayerChatModal, appId]); // Added appId to dependency array
 
 
   // Private chat end and scenario reflection function (modified)
