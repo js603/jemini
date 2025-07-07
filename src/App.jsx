@@ -209,7 +209,7 @@ function App() {
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     console.log("DEBUG: Starting callGeminiTextLLM");
-    const apiKey = ""; // Canvas runtime automatically provides this.
+    const apiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // Canvas runtime automatically provides this.
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
     const userPrompt = `
