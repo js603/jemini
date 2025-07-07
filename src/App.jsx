@@ -18,7 +18,8 @@ import {
   addDoc,
   getDocs, // 추가: 문서 목록을 가져오기 위해
   deleteDoc, // 추가: 문서를 삭제하기 위해
-  collectionGroup // collectionGroup 임포트
+  collectionGroup, // collectionGroup 임포트
+  where // [수정] where 임포트 추가
 } from 'firebase/firestore';
 
 // ====================================================================
@@ -324,21 +325,15 @@ function App() {
 
   // 새로운 useEffect: 자신에게 온 개인 메시지를 감지하여 모달을 강제로 열기
   useEffect(() => {
-    console.log("DEBUG: Setting up incoming private messages listener check.");
-    console.log(`DEBUG: db: ${!!db}, isAuthReady: ${isAuthReady}, userId: ${userId}, appId: ${appId}, showPlayerChatModal: ${showPlayerChatModal}`);
-
     if (!db || !isAuthReady || !userId || showPlayerChatModal) {
-      console.log("DEBUG: Skipping incoming private messages listener setup due to missing prerequisites.");
-      return; // 이미 모달이 열려있으면 동작하지 않음
+      return; // 필수 조건이 충족되지 않았거나 이미 모달이 열려있으면 실행하지 않음
     }
 
-    // 모든 'messages' 서브컬렉션에서 receiverId가 현재 사용자인 메시지를 감지
-    // 이 쿼리는 Firestore 보안 규칙에서 collectionGroup 규칙이 설정되어 있어야 작동합니다.
+    // [수정] collectionGroup 쿼리에 where 조건을 추가하여 현재 사용자에게 온 메시지만 가져옵니다.
+    // 이렇게 하면 Firestore 보안 규칙 위반을 방지할 수 있습니다.
     const incomingPrivateMessagesQuery = query(
-      collectionGroup(db, 'messages')
-      // Firestore는 collectionGroup에서 'where' 절을 사용할 때 인덱스가 필요합니다.
-      // 'receiverId' 필드에 대한 인덱스가 필요하며, 이는 Firebase Console에서 수동으로 생성해야 합니다.
-      // 예: collectionGroup = messages, fields = receiverId (ASC)
+      collectionGroup(db, 'messages'),
+      where('receiverId', '==', userId)
     );
 
     const unsubscribeIncomingPrivateMessages = onSnapshot(incomingPrivateMessagesQuery, (snapshot) => {
@@ -364,11 +359,12 @@ function App() {
         }
       });
     }, (error) => {
+      // 이제 이 오류는 발생하지 않아야 합니다.
       console.error("Incoming private messages snapshot error:", error);
     });
 
     return () => unsubscribeIncomingPrivateMessages();
-  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers, appId]); // 의존성 배열에 appId 추가
+  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers, appId]);
 
   // Define the system prompt to send to the LLM
     const systemPrompt = `
