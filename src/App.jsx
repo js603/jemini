@@ -17,7 +17,8 @@ import {
   serverTimestamp, 
   addDoc,
   getDocs, // 추가: 문서 목록을 가져오기 위해
-  deleteDoc // 추가: 문서를 삭제하기 위해
+  deleteDoc, // 추가: 문서를 삭제하기 위해
+  collectionGroup // collectionGroup 임포트
 } from 'firebase/firestore';
 
 // ====================================================================
@@ -33,11 +34,17 @@ const defaultFirebaseConfig = {
 };
 
 // Canvas 환경에서 제공되는 전역 변수 사용
-const firebaseConfig = defaultFirebaseConfig;
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : defaultFirebaseConfig;
 
-const appId = firebaseConfig.projectId;
+const appId = typeof __app_id !== 'undefined' 
+  ? __app_id 
+  : firebaseConfig.projectId;
 
-const initialAuthToken = null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' 
+  ? __initial_auth_token 
+  : null;
 // ====================================================================
 
 // 게임의 초기 직업 정보 및 동기
@@ -298,9 +305,12 @@ function App() {
     return `${sortedIds[0]}_${sortedIds[1]}`;
   };
 
-  // 개인 채팅 리스너 설정
+  // 기존 개인 채팅 리스너 (선택된 플레이어와의 대화만 수신)
   useEffect(() => {
-    if (!db || !isAuthReady || !userId || !selectedPlayerForChat) return;
+    if (!db || !isAuthReady || !userId || !selectedPlayerForChat) {
+      setPrivateChatMessages([]); // 선택된 플레이어가 없으면 메시지 초기화
+      return;
+    }
 
     const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
     const privateChatCollectionRef = collection(db, 'artifacts', appId, 'privateChats', chatRoomId, 'messages');
@@ -318,6 +328,47 @@ function App() {
     return () => unsubscribePrivateChat();
   }, [db, isAuthReady, userId, selectedPlayerForChat]);
 
+  // 새로운 useEffect: 자신에게 온 개인 메시지를 감지하여 모달을 강제로 열기
+  useEffect(() => {
+    if (!db || !isAuthReady || !userId || showPlayerChatModal) return; // 이미 모달이 열려있으면 동작하지 않음
+
+    // 모든 'messages' 서브컬렉션에서 receiverId가 현재 사용자인 메시지를 감지
+    // 이 쿼리는 Firestore 보안 규칙에서 collectionGroup 규칙이 설정되어 있어야 작동합니다.
+    const incomingPrivateMessagesQuery = query(
+      collectionGroup(db, 'messages')
+      // Firestore는 collectionGroup에서 'where' 절을 사용할 때 인덱스가 필요합니다.
+      // 'receiverId' 필드에 대한 인덱스가 필요하며, 이는 Firebase Console에서 수동으로 생성해야 합니다.
+      // 예: collectionGroup = messages, fields = receiverId (ASC)
+    );
+
+    const unsubscribeIncomingPrivateMessages = onSnapshot(incomingPrivateMessagesQuery, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const message = change.doc.data();
+          // 현재 사용자에게 온 메시지이고, 자신이 보낸 메시지가 아니며,
+          // 아직 해당 발신자와의 대화 모달이 열려있지 않은 경우
+          if (message.receiverId === userId && message.senderId !== userId && !selectedPlayerForChat) {
+            const senderInfo = activeUsers.find(user => user.id === message.senderId);
+            if (senderInfo) {
+              // 해당 발신자와의 대화 모달을 강제로 엽니다.
+              openPlayerChatModal(senderInfo);
+            } else {
+              // 활성 사용자 목록에 없는 경우, 메시지에서 정보 추출
+              openPlayerChatModal({
+                id: message.senderId,
+                displayName: message.displayName || `알 수 없는 플레이어 ${message.senderId.substring(0, 4)}`,
+                profession: '알 수 없음' // 직업 정보는 activeUsers에서 가져와야 함
+              });
+            }
+          }
+        }
+      });
+    }, (error) => {
+      console.error("Incoming private messages snapshot error:", error);
+    });
+
+    return () => unsubscribeIncomingPrivateMessages();
+  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers]); // 의존성 배열 추가
 
   // Define the system prompt to send to the LLM
     const systemPrompt = `
@@ -597,7 +648,7 @@ function App() {
       
       await addDoc(privateChatCollectionRef, {
         senderId: userId,
-        receiverId: selectedPlayerForChat.id,
+        receiverId: selectedPlayerForChat.id, // 수신자 ID 명시
         displayName: `플레이어 ${userId.substring(0, 4)}`,
         message: currentPrivateChatMessage,
         timestamp: serverTimestamp(),
@@ -881,7 +932,11 @@ function App() {
             {activeUsers.length > 0 ? (
               <ul className="text-sm text-gray-300 space-y-1">
                 {activeUsers.map(user => (
-                  <li key={user.id} className="truncate flex justify-between items-center">
+                  <li 
+                    key={user.id} 
+                    className="truncate flex justify-between items-center p-1 rounded-md hover:bg-gray-500 cursor-pointer" // Added hover and cursor styles
+                    onDoubleClick={() => user.id !== userId && openPlayerChatModal(user)} // Double-click handler
+                  >
                     <span>
                       <span className="font-medium text-blue-300">{user.displayName}</span> (ID: {user.id})
                     </span>
