@@ -3,6 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, // 익명 로그인 임포트
+  signInWithCustomToken, // 커스텀 토큰 로그인 임포트
   onAuthStateChanged 
 } from 'firebase/auth';
 import { 
@@ -20,12 +21,9 @@ import {
 } from 'firebase/firestore';
 
 // ====================================================================
-// TODO: 여기에 사용자님의 개인 Firebase 구성 정보를 직접 붙여넣으세요!
-// Firebase Console에서 복사한 firebaseConfig 객체를 여기에 붙여넣습니다.
-// **주의: "YOUR_API_KEY", "YOUR_AUTH_DOMAIN" 등의 플레이스홀더를
-// 반드시 사용자님의 실제 Firebase 프로젝트 정보로 교체해야 합니다.**
-const firebaseConfig = {
-  apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8",
+// Firebase 구성 정보 (Canvas 환경에서 제공되지 않을 경우 기본값)
+const defaultFirebaseConfig = {
+  apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8", // 실제 Firebase API 키로 교체하세요
   authDomain: "text-adventure-game-cb731.firebaseapp.com",
   projectId: "text-adventure-game-cb731",
   storageBucket: "text-adventure-game-cb731.firebaseapis.com",
@@ -33,10 +31,14 @@ const firebaseConfig = {
   appId: "1:1092941614820:web:5545f36014b73c268026f1",
   measurementId: "G-FNGF42T1FP"
 };
-// ====================================================================
 
-// 사용자님의 Firebase projectId를 앱 ID로 사용합니다.
+// Canvas 환경에서 제공되는 전역 변수 사용
+const firebaseConfig = defaultFirebaseConfig;
+
 const appId = firebaseConfig.projectId;
+
+const initialAuthToken = null;
+// ====================================================================
 
 // 게임의 초기 직업 정보 및 동기
 const professions = {
@@ -61,7 +63,7 @@ function App() {
     stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 }, // 기본 능력치
     inventory: [],
     initialMotivation: '',
-    currentLocation: '왕국의 수도 외곽', // 초기 위치
+    currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
     reputation: {}, // NPC/세력 평판 (LLM이 관리)
     activeQuests: [], // 활성 퀘스트 (LLM이 관리)
     companions: [], // 동료 (LLM이 관리)
@@ -116,9 +118,13 @@ function App() {
         } else {
           // If no user is logged in, attempt anonymous sign-in.
           try {
-            await signInAnonymously(firebaseAuth);
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
+            } else {
+              await signInAnonymously(firebaseAuth);
+            }
           } catch (error) {
-            console.error("Anonymous sign-in failed:", error);
+            console.error("Firebase authentication failed:", error);
             setGameLog(prev => [...prev, "오류: Firebase 인증에 실패했습니다."]);
           }
         }
@@ -184,6 +190,7 @@ function App() {
           await setDoc(userDocRef, {
             lastActive: serverTimestamp(),
             displayName: `플레이어 ${userId.substring(0, 4)}`, // Display only part of the user ID
+            profession: playerCharacter.profession, // 플레이어 직업 추가
           }, { merge: true });
         } catch (error) {
           console.error("Failed to update user presence:", error);
@@ -200,7 +207,7 @@ function App() {
       unsubscribeChatMessages(); // 채팅 리스너 정리
       clearInterval(presenceInterval);
     };
-  }, [db, isAuthReady, userId, auth]);
+  }, [db, isAuthReady, userId, auth, playerCharacter.profession]); // playerCharacter.profession을 의존성 배열에 추가
 
   // 비활성 사용자 정리 함수 (클라이언트 측)
   // 이 함수는 클라이언트 측에서 실행되므로, 앱이 실행 중일 때만 작동합니다.
@@ -242,7 +249,7 @@ function App() {
   useEffect(() => {
     if (gamePhase === 'characterSelection') {
       setGameLog([
-        "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다.",
+        "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.",
         "어떤 직업을 선택하시겠습니까?"
       ]);
       setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
@@ -273,6 +280,8 @@ function App() {
   // Define the system prompt to send to the LLM
     const systemPrompt = `
     당신은 중세 유럽풍 판타지 텍스트 어드벤처 게임의 스토리텔러이자 게임 마스터입니다.
+    이 게임은 멀티플레이어 게임이며, 현재 접속 중인 다른 플레이어들도 같은 시나리오에 참여합니다.
+    모든 플레이어는 '방랑자의 안식처'라는 여관에서 게임을 시작합니다.
     플레이어의 선택과 현재 게임 상태를 기반으로 스토리를 진행하고, 새로운 상황을 묘사하며, 다음 선택지를 제시해야 합니다.
     당신은 3인칭으로 서술하며, 진지하고 서사적인 어조와 객관적이고 정보 전달적인 어조를 적절히 섞어 사용합니다.
     정보는 직접적인 설명, 간접적인 묘사, NPC 대화, 아이템/문서 등 다양한 방식으로 제공합니다.
@@ -283,6 +292,12 @@ function App() {
     능력치(힘, 지능, 민첩, 카리스마)가 존재하며, 플레이어의 행동에 따라 능력치가 어떻게 변화하고 성장하는지 서사적으로 묘사해야 합니다.
     LLM 기반 퍼즐을 생성하고 해결을 유도할 수 있습니다. 퍼즐을 제시할 때는 퍼즐의 내용과 해결 방법을 명확히 제시합니다.
     시간 제한은 없습니다.
+
+    **멀티플레이어 시나리오 지침:**
+    1.  **시작 지점:** 모든 플레이어는 '방랑자의 안식처'에서 시작하며, 당신은 이 여관의 분위기와 그 안에 있는 다른 플레이어들을 묘사해야 합니다.
+    2.  **다른 플레이어 등장:** 현재 게임에 접속해 있는 다른 플레이어들을 스토리 내에서 등장인물로 자연스럽게 포함시키십시오. 이들은 동료가 될 수도 있고, 경쟁자가 될 수도 있습니다.
+    3.  **플레이어 간 상호작용:** 플레이어가 다른 플레이어와 상호작용(대화, 협력, 경쟁 등)을 선택하면, 당신은 해당 상호작용의 결과를 시뮬레이션하고 다음 선택지를 제공해야 합니다. 예를 들어, 한 플레이어가 다른 플레이어에게 말을 걸면, 당신은 그 플레이어의 캐릭터(직업, 성향 등)에 기반한 반응을 생성하고, 대화를 이어나갈 선택지를 제시합니다.
+    4.  **공유된 스토리:** 모든 플레이어의 선택과 상호작용이 하나의 공유된 시나리오에 영향을 미치도록 스토리를 발전시키십시오.
 
     이야기를 통해 새로운 퀘스트를 암시적으로 도입합니다. 예를 들어, NPC가 도움을 요청하거나, 어떤 발견이 새로운 목표로 이어질 수 있습니다.
     NPC 및 세력 평판을 이야기 내에서 암시적으로 관리합니다. 플레이어의 행동이 NPC 반응에 어떻게 영향을 미치는지 묘사합니다.
@@ -326,6 +341,9 @@ function App() {
       현재 동료: ${JSON.stringify(promptData.character.companions)}
       이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(promptData.history.slice(-5))}
       플레이어의 마지막 선택: ${promptData.playerChoice}
+      
+      **현재 접속 중인 다른 플레이어들:**
+      ${JSON.stringify(promptData.activeUsers)}
 
       위 정보를 바탕으로 다음 스토리 부분을 한국어로 생성하고, 시스템 프롬프트의 JSON 스키마에 따라 선택지를 제공하십시오.
     `;
@@ -454,7 +472,7 @@ function App() {
           stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
           inventory: [],
           initialMotivation: '',
-          currentLocation: '왕국의 수도 외곽',
+          currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
           reputation: {},
           activeQuests: [],
           companions: [],
@@ -548,7 +566,7 @@ function App() {
           },
           inventory: [],
           initialMotivation: chosenProfession.motivation,
-          currentLocation: '왕국의 수도 외곽',
+          currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
           reputation: {},
           activeQuests: [],
           companions: [],
@@ -561,6 +579,7 @@ function App() {
           playerChoice: choice,
           character: initialCharacterState, // Pass the updated character state to LLM
           history: gameLog,
+          activeUsers: activeUsers.filter(user => user.id !== userId) // 현재 플레이어를 제외한 다른 활성 플레이어 전달
         };
 
         // Call LLM
@@ -591,6 +610,7 @@ function App() {
         playerChoice: choice,
         character: playerCharacter, // Pass the current character state to LLM
         history: gameLog,
+        activeUsers: activeUsers.filter(user => user.id !== userId) // 현재 플레이어를 제외한 다른 활성 플레이어 전달
       };
 
       // Call LLM
