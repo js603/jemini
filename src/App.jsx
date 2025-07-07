@@ -33,11 +33,17 @@ const defaultFirebaseConfig = {
 };
 
 // Canvas 환경에서 제공되는 전역 변수 사용
-const firebaseConfig = defaultFirebaseConfig;
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : defaultFirebaseConfig;
 
-const appId = firebaseConfig.projectId;
+const appId = typeof __app_id !== 'undefined' 
+  ? __app_id 
+  : firebaseConfig.projectId;
 
-const initialAuthToken = null;
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' 
+  ? __initial_auth_token 
+  : null;
 // ====================================================================
 
 // 게임의 초기 직업 정보 및 동기
@@ -78,10 +84,17 @@ function App() {
   const [sharedGameLog, setSharedGameLog] = useState([]);
   // 활성 사용자 목록 (멀티플레이어)
   const [activeUsers, setActiveUsers] = useState([]);
-  // 채팅 메시지 목록
+  // 채팅 메시지 목록 (공개 채팅)
   const [chatMessages, setChatMessages] = useState([]);
-  // 현재 채팅 입력 값
+  // 현재 채팅 입력 값 (공개 채팅)
   const [currentChatMessage, setCurrentChatMessage] = useState('');
+
+  // 개인 대화 관련 상태
+  const [showPlayerChatModal, setShowPlayerChatModal] = useState(false);
+  const [selectedPlayerForChat, setSelectedPlayerForChat] = useState(null); // { id, displayName, profession }
+  const [privateChatMessages, setPrivateChatMessages] = useState([]);
+  const [currentPrivateChatMessage, setCurrentPrivateChatMessage] = useState('');
+
 
   // Firebase 및 인증 상태
   const [db, setDb] = useState(null);
@@ -92,7 +105,8 @@ function App() {
   // 스크롤을 최하단으로 유지하기 위한 ref
   const logEndRef = useRef(null);
   const sharedLogEndRef = useRef(null);
-  const chatEndRef = useRef(null); // 채팅 로그를 위한 ref 추가
+  const chatEndRef = useRef(null); // 공개 채팅 로그를 위한 ref
+  const privateChatEndRef = useRef(null); // 개인 채팅 로그를 위한 ref
 
   // Firebase 초기화 및 인증 처리
   useEffect(() => {
@@ -170,7 +184,7 @@ function App() {
       console.error("Active users snapshot error:", error);
     });
 
-    // 3. 채팅 메시지 리스너
+    // 3. 공개 채팅 메시지 리스너
     const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
     const qChatMessages = query(chatCollectionRef);
     const unsubscribeChatMessages = onSnapshot(qChatMessages, (snapshot) => {
@@ -277,6 +291,40 @@ function App() {
     }
   }, [chatMessages]);
 
+  // 개인 채팅 메시지 스크롤
+  useEffect(() => {
+    if (privateChatEndRef.current) {
+      privateChatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [privateChatMessages]);
+
+  // 개인 채팅방 ID 생성 함수 (두 사용자 ID를 정렬하여 일관된 ID 생성)
+  const getPrivateChatRoomId = (user1Id, user2Id) => {
+    const sortedIds = [user1Id, user2Id].sort();
+    return `${sortedIds[0]}_${sortedIds[1]}`;
+  };
+
+  // 개인 채팅 리스너 설정
+  useEffect(() => {
+    if (!db || !isAuthReady || !userId || !selectedPlayerForChat) return;
+
+    const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
+    const privateChatCollectionRef = collection(db, 'artifacts', appId, 'privateChats', chatRoomId, 'messages');
+    const qPrivateChat = query(privateChatCollectionRef);
+
+    const unsubscribePrivateChat = onSnapshot(qPrivateChat, (snapshot) => {
+      const messages = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+      setPrivateChatMessages(messages);
+    }, (error) => {
+      console.error("Private chat messages snapshot error:", error);
+    });
+
+    return () => unsubscribePrivateChat();
+  }, [db, isAuthReady, userId, selectedPlayerForChat]);
+
+
   // Define the system prompt to send to the LLM
     const systemPrompt = `
     당신은 중세 유럽풍 판타지 텍스트 어드벤처 게임의 스토리텔러이자 게임 마스터입니다.
@@ -296,7 +344,7 @@ function App() {
     **멀티플레이어 시나리오 지침:**
     1.  **시작 지점:** 모든 플레이어는 '방랑자의 안식처'에서 시작하며, 당신은 이 여관의 분위기와 그 안에 있는 다른 플레이어들을 묘사해야 합니다.
     2.  **다른 플레이어 등장:** 현재 게임에 접속해 있는 다른 플레이어들을 스토리 내에서 등장인물로 자연스럽게 포함시키십시오. 이들은 동료가 될 수도 있고, 경쟁자가 될 수도 있습니다.
-    3.  **플레이어 간 상호작용:** 플레이어가 다른 플레이어와 상호작용(대화, 협력, 경쟁 등)을 선택하면, 당신은 해당 상호작용의 결과를 시뮬레이션하고 다음 선택지를 제공해야 합니다. 예를 들어, 한 플레이어가 다른 플레이어에게 말을 걸면, 당신은 그 플레이어의 캐릭터(직업, 성향 등)에 기반한 반응을 생성하고, 대화를 이어나갈 선택지를 제시합니다.
+    3.  **플레이어 간 상호작용 (LLM 반영 중요):** 플레이어가 다른 플레이어와 상호작용(대화, 협력, 경쟁 등)을 선택하면, 당신은 해당 상호작용의 결과를 시뮬레이션하고 다음 선택지를 제공해야 합니다. **특히, 플레이어 간의 개인 대화 내용이 있다면, 이 내용을 시나리오 진행에 가장 우선적으로 반영하여 스토리를 전개하십시오.** 예를 들어, 한 플레이어가 다른 플레이어에게 말을 걸면, 당신은 그 플레이어의 캐릭터(직업, 성향 등)에 기반한 반응을 생성하고, 대화를 이어나갈 선택지를 제시합니다.
     4.  **공유된 스토리:** 모든 플레이어의 선택과 상호작용이 하나의 공유된 시나리오에 영향을 미치도록 스토리를 발전시키십시오.
 
     이야기를 통해 새로운 퀘스트를 암시적으로 도입합니다. 예를 들어, NPC가 도움을 요청하거나, 어떤 발견이 새로운 목표로 이어질 수 있습니다.
@@ -304,7 +352,7 @@ function App() {
     플레이어에게 잠재적인 동료를 소개합니다. 동료가 영입되면, 그들의 존재와 플레이어 및 세계와의 상호작용을 묘사합니다.
     퀘스트 진행 상황, 평판 변화, 동료 상호작용을 JSON 출력에 명확히 포함하여 게임 로직이 이를 추적할 수 있도록 합니다.
 
-    당신은 항상 유효한 JSON 형식으로 응답해야 합니다. 구문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
+    당신은 항상 유효한 JSON 형식으로 응문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
     {
       "story": "현재 상황에 대한 스토리 텍스트 (3인칭으로 서술).",
       "choices": ["선택지 1", "선택지 2", ...],
@@ -344,6 +392,9 @@ function App() {
       
       **현재 접속 중인 다른 플레이어들:**
       ${JSON.stringify(promptData.activeUsers)}
+
+      **현재 플레이어와 관련된 최근 개인 대화 내용 (LLM이 시나리오에 우선 반영):**
+      ${promptData.privateChatHistory && promptData.privateChatHistory.length > 0 ? JSON.stringify(promptData.privateChatHistory.slice(-5)) : '없음'}
 
       위 정보를 바탕으로 다음 스토리 부분을 한국어로 생성하고, 시스템 프롬프트의 JSON 스키마에 따라 선택지를 제공하십시오.
     `;
@@ -518,7 +569,7 @@ function App() {
     }
   };
 
-  // Function to send a chat message
+  // Function to send a public chat message
   const sendChatMessage = async () => {
     if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) {
       console.warn("채팅 메시지를 보낼 수 없습니다. 내용을 입력하거나 인증 상태를 확인해주세요.");
@@ -537,6 +588,44 @@ function App() {
     } catch (error) {
       console.error("채팅 메시지 전송 중 오류 발생:", error);
     }
+  };
+
+  // Function to send a private chat message
+  const sendPrivateChatMessage = async () => {
+    if (!db || !userId || !isAuthReady || !selectedPlayerForChat || !currentPrivateChatMessage.trim()) {
+      console.warn("개인 메시지를 보낼 수 없습니다. 내용을 입력하거나 대화 상대를 선택해주세요.");
+      return;
+    }
+
+    try {
+      const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
+      const privateChatCollectionRef = collection(db, 'artifacts', appId, 'privateChats', chatRoomId, 'messages');
+      
+      await addDoc(privateChatCollectionRef, {
+        senderId: userId,
+        receiverId: selectedPlayerForChat.id,
+        displayName: `플레이어 ${userId.substring(0, 4)}`,
+        message: currentPrivateChatMessage,
+        timestamp: serverTimestamp(),
+      });
+      setCurrentPrivateChatMessage(''); // 메시지 전송 후 입력 필드 초기화
+    } catch (error) {
+      console.error("개인 메시지 전송 중 오류 발생:", error);
+    }
+  };
+
+  // 개인 채팅 모달 열기
+  const openPlayerChatModal = (player) => {
+    setSelectedPlayerForChat(player);
+    setShowPlayerChatModal(true);
+  };
+
+  // 개인 채팅 모달 닫기
+  const closePlayerChatModal = () => {
+    setSelectedPlayerForChat(null);
+    setPrivateChatMessages([]);
+    setCurrentPrivateChatMessage('');
+    setShowPlayerChatModal(false);
   };
 
   // Helper function to check if an object is empty
@@ -579,7 +668,8 @@ function App() {
           playerChoice: choice,
           character: initialCharacterState, // Pass the updated character state to LLM
           history: gameLog,
-          activeUsers: activeUsers.filter(user => user.id !== userId) // 현재 플레이어를 제외한 다른 활성 플레이어 전달
+          activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
+          privateChatHistory: privateChatMessages.filter(msg => msg.senderId === userId || msg.receiverId === userId) // 현재 플레이어와 관련된 개인 대화 내용
         };
 
         // Call LLM
@@ -610,7 +700,8 @@ function App() {
         playerChoice: choice,
         character: playerCharacter, // Pass the current character state to LLM
         history: gameLog,
-        activeUsers: activeUsers.filter(user => user.id !== userId) // 현재 플레이어를 제외한 다른 활성 플레이어 전달
+        activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
+        privateChatHistory: privateChatMessages.filter(msg => msg.senderId === userId || msg.receiverId === userId) // 현재 플레이어와 관련된 개인 대화 내용
       };
 
       // Call LLM
@@ -738,8 +829,18 @@ function App() {
             {activeUsers.length > 0 ? (
               <ul className="text-sm text-gray-300 space-y-1">
                 {activeUsers.map(user => (
-                  <li key={user.id} className="truncate">
-                    <span className="font-medium text-blue-300">{user.displayName}</span> (ID: {user.id})
+                  <li key={user.id} className="truncate flex justify-between items-center">
+                    <span>
+                      <span className="font-medium text-blue-300">{user.displayName}</span> (ID: {user.id})
+                    </span>
+                    {user.id !== userId && ( // 자신에게는 채팅 버튼을 표시하지 않음
+                      <button 
+                        className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
+                        onClick={() => openPlayerChatModal(user)}
+                      >
+                        대화하기
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -769,9 +870,9 @@ function App() {
             )}
           </div>
 
-          {/* Chat section */}
+          {/* Public Chat section */}
           <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
-            <h4 className="text-md font-semibold text-gray-200 mb-2">채팅:</h4>
+            <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅:</h4>
             <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm text-gray-300 space-y-2">
               {chatMessages.length > 0 ? (
                 chatMessages.map((msg) => (
@@ -840,6 +941,65 @@ function App() {
                 disabled={isTextLoading || !feedbackText.trim()}
               >
                 보내기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Private Chat Modal */}
+      {showPlayerChatModal && selectedPlayerForChat && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 flex flex-col h-3/4 max-h-[80vh]">
+            <h3 className="text-xl font-bold text-gray-100">
+              {selectedPlayerForChat.displayName} (ID: {selectedPlayerForChat.id}) 님과 대화
+            </h3>
+            <div className="flex-grow bg-gray-700 p-3 rounded-md overflow-y-auto custom-scrollbar text-sm text-gray-300 space-y-2">
+              {privateChatMessages.length > 0 ? (
+                privateChatMessages.map((msg) => (
+                  <div key={msg.id} className={`flex ${msg.senderId === userId ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`p-2 rounded-lg max-w-[80%] ${msg.senderId === userId ? 'bg-blue-600 text-white' : 'bg-gray-600 text-gray-100'}`}>
+                      <p className="text-xs text-gray-300 mb-1">
+                        <span className="font-medium">{msg.displayName}</span> (
+                        {msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'})
+                      </p>
+                      <p>{msg.message}</p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-400 text-center">아직 대화가 없습니다. 먼저 메시지를 보내세요!</p>
+              )}
+              <div ref={privateChatEndRef} />
+            </div>
+            <div className="flex">
+              <input
+                type="text"
+                className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                placeholder="개인 메시지를 입력하세요..."
+                value={currentPrivateChatMessage}
+                onChange={(e) => setCurrentPrivateChatMessage(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    sendPrivateChatMessage();
+                  }
+                }}
+                disabled={!isAuthReady || !userId || !selectedPlayerForChat}
+              />
+              <button
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-r-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                onClick={sendPrivateChatMessage}
+                disabled={!isAuthReady || !userId || !selectedPlayerForChat || !currentPrivateChatMessage.trim()}
+              >
+                보내기
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <button
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-bold rounded-md transition duration-300"
+                onClick={closePlayerChatModal}
+              >
+                닫기
               </button>
             </div>
           </div>
