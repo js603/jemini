@@ -76,6 +76,10 @@ function App() {
   const [sharedGameLog, setSharedGameLog] = useState([]);
   // 활성 사용자 목록 (멀티플레이어)
   const [activeUsers, setActiveUsers] = useState([]);
+  // 채팅 메시지 목록
+  const [chatMessages, setChatMessages] = useState([]);
+  // 현재 채팅 입력 값
+  const [currentChatMessage, setCurrentChatMessage] = useState('');
 
   // Firebase 및 인증 상태
   const [db, setDb] = useState(null);
@@ -86,6 +90,7 @@ function App() {
   // 스크롤을 최하단으로 유지하기 위한 ref
   const logEndRef = useRef(null);
   const sharedLogEndRef = useRef(null);
+  const chatEndRef = useRef(null); // 채팅 로그를 위한 ref 추가
 
   // Firebase 초기화 및 인증 처리
   useEffect(() => {
@@ -159,6 +164,18 @@ function App() {
       console.error("Active users snapshot error:", error);
     });
 
+    // 3. 채팅 메시지 리스너
+    const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
+    const qChatMessages = query(chatCollectionRef);
+    const unsubscribeChatMessages = onSnapshot(qChatMessages, (snapshot) => {
+      const messages = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)); // Sort by timestamp
+      setChatMessages(messages);
+    }, (error) => {
+      console.error("Chat messages snapshot error:", error);
+    });
+
     // Update user presence (periodically)
     const updateUserPresence = async () => {
       if (userId) {
@@ -180,6 +197,7 @@ function App() {
     return () => {
       unsubscribeSharedLog();
       unsubscribeActiveUsers();
+      unsubscribeChatMessages(); // 채팅 리스너 정리
       clearInterval(presenceInterval);
     };
   }, [db, isAuthReady, userId, auth]);
@@ -190,7 +208,7 @@ function App() {
   const cleanupInactiveUsers = async () => {
     if (!db || !isAuthReady || !userId) return;
 
-    const inactiveThreshold = 5 * 60 * 1000; // 5분 (300초)
+    const inactiveThreshold = 1 * 60 * 1000; // 1분 (60초)
     const cutoffTime = Date.now() - inactiveThreshold;
 
     try {
@@ -214,8 +232,8 @@ function App() {
   useEffect(() => {
     if (!db || !isAuthReady || !userId) return;
 
-    // 5분마다 비활성 사용자 정리 함수를 실행합니다.
-    const cleanupInterval = setInterval(cleanupInactiveUsers, 5 * 60 * 1000); // 5분마다 실행
+    // 1분마다 비활성 사용자 정리 함수를 실행합니다.
+    const cleanupInterval = setInterval(cleanupInactiveUsers, 1 * 60 * 1000); // 1분마다 실행
 
     return () => clearInterval(cleanupInterval); // 컴포넌트 언마운트 시 인터벌 정리
   }, [db, isAuthReady, userId]); // db, isAuthReady, userId가 변경될 때마다 재실행
@@ -245,39 +263,46 @@ function App() {
     }
   }, [sharedGameLog]);
 
-  // Define the system prompt to send to the LLM
-  const systemPrompt = `
-    You are the storyteller and game master for a medieval European fantasy text adventure game.
-    Based on the player's choices and current game state, you must advance the story, describe new situations, and present the next choices.
-    You narrate in the third person, mixing a serious, narrative tone with an objective, informative tone as appropriate.
-    Information is provided through various means: direct explanations, indirect descriptions, NPC dialogues, items/documents, etc.
-    The level of detail in descriptions can be flexibly adjusted by the LLM, but should be detailed for important or impressive scenes.
-    The player's goals are not fixed; they are fluidly formed based on the player's choices and actions, leading to infinite endings.
-    Consider a simple inventory system (focused on key story items), reflecting item acquisition or use in story descriptions.
-    Simulate simple text-based combat (choice and probability-based). In combat, describe the enemy, the player's actions, probability-based outcomes, and changes in stats or damage.
-    Stats (Strength, Intelligence, Agility, Charisma) exist, and you should narratively describe how these stats change and grow based on the player's actions.
-    You can create LLM-based puzzles and guide their resolution. When presenting a puzzle, clearly state its content and how to solve it.
-    There is no time limit.
-
-    Implicitly introduce new quests through the story. For example, an NPC asking for help, or a discovery leading to a new objective.
-    Implicitly manage NPC and faction reputations within the narrative. Describe how the player's actions affect NPC reactions.
-    Introduce potential companions to the player. Once a companion is recruited, describe their presence and interactions with the player and the world.
-    Clearly include quest progress, reputation changes, and companion interactions in the JSON output so the game logic can track them.
-
-    You must always respond in a valid JSON format. Pay careful attention to syntax. All strings must be properly quoted, and there should be no trailing commas after the last element of an object or array. All elements in an array must be comma-separated. Strictly adhere to the following JSON schema:
-    {
-      "story": "Story text for the current situation (narrated in third person).",
-      "choices": ["Choice 1", "Choice 2", ...],
-      "inventoryUpdates": ["Item1", "Item2", ...],
-      "statChanges": {"strength": 12, "intelligence": 10, ...},
-      "location": "Player's current location",
-      "reputationUpdates": {"FactionName": "Status", ...},
-      "activeQuestsUpdates": ["Quest1", "Quest2", ...],
-      "companionsUpdates": ["Companion1", "Companion2", ...]
+  // Scroll to the bottom whenever chat messages are updated
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-    Always provide between 2 and 5 'choices'.
-    'inventoryUpdates', 'statChanges', 'location', 'reputationUpdates', 'activeQuestsUpdates', 'companionsUpdates' must include the current state even if there are no changes.
-    Story text should be within 500 characters.
+  }, [chatMessages]);
+
+  // Define the system prompt to send to the LLM
+    const systemPrompt = `
+    당신은 중세 유럽풍 판타지 텍스트 어드벤처 게임의 스토리텔러이자 게임 마스터입니다.
+    플레이어의 선택과 현재 게임 상태를 기반으로 스토리를 진행하고, 새로운 상황을 묘사하며, 다음 선택지를 제시해야 합니다.
+    당신은 3인칭으로 서술하며, 진지하고 서사적인 어조와 객관적이고 정보 전달적인 어조를 적절히 섞어 사용합니다.
+    정보는 직접적인 설명, 간접적인 묘사, NPC 대화, 아이템/문서 등 다양한 방식으로 제공합니다.
+    묘사의 세부 정도는 LLM이 유연하게 조절하되, 중요하거나 인상적인 장면에서는 상세하게 묘사합니다.
+    플레이어의 목표는 고정되어 있지 않으며, 플레이어의 선택과 행동에 따라 유동적으로 형성되어 무한한 엔딩으로 이어집니다.
+    간단한 인벤토리 시스템(주요 스토리 아이템 위주)을 고려하며, 아이템 획득 또는 사용 시 스토리 묘사에 반영합니다.
+    간단한 텍스트 기반 전투(선택 및 확률 기반)를 시뮬레이션합니다. 전투 시 적을 묘사하고, 플레이어의 행동, 능력치와 확률에 기반한 결과, 능력치 변화 또는 피해를 묘사합니다.
+    능력치(힘, 지능, 민첩, 카리스마)가 존재하며, 플레이어의 행동에 따라 능력치가 어떻게 변화하고 성장하는지 서사적으로 묘사해야 합니다.
+    LLM 기반 퍼즐을 생성하고 해결을 유도할 수 있습니다. 퍼즐을 제시할 때는 퍼즐의 내용과 해결 방법을 명확히 제시합니다.
+    시간 제한은 없습니다.
+
+    이야기를 통해 새로운 퀘스트를 암시적으로 도입합니다. 예를 들어, NPC가 도움을 요청하거나, 어떤 발견이 새로운 목표로 이어질 수 있습니다.
+    NPC 및 세력 평판을 이야기 내에서 암시적으로 관리합니다. 플레이어의 행동이 NPC 반응에 어떻게 영향을 미치는지 묘사합니다.
+    플레이어에게 잠재적인 동료를 소개합니다. 동료가 영입되면, 그들의 존재와 플레이어 및 세계와의 상호작용을 묘사합니다.
+    퀘스트 진행 상황, 평판 변화, 동료 상호작용을 JSON 출력에 명확히 포함하여 게임 로직이 이를 추적할 수 있도록 합니다.
+
+    당신은 항상 유효한 JSON 형식으로 응답해야 합니다. 구문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
+    {
+      "story": "현재 상황에 대한 스토리 텍스트 (3인칭으로 서술).",
+      "choices": ["선택지 1", "선택지 2", ...],
+      "inventoryUpdates": ["아이템1", "아이템2", ...],
+      "statChanges": {"strength": 12, "intelligence": 10, ...},
+      "location": "플레이어의 현재 위치",
+      "reputationUpdates": {"세력명": "상태", ...},
+      "activeQuestsUpdates": ["퀘스트1", "퀘스트2", ...],
+      "companionsUpdates": ["동료1", "동료2", ...]
+    }
+    항상 2개에서 5개 사이의 'choices'를 제공하십시오.
+    'inventoryUpdates', 'statChanges', 'location', 'reputationUpdates', 'activeQuestsUpdates', 'companionsUpdates'는 변경 사항이 없더라도 현재 상태를 포함하여야 합니다.
+    스토리 텍스트는 500자 이내여야 합니다.
   `;
 
   // LLM text generation function (Gemini-2.0-flash)
@@ -289,20 +314,20 @@ function App() {
     const apiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // <-- Enter your actual Gemini API key here!
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
-    const userPrompt = `
-      Current game phase: ${promptData.phase}
-      Player profession: ${promptData.character.profession}
-      Player initial motivation: ${promptData.character.initialMotivation}
-      Current stats: ${JSON.stringify(promptData.character.stats)}
-      Current inventory: ${JSON.stringify(promptData.character.inventory)}
-      Current location: ${promptData.character.currentLocation}
-      Current reputation: ${JSON.stringify(promptData.character.reputation)}
-      Current active quests: ${JSON.stringify(promptData.character.activeQuests)}
-      Current companions: ${JSON.stringify(promptData.character.companions)}
-      Previous game log (last 5 items): ${JSON.stringify(promptData.history.slice(-5))}
-      Player's last choice: ${promptData.playerChoice}
+	const userPrompt = `
+      현재 게임 단계: ${promptData.phase}
+      플레이어 직업: ${promptData.character.profession}
+      플레이어 초기 동기: ${promptData.character.initialMotivation}
+      현재 능력치: ${JSON.stringify(promptData.character.stats)}
+      현재 인벤토리: ${JSON.stringify(promptData.character.inventory)}
+      현재 위치: ${promptData.character.currentLocation}
+      현재 평판: ${JSON.stringify(promptData.character.reputation)}
+      현재 활성 퀘스트: ${JSON.stringify(promptData.character.activeQuests)}
+      현재 동료: ${JSON.stringify(promptData.character.companions)}
+      이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(promptData.history.slice(-5))}
+      플레이어의 마지막 선택: ${promptData.playerChoice}
 
-      Based on the above information, generate the next part of the story in Korean and provide choices according to the JSON schema in the system prompt.
+      위 정보를 바탕으로 다음 스토리 부분을 한국어로 생성하고, 시스템 프롬프트의 JSON 스키마에 따라 선택지를 제공하십시오.
     `;
     
     const chatHistory = [
@@ -475,6 +500,26 @@ function App() {
     }
   };
 
+  // Function to send a chat message
+  const sendChatMessage = async () => {
+    if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) {
+      console.warn("채팅 메시지를 보낼 수 없습니다. 내용을 입력하거나 인증 상태를 확인해주세요.");
+      return;
+    }
+
+    try {
+      const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
+      await addDoc(chatCollectionRef, {
+        userId: userId,
+        displayName: `플레이어 ${userId.substring(0, 4)}`,
+        message: currentChatMessage,
+        timestamp: serverTimestamp(),
+      });
+      setCurrentChatMessage(''); // 메시지 전송 후 입력 필드 초기화
+    } catch (error) {
+      console.error("채팅 메시지 전송 중 오류 발생:", error);
+    }
+  };
 
   // Player choice button click handler
   const handleChoiceClick = async (choice) => {
@@ -697,6 +742,49 @@ function App() {
             ) : (
               <p className="text-sm text-gray-400">공유된 활동이 아직 없습니다.</p>
             )}
+          </div>
+
+          {/* Chat section */}
+          <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
+            <h4 className="text-md font-semibold text-gray-200 mb-2">채팅:</h4>
+            <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm text-gray-300 space-y-2">
+              {chatMessages.length > 0 ? (
+                chatMessages.map((msg) => (
+                  <div key={msg.id} className="border-b border-gray-500 pb-1 last:border-b-0">
+                    <p className="text-xs text-gray-400">
+                      <span className="font-medium text-green-300">{msg.displayName}</span> (
+                      {msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'}):
+                    </p>
+                    <p>{msg.message}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-400">아직 채팅 메시지가 없습니다.</p>
+              )}
+              <div ref={chatEndRef} /> {/* Empty div for scroll position */}
+            </div>
+            <div className="flex">
+              <input
+                type="text"
+                className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                placeholder="메시지를 입력하세요..."
+                value={currentChatMessage}
+                onChange={(e) => setCurrentChatMessage(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    sendChatMessage();
+                  }
+                }}
+                disabled={!isAuthReady || !userId}
+              />
+              <button
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-r-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                onClick={sendChatMessage}
+                disabled={!isAuthReady || !userId || !currentChatMessage.trim()}
+              >
+                보내기
+              </button>
+            </div>
           </div>
         </div>
       </div>
