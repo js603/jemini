@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInAnonymously, // 익명 로그인 임포트
+  onAuthStateChanged 
+} from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, serverTimestamp, addDoc } from 'firebase/firestore';
 
 // ====================================================================
@@ -19,13 +23,8 @@ const firebaseConfig = {
 };
 // ====================================================================
 
-// Canvas 환경에서 제공되던 전역 변수들은 더 이상 사용하지 않습니다.
-// const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-// const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-text-adventure-app';
-
 // 사용자님의 Firebase projectId를 앱 ID로 사용합니다.
 const appId = firebaseConfig.projectId;
-
 
 // 게임의 초기 직업 정보 및 동기
 const professions = {
@@ -81,9 +80,9 @@ function App() {
     try {
       // Firebase API 키가 플레이스홀더인지 확인합니다.
       if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.apiKey) {
-        console.error("Firebase 초기화 오류: firebaseConfig.apiKey를 사용자님의 실제 Firebase API 키로 교체해야 합니다.");
+        console.error("Firebase initialization error: firebaseConfig.apiKey must be replaced with your actual Firebase API key.");
         setGameLog(prev => [...prev, "오류: Firebase API 키가 올바르게 설정되지 않았습니다. 코드를 확인해주세요."]);
-        return; // Firebase 초기화를 중단합니다.
+        return; // Firebase initialization is stopped.
       }
 
       const app = initializeApp(firebaseConfig);
@@ -98,13 +97,13 @@ function App() {
           setUserId(user.uid);
           setIsAuthReady(true);
         } else {
-            // Canvas의 __initial_auth_token 대신 익명 로그인 시도
-            try {
-                await signInAnonymously(firebaseAuth);
-            } catch (error) {
-                console.error("Anonymous sign-in failed:", error);
-                setGameLog(prev => [...prev, "오류: Firebase 인증에 실패했습니다."]);
-            }
+          // If no user is logged in, attempt anonymous sign-in.
+          try {
+            await signInAnonymously(firebaseAuth);
+          } catch (error) {
+            console.error("Anonymous sign-in failed:", error);
+            setGameLog(prev => [...prev, "오류: Firebase 인증에 실패했습니다."]);
+          }
         }
       });
 
@@ -120,21 +119,21 @@ function App() {
     if (!db || !isAuthReady || !userId || !auth) return;
 
     // 1. 공유 게임 로그 리스너
-    // Firestore 보안 규칙에 따라 경로를 조정합니다.
-    // 공개 데이터는 /artifacts/{appId}/public/data/{your_collection_name}
+    // Firestore security rules adjust the path.
+    // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
     const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
     const qSharedLog = query(sharedLogCollectionRef);
     const unsubscribeSharedLog = onSnapshot(qSharedLog, (snapshot) => {
       const logs = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)); // 타임스탬프 기준으로 정렬
+        .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)); // Sort by timestamp
       setSharedGameLog(logs);
     }, (error) => {
       console.error("Shared game log snapshot error:", error);
     });
 
     // 2. 활성 사용자 목록 리스너
-    // 공개 데이터는 /artifacts/{appId}/public/data/{your_collection_name}
+    // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
     const activeUsersCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
     const qActiveUsers = query(activeUsersCollectionRef);
     const unsubscribeActiveUsers = onSnapshot(qActiveUsers, (snapshot) => {
@@ -144,14 +143,14 @@ function App() {
       console.error("Active users snapshot error:", error);
     });
 
-    // 사용자 접속 상태 업데이트 (주기적으로)
+    // Update user presence (periodically)
     const updateUserPresence = async () => {
       if (userId) {
         try {
           const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
           await setDoc(userDocRef, {
             lastActive: serverTimestamp(),
-            displayName: `플레이어 ${userId.substring(0, 4)}`, // 사용자 ID의 일부만 표시
+            displayName: `플레이어 ${userId.substring(0, 4)}`, // Display only part of the user ID
           }, { merge: true });
         } catch (error) {
           console.error("Failed to update user presence:", error);
@@ -159,8 +158,8 @@ function App() {
       }
     };
 
-    updateUserPresence(); // 초기 업데이트
-    const presenceInterval = setInterval(updateUserPresence, 30000); // 30초마다 업데이트
+    updateUserPresence(); // Initial update
+    const presenceInterval = setInterval(updateUserPresence, 30000); // Update every 30 seconds
 
     return () => {
       unsubscribeSharedLog();
@@ -170,7 +169,7 @@ function App() {
   }, [db, isAuthReady, userId, auth]);
 
 
-  // 게임 시작 시 초기 메시지 및 직업 선택지 설정
+  // Set initial message and profession choices when the game starts
   useEffect(() => {
     if (gamePhase === 'characterSelection') {
       setGameLog([
@@ -181,78 +180,78 @@ function App() {
     }
   }, [gamePhase]);
 
-  // 게임 로그가 업데이트될 때마다 스크롤을 최하단으로 이동
+  // Scroll to the bottom whenever the game log is updated
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [gameLog]);
 
-  // 공유 로그가 업데이트될 때마다 스크롤을 최하단으로 이동
+  // Scroll to the bottom whenever the shared log is updated
   useEffect(() => {
     if (sharedLogEndRef.current) {
       sharedLogEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [sharedGameLog]);
 
-  // LLM에 보낼 시스템 프롬프트 정의
+  // Define the system prompt to send to the LLM
   const systemPrompt = `
-    당신은 중세 유럽풍 판타지 텍스트 어드벤처 게임의 스토리텔러이자 게임 마스터입니다.
-    플레이어의 선택과 현재 게임 상태를 기반으로 스토리를 진행하고, 새로운 상황을 묘사하며, 다음 선택지를 제시해야 합니다.
-    당신은 3인칭으로 서술하며, 진지하고 서사적인 어조와 객관적이고 정보 전달적인 어조를 적절히 섞어 사용합니다.
-    정보는 직접적인 설명, 간접적인 묘사, NPC 대화, 아이템/문서 등 다양한 방식으로 제공합니다.
-    묘사의 세부 정도는 LLM이 유연하게 조절하되, 중요하거나 인상적인 장면에서는 상세하게 묘사합니다.
-    플레이어의 목표는 고정되어 있지 않으며, 플레이어의 선택과 행동에 따라 유동적으로 형성되어 무한한 엔딩으로 이어집니다.
-    간단한 인벤토리 시스템(주요 스토리 아이템 위주)을 고려하며, 아이템 획득 또는 사용 시 스토리 묘사에 반영합니다.
-    간단한 텍스트 기반 전투(선택 및 확률 기반)를 시뮬레이션합니다. 전투 시 적을 묘사하고, 플레이어의 행동, 능력치와 확률에 기반한 결과, 능력치 변화 또는 피해를 묘사합니다.
-    능력치(힘, 지능, 민첩, 카리스마)가 존재하며, 플레이어의 행동에 따라 능력치가 어떻게 변화하고 성장하는지 서사적으로 묘사해야 합니다.
-    LLM 기반 퍼즐을 생성하고 해결을 유도할 수 있습니다. 퍼즐을 제시할 때는 퍼즐의 내용과 해결 방법을 명확히 제시합니다.
-    시간 제한은 없습니다.
+    You are the storyteller and game master for a medieval European fantasy text adventure game.
+    Based on the player's choices and current game state, you must advance the story, describe new situations, and present the next choices.
+    You narrate in the third person, mixing a serious, narrative tone with an objective, informative tone as appropriate.
+    Information is provided through various means: direct explanations, indirect descriptions, NPC dialogues, items/documents, etc.
+    The level of detail in descriptions can be flexibly adjusted by the LLM, but should be detailed for important or impressive scenes.
+    The player's goals are not fixed; they are fluidly formed based on the player's choices and actions, leading to infinite endings.
+    Consider a simple inventory system (focused on key story items), reflecting item acquisition or use in story descriptions.
+    Simulate simple text-based combat (choice and probability-based). In combat, describe the enemy, the player's actions, probability-based outcomes, and changes in stats or damage.
+    Stats (Strength, Intelligence, Agility, Charisma) exist, and you should narratively describe how these stats change and grow based on the player's actions.
+    You can create LLM-based puzzles and guide their resolution. When presenting a puzzle, clearly state its content and how to solve it.
+    There is no time limit.
 
-    이야기를 통해 새로운 퀘스트를 암시적으로 도입합니다. 예를 들어, NPC가 도움을 요청하거나, 어떤 발견이 새로운 목표로 이어질 수 있습니다.
-    NPC 및 세력 평판을 이야기 내에서 암시적으로 관리합니다. 플레이어의 행동이 NPC 반응에 어떻게 영향을 미치는지 묘사합니다.
-    플레이어에게 잠재적인 동료를 소개합니다. 동료가 영입되면, 그들의 존재와 플레이어 및 세계와의 상호작용을 묘사합니다.
-    퀘스트 진행 상황, 평판 변화, 동료 상호작용을 JSON 출력에 명확히 포함하여 게임 로직이 이를 추적할 수 있도록 합니다.
+    Implicitly introduce new quests through the story. For example, an NPC asking for help, or a discovery leading to a new objective.
+    Implicitly manage NPC and faction reputations within the narrative. Describe how the player's actions affect NPC reactions.
+    Introduce potential companions to the player. Once a companion is recruited, describe their presence and interactions with the player and the world.
+    Clearly include quest progress, reputation changes, and companion interactions in the JSON output so the game logic can track them.
 
-    당신은 항상 유효한 JSON 형식으로 응답해야 합니다. 구문에 세심한 주의를 기울이십시오. 모든 문자열은 올바르게 인용되어야 하며, 객체 또는 배열의 마지막 요소 뒤에 후행 쉼표가 없어야 합니다. 배열의 모든 요소는 쉼표로 구분되어야 합니다. 다음 JSON 스키마를 엄격히 따르십시오:
+    You must always respond in a valid JSON format. Pay careful attention to syntax. All strings must be properly quoted, and there should be no trailing commas after the last element of an object or array. All elements in an array must be comma-separated. Strictly adhere to the following JSON schema:
     {
-      "story": "현재 상황에 대한 스토리 텍스트 (3인칭으로 서술).",
-      "choices": ["선택지 1", "선택지 2", ...],
-      "inventoryUpdates": ["아이템1", "아이템2", ...],
+      "story": "Story text for the current situation (narrated in third person).",
+      "choices": ["Choice 1", "Choice 2", ...],
+      "inventoryUpdates": ["Item1", "Item2", ...],
       "statChanges": {"strength": 12, "intelligence": 10, ...},
-      "location": "플레이어의 현재 위치",
-      "reputationUpdates": {"세력명": "상태", ...},
-      "activeQuestsUpdates": ["퀘스트1", "퀘스트2", ...],
-      "companionsUpdates": ["동료1", "동료2", ...]
+      "location": "Player's current location",
+      "reputationUpdates": {"FactionName": "Status", ...},
+      "activeQuestsUpdates": ["Quest1", "Quest2", ...],
+      "companionsUpdates": ["Companion1", "Companion2", ...]
     }
-    항상 2개에서 5개 사이의 'choices'를 제공하십시오.
-    'inventoryUpdates', 'statChanges', 'location', 'reputationUpdates', 'activeQuestsUpdates', 'companionsUpdates'는 변경 사항이 없더라도 현재 상태를 포함하여야 합니다.
-    스토리 텍스트는 500자 이내여야 합니다.
+    Always provide between 2 and 5 'choices'.
+    'inventoryUpdates', 'statChanges', 'location', 'reputationUpdates', 'activeQuestsUpdates', 'companionsUpdates' must include the current state even if there are no changes.
+    Story text should be within 500 characters.
   `;
 
-  // LLM 텍스트 생성 함수 (Gemini-2.0-flash)
+  // LLM text generation function (Gemini-2.0-flash)
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     console.log("DEBUG: Starting callGeminiTextLLM");
-    // 여기에 본인의 Gemini API 키를 입력하세요.
-    // Canvas 환경이 아니므로 직접 키를 입력해야 합니다.
-    const apiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // <-- 여기에 실제 Gemini API 키를 입력하세요!
+    // Enter your Gemini API key here.
+    // Since this is not a Canvas environment, you must enter the key directly.
+    const apiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // <-- Enter your actual Gemini API key here!
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
     const userPrompt = `
-      현재 게임 단계: ${promptData.phase}
-      플레이어 직업: ${promptData.character.profession}
-      플레이어 초기 동기: ${promptData.character.initialMotivation}
-      현재 능력치: ${JSON.stringify(promptData.character.stats)}
-      현재 인벤토리: ${JSON.stringify(promptData.character.inventory)}
-      현재 위치: ${promptData.character.currentLocation}
-      현재 평판: ${JSON.stringify(promptData.character.reputation)}
-      현재 활성 퀘스트: ${JSON.stringify(promptData.character.activeQuests)}
-      현재 동료: ${JSON.stringify(promptData.character.companions)}
-      이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(promptData.history.slice(-5))}
-      플레이어의 마지막 선택: ${promptData.playerChoice}
+      Current game phase: ${promptData.phase}
+      Player profession: ${promptData.character.profession}
+      Player initial motivation: ${promptData.character.initialMotivation}
+      Current stats: ${JSON.stringify(promptData.character.stats)}
+      Current inventory: ${JSON.stringify(promptData.character.inventory)}
+      Current location: ${promptData.character.currentLocation}
+      Current reputation: ${JSON.stringify(promptData.character.reputation)}
+      Current active quests: ${JSON.stringify(promptData.character.activeQuests)}
+      Current companions: ${JSON.stringify(promptData.character.companions)}
+      Previous game log (last 5 items): ${JSON.stringify(promptData.history.slice(-5))}
+      Player's last choice: ${promptData.playerChoice}
 
-      위 정보를 바탕으로 다음 스토리 부분을 한국어로 생성하고, 시스템 프롬프트의 JSON 스키마에 따라 선택지를 제공하십시오.
+      Based on the above information, generate the next part of the story in Korean and provide choices according to the JSON schema in the system prompt.
     `;
     
     const chatHistory = [
@@ -309,11 +308,11 @@ function App() {
         }
 
       } else {
-        console.error("LLM 응답 구조가 예상과 다릅니다:", result);
+        console.error("LLM response structure is different than expected:", result);
         throw new Error("Invalid LLM response structure.");
       }
     } catch (error) {
-      console.error("LLM API 호출 오류:", error);
+      console.error("LLM API call error:", error);
       return {
         story: `오류: LLM API 호출 중 문제가 발생했습니다: ${error.message}. 네트워크 연결을 확인하고 다시 시도해주세요.`,
         choices: ["다시 시도"],
@@ -339,7 +338,7 @@ function App() {
 
     setIsTextLoading(true);
     try {
-      // 개인 데이터는 /artifacts/{appId}/users/{userId}/{your_collection_name}
+      // Private data is at /artifacts/{appId}/users/{userId}/{your_collection_name}
       const gameDocRef = doc(db, 'artifacts', appId, 'users', userId, 'textAdventureGame', 'gameState');
       await setDoc(gameDocRef, {
         gameLog: gameLog,
@@ -350,7 +349,7 @@ function App() {
       });
       setGameLog(prev => [...prev, "\n게임이 성공적으로 저장되었습니다."]);
     } catch (error) {
-      console.error("게임 저장 오류:", error);
+      console.error("Game save error:", error);
       setGameLog(prev => [...prev, `\n게임 저장 중 오류가 발생했습니다: ${error.message}`]);
     } finally {
       setIsTextLoading(false);
@@ -366,7 +365,7 @@ function App() {
 
     setIsTextLoading(true);
     try {
-      // 개인 데이터는 /artifacts/{appId}/users/{userId}/{your_collection_name}
+      // Private data is at /artifacts/{appId}/users/{userId}/{your_collection_name}
       const gameDocRef = doc(db, 'artifacts', appId, 'users', userId, 'textAdventureGame', 'gameState');
       const docSnap = await getDoc(gameDocRef);
 
@@ -390,7 +389,7 @@ function App() {
         setGameLog(prev => [...prev, "\n저장된 게임이 없습니다."]);
       }
     } catch (error) {
-      console.error("게임 불러오기 오류:", error);
+      console.error("Game load error:", error);
       setGameLog(prev => [...prev, `\n게임 불러오기 중 오류가 발생했습니다: ${error.message}`]);
     } finally {
       setIsTextLoading(false);
@@ -406,11 +405,11 @@ function App() {
 
     setIsTextLoading(true);
     try {
-      // 개인 데이터는 /artifacts/{appId}/users/{userId}/{your_collection_name}
+      // Private data is at /artifacts/{appId}/users/{userId}/{your_collection_name}
       const feedbackCollectionRef = collection(db, 'artifacts', appId, 'users', userId, 'feedback');
       await addDoc(feedbackCollectionRef, {
         feedback: feedbackText,
-        gameLogSnapshot: gameLog.slice(-10), // 최근 10개 로그 스냅샷
+        gameLogSnapshot: gameLog.slice(-10), // Snapshot of the last 10 logs
         playerCharacterSnapshot: playerCharacter,
         timestamp: serverTimestamp(),
       });
@@ -418,7 +417,7 @@ function App() {
       setFeedbackText('');
       setShowFeedbackModal(false);
     } catch (error) {
-      console.error("피드백 전송 오류:", error);
+      console.error("Feedback submission error:", error);
       setGameLog(prev => [...prev, `\n피드백 전송 중 오류가 발생했습니다: ${error.message}`]);
     } finally {
       setIsTextLoading(false);
@@ -426,12 +425,12 @@ function App() {
   };
 
 
-  // 플레이어 선택 버튼 클릭 처리 함수
+  // Player choice button click handler
   const handleChoiceClick = async (choice) => {
-    if (isTextLoading) return; // 텍스트 로딩 중이면 처리 안 함
+    if (isTextLoading) return; // Do not process if text is loading
 
     setGameLog(prev => [...prev, `\n> 당신의 선택: ${choice}\n`]);
-    setCurrentChoices([]); // 선택지를 비워서 중복 클릭 방지 및 다음 응답 대기
+    setCurrentChoices([]); // Clear choices to prevent duplicate clicks and wait for next response
 
     let promptData;
     if (gamePhase === 'characterSelection') {
@@ -439,7 +438,7 @@ function App() {
       const chosenProfession = professions[chosenProfessionKey];
 
       if (chosenProfession) {
-        // 직업 선택 시 초기 캐릭터 상태 설정
+        // Set initial character state when profession is selected
         const initialCharacterState = {
           profession: chosenProfession.name,
           stats: {
@@ -455,17 +454,17 @@ function App() {
           activeQuests: [],
           companions: [],
         };
-        setPlayerCharacter(initialCharacterState); // 먼저 캐릭터 상태를 업데이트
+        setPlayerCharacter(initialCharacterState); // Update character state first
 
-        // LLM에 보낼 프롬프트 데이터 구성
+        // Construct prompt data to send to LLM
         promptData = {
           phase: 'characterSelection',
           playerChoice: choice,
-          character: initialCharacterState, // 업데이트된 캐릭터 상태를 LLM에 전달
+          character: initialCharacterState, // Pass the updated character state to LLM
           history: gameLog,
         };
 
-        // LLM 호출
+        // Call LLM
         const llmResponse = await callGeminiTextLLM(promptData);
         setGameLog(prev => [...prev, llmResponse.story]);
 
@@ -479,29 +478,29 @@ function App() {
           companions: llmResponse.companionsUpdates || prev.companions,
         }));
         setCurrentChoices(llmResponse.choices || []);
-        setGamePhase('playing'); // 게임 단계 변경
+        setGamePhase('playing'); // Change game phase
       } else {
         setGameLog(prev => [...prev, "유효하지 않은 선택입니다. 제시된 직업 중 하나를 선택해주세요."]);
-        setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`)); // 다시 직업 선택지 표시
+        setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`)); // Display profession choices again
       }
 
     } else { // gamePhase === 'playing'
-      // 게임 플레이 중 LLM에 보낼 프롬프트 데이터 구성
+      // Construct prompt data to send to LLM during game play
       promptData = {
         phase: 'playing',
         playerChoice: choice,
-        character: playerCharacter, // 현재 캐릭터 상태를 LLM에 전달
+        character: playerCharacter, // Pass the current character state to LLM
         history: gameLog,
       };
 
-      // LLM 호출
+      // Call LLM
       const llmResponse = await callGeminiTextLLM(promptData);
       setGameLog(prev => [...prev, llmResponse.story]);
 
-      // LLM 응답을 공유 로그에 추가 (멀티플레이어 기능)
+      // Add LLM response to shared log (multiplayer feature)
       if (db && userId) {
         try {
-          // 공개 데이터는 /artifacts/{appId}/public/data/{your_collection_name}
+          // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
           const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
           await addDoc(sharedLogCollectionRef, {
             userId: userId,
@@ -530,16 +529,16 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
       <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
-        {/* 메인 게임 영역 */}
+        {/* Main game area */}
         <div className="flex flex-col w-full lg:w-2/3 space-y-6">
-          {/* 사용자 ID 표시 (디버깅 및 다중 사용자 식별용) */}
+          {/* User ID display (for debugging and multi-user identification) */}
           {isAuthReady && userId && (
             <div className="text-xs text-gray-500 text-center mb-2">
               사용자 ID: {userId}
             </div>
           )}
 
-          {/* 게임 텍스트 출력 영역 */}
+          {/* Game text output area */}
           <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed">
             {gameLog.map((line, index) => (
               <p key={index} className="whitespace-pre-wrap mb-1" dangerouslySetInnerHTML={{ __html: line.replace(/\n/g, '<br />') }}></p>
@@ -552,10 +551,10 @@ function App() {
                 </span>
               </div>
             )}
-            <div ref={logEndRef} /> {/* 스크롤 위치를 위한 빈 div */}
+            <div ref={logEndRef} /> {/* Empty div for scroll position */}
           </div>
 
-          {/* 캐릭터 정보 표시 */}
+          {/* Character info display */}
           {gamePhase === 'playing' && (
             <div className="bg-gray-700 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1">
               <p><span className="font-semibold text-gray-100">직업:</span> {playerCharacter.profession}</p>
@@ -568,7 +567,7 @@ function App() {
             </div>
           )}
 
-          {/* 선택 버튼 영역 */}
+          {/* Choice button area */}
           <div className="flex flex-col gap-3">
             {currentChoices.map((choice, index) => (
               <button
@@ -582,37 +581,37 @@ function App() {
             ))}
           </div>
 
-          {/* 저장/불러오기 및 피드백 버튼 */}
+          {/* Save/Load and Feedback buttons */}
           <div className="flex flex-col md:flex-row gap-3 mt-4">
             <button
               className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={saveGame}
-              disabled={isTextLoading || !isAuthReady || gamePhase === 'characterSelection'}
+              disabled={isTextLoading || !isAuthReady || !userId || gamePhase === 'characterSelection'}
             >
               게임 저장
             </button>
             <button
               className="flex-1 px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={loadGame}
-              disabled={isTextLoading || !isAuthReady}
+              disabled={isTextLoading || !isAuthReady || !userId}
             >
               게임 불러오기
             </button>
             <button
               className="flex-1 px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => setShowFeedbackModal(true)}
-              disabled={isTextLoading || !isAuthReady}
+              disabled={isTextLoading || !isAuthReady || !userId}
             >
               피드백 보내기
             </button>
           </div>
         </div>
 
-        {/* 멀티플레이어 사이드바 */}
+        {/* Multiplayer sidebar */}
         <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
           <h3 className="text-lg font-bold text-gray-100 text-center mb-4">공유된 모험</h3>
           
-          {/* 활성 사용자 목록 */}
+          {/* Active user list */}
           <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
             <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어들:</h4>
             {activeUsers.length > 0 ? (
@@ -628,7 +627,7 @@ function App() {
             )}
           </div>
 
-          {/* 공유 게임 로그 */}
+          {/* Shared game log */}
           <div className="bg-gray-600 p-3 rounded-md flex-grow h-96 overflow-y-auto custom-scrollbar">
             <h4 className="text-md font-semibold text-gray-200 mb-2">모든 플레이어의 활동:</h4>
             {sharedGameLog.length > 0 ? (
@@ -651,7 +650,7 @@ function App() {
         </div>
       </div>
 
-      {/* 피드백 모달 */}
+      {/* Feedback modal */}
       {showFeedbackModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
