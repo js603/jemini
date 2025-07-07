@@ -34,17 +34,11 @@ const defaultFirebaseConfig = {
 };
 
 // Canvas 환경에서 제공되는 전역 변수 사용
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : defaultFirebaseConfig;
+const firebaseConfig = defaultFirebaseConfig;
 
-const appId = typeof __app_id !== 'undefined' 
-  ? __app_id 
-  : firebaseConfig.projectId;
+const appId = firebaseConfig.projectId;
 
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' 
-  ? __initial_auth_token 
-  : null;
+const initialAuthToken = null;
 // ====================================================================
 
 // 게임의 초기 직업 정보 및 동기
@@ -330,7 +324,13 @@ function App() {
 
   // 새로운 useEffect: 자신에게 온 개인 메시지를 감지하여 모달을 강제로 열기
   useEffect(() => {
-    if (!db || !isAuthReady || !userId || showPlayerChatModal) return; // 이미 모달이 열려있으면 동작하지 않음
+    console.log("DEBUG: Setting up incoming private messages listener check.");
+    console.log(`DEBUG: db: ${!!db}, isAuthReady: ${isAuthReady}, userId: ${userId}, appId: ${appId}, showPlayerChatModal: ${showPlayerChatModal}`);
+
+    if (!db || !isAuthReady || !userId || showPlayerChatModal) {
+      console.log("DEBUG: Skipping incoming private messages listener setup due to missing prerequisites.");
+      return; // 이미 모달이 열려있으면 동작하지 않음
+    }
 
     // 모든 'messages' 서브컬렉션에서 receiverId가 현재 사용자인 메시지를 감지
     // 이 쿼리는 Firestore 보안 규칙에서 collectionGroup 규칙이 설정되어 있어야 작동합니다.
@@ -368,7 +368,7 @@ function App() {
     });
 
     return () => unsubscribeIncomingPrivateMessages();
-  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers]); // 의존성 배열 추가
+  }, [db, isAuthReady, userId, showPlayerChatModal, selectedPlayerForChat, activeUsers, appId]); // 의존성 배열에 appId 추가
 
   // Define the system prompt to send to the LLM
     const systemPrompt = `
