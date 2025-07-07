@@ -5,7 +5,19 @@ import {
   signInAnonymously, // 익명 로그인 임포트
   onAuthStateChanged 
 } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, serverTimestamp, addDoc } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  query, 
+  onSnapshot, 
+  serverTimestamp, 
+  addDoc,
+  getDocs, // 추가: 문서 목록을 가져오기 위해
+  deleteDoc // 추가: 문서를 삭제하기 위해
+} from 'firebase/firestore';
 
 // ====================================================================
 // TODO: 여기에 사용자님의 개인 Firebase 구성 정보를 직접 붙여넣으세요!
@@ -137,7 +149,11 @@ function App() {
     const activeUsersCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
     const qActiveUsers = query(activeUsersCollectionRef);
     const unsubscribeActiveUsers = onSnapshot(qActiveUsers, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // 60초 이내에 활동한 사용자만 필터링하여 UI에 표시합니다.
+      const cutoffTime = Date.now() - 60 * 1000; // 60초 (1분)
+      const users = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(user => user.lastActive && user.lastActive.toMillis() > cutoffTime); // lastActive 타임스탬프를 기준으로 필터링
       setActiveUsers(users);
     }, (error) => {
       console.error("Active users snapshot error:", error);
@@ -168,6 +184,41 @@ function App() {
     };
   }, [db, isAuthReady, userId, auth]);
 
+  // 비활성 사용자 정리 함수 (클라이언트 측)
+  // 이 함수는 클라이언트 측에서 실행되므로, 앱이 실행 중일 때만 작동합니다.
+  // 더 견고하고 안전한 방법은 Firebase Cloud Functions를 사용하는 것입니다.
+  const cleanupInactiveUsers = async () => {
+    if (!db || !isAuthReady || !userId) return;
+
+    const inactiveThreshold = 5 * 60 * 1000; // 5분 (300초)
+    const cutoffTime = Date.now() - inactiveThreshold;
+
+    try {
+      const activeUsersCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
+      const querySnapshot = await getDocs(activeUsersCollectionRef); // 모든 문서를 가져옵니다.
+
+      querySnapshot.forEach(async (docSnapshot) => {
+        const userData = docSnapshot.data();
+        // lastActive 타임스탬프가 5분보다 오래된 사용자를 삭제합니다.
+        if (userData.lastActive && userData.lastActive.toMillis() < cutoffTime) {
+          console.log(`DEBUG: 비활성 사용자 삭제 중: ${docSnapshot.id}`);
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', docSnapshot.id));
+        }
+      });
+    } catch (error) {
+      console.error("비활성 사용자 정리 중 오류 발생:", error);
+    }
+  };
+
+  // 비활성 사용자 정리를 위한 인터벌 설정
+  useEffect(() => {
+    if (!db || !isAuthReady || !userId) return;
+
+    // 5분마다 비활성 사용자 정리 함수를 실행합니다.
+    const cleanupInterval = setInterval(cleanupInactiveUsers, 5 * 60 * 1000); // 5분마다 실행
+
+    return () => clearInterval(cleanupInterval); // 컴포넌트 언마운트 시 인터벌 정리
+  }, [db, isAuthReady, userId]); // db, isAuthReady, userId가 변경될 때마다 재실행
 
   // Set initial message and profession choices when the game starts
   useEffect(() => {
