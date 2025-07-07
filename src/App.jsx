@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
+import {
+  getAuth,
   signInAnonymously, // 익명 로그인 임포트
   signInWithCustomToken, // 커스텀 토큰 로그인 임포트
-  onAuthStateChanged 
+  onAuthStateChanged
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  collection, 
-  query, 
-  onSnapshot, 
-  serverTimestamp, 
+import {
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  collection,
+  query,
+  onSnapshot,
+  serverTimestamp,
   addDoc,
   getDocs, // 추가: 문서 목록을 가져오기 위해
   deleteDoc, // 추가: 문서를 삭제하기 위해
@@ -91,6 +91,10 @@ function App() {
   const [privateChatMessages, setPrivateChatMessages] = useState([]);
   const [currentPrivateChatMessage, setCurrentPrivateChatMessage] = useState('');
 
+  // [추가] 동료 간 시나리오 진행 상태
+  const [isCompanionActionInProgress, setIsCompanionActionInProgress] = useState(false);
+  const [actingPlayer, setActingPlayer] = useState(null); // [추가] 현재 행동 중인 플레이어 정보
+
 
   // Firebase 및 인증 상태
   const [db, setDb] = useState(null);
@@ -151,6 +155,18 @@ function App() {
   useEffect(() => {
     if (!db || !isAuthReady || !userId || !auth) return;
 
+    // [수정] 게임 상태(시나리오 진행 등)를 감시하는 리스너 추가
+    const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+    const unsubscribeGameStatus = onSnapshot(gameStatusDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            setIsCompanionActionInProgress(data.isActionInProgress || false);
+            setActingPlayer(data.actingPlayer || null); // 행동 중인 플레이어 정보 업데이트
+        }
+    }, (error) => {
+        console.error("Game status snapshot error:", error);
+    });
+
     // 1. 공유 게임 로그 리스너
     // Firestore security rules adjust the path.
     // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
@@ -201,6 +217,7 @@ function App() {
             lastActive: serverTimestamp(),
             displayName: `플레이어 ${userId.substring(0, 4)}`, // Display only part of the user ID
             profession: playerCharacter.profession, // 플레이어 직업 추가
+            isCompanion: playerCharacter.companions.length > 0, // [추가] 동료 여부
           }, { merge: true });
         } catch (error) {
           console.error("Failed to update user presence:", error);
@@ -215,9 +232,10 @@ function App() {
       unsubscribeSharedLog();
       unsubscribeActiveUsers();
       unsubscribeChatMessages(); // 채팅 리스너 정리
+      unsubscribeGameStatus(); // [수정] 게임 상태 리스너 정리
       clearInterval(presenceInterval);
     };
-  }, [db, isAuthReady, userId, auth, playerCharacter.profession]); // playerCharacter.profession을 의존성 배열에 추가
+  }, [db, isAuthReady, userId, auth, playerCharacter.profession, playerCharacter.companions]); // playerCharacter.companions를 의존성 배열에 추가
 
   // 비활성 사용자 정리 함수 (클라이언트 측)
   // 이 함수는 클라이언트 측에서 실행되므로, 앱이 실행 중일 때만 작동합니다.
@@ -417,7 +435,7 @@ function App() {
     // Since this is not a Canvas environment, you must enter the key directly.
     const apiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // <-- Enter your actual Gemini API key here!
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-    
+
 	const userPrompt = `
       현재 게임 단계: ${promptData.phase}
       플레이어 직업: ${promptData.character.profession}
@@ -430,7 +448,7 @@ function App() {
       현재 동료: ${JSON.stringify(promptData.character.companions)}
       이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(promptData.history.slice(-5))}
       플레이어의 마지막 선택: ${promptData.playerChoice}
-      
+
       **현재 접속 중인 다른 플레이어들:**
       ${JSON.stringify(promptData.activeUsers)}
 
@@ -439,7 +457,7 @@ function App() {
 
       위 정보를 바탕으로 다음 스토리 부분을 한국어로 생성하고, 시스템 프롬프트의 JSON 스키마에 따라 선택지를 제공하십시오.
     `;
-    
+
     const chatHistory = [
         { role: "user", parts: [{ text: systemPrompt }] },
         { role: "user", parts: [{ text: userPrompt }] }
@@ -470,10 +488,10 @@ function App() {
       if (result.candidates && result.candidates.length > 0 &&
           result.candidates[0].content && result.candidates[0].content.parts &&
           result.candidates[0].content.parts.length > 0) {
-        
+
         let llmOutputText = result.candidates[0].content.parts[0].text;
         console.log("DEBUG: LLM Raw Output Text:", llmOutputText);
-        
+
         // Extract JSON object from the LLM response, in case it includes pre/postamble text.
         const jsonMatch = llmOutputText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -481,7 +499,7 @@ function App() {
         } else {
             throw new Error("Valid JSON object not found in LLM response.");
         }
-        
+
         // Attempt to parse the extracted JSON string.
         try {
             const llmOutput = JSON.parse(llmOutputText);
@@ -641,7 +659,7 @@ function App() {
     try {
       const chatRoomId = getPrivateChatRoomId(userId, selectedPlayerForChat.id);
       const privateChatCollectionRef = collection(db, 'artifacts', appId, 'privateChats', chatRoomId, 'messages');
-      
+
       await addDoc(privateChatCollectionRef, {
         senderId: userId,
         receiverId: selectedPlayerForChat.id, // 수신자 ID 명시
@@ -669,173 +687,195 @@ function App() {
     setShowPlayerChatModal(false);
   };
 
-  // 개인 대화 종료 및 시나리오 반영 함수 (가장 중요한 변경점)
+  // 개인 대화 종료 및 시나리오 반영 함수 (수정됨)
   const handleEndPrivateChatAndReflectScenario = async () => {
-    if (isTextLoading || !selectedPlayerForChat || privateChatMessages.length === 0) {
-      console.warn("개인 대화 종료 및 시나리오 반영을 처리할 수 없습니다. 로딩 중이거나, 대화 상대가 없거나, 메시지가 없습니다.");
-      return;
-    }
+      if (!selectedPlayerForChat) return;
 
-    setGameLog(prev => [...prev, `\n> ${selectedPlayerForChat.displayName}님과의 대화가 종료되었습니다. 이 대화가 시나리오에 반영됩니다.\n`]);
-    setIsTextLoading(true);
-    
-    // LLM에 전달할 promptData 구성
-    const promptData = {
-      phase: 'playing',
-      playerChoice: `플레이어 ${selectedPlayerForChat.displayName}님과의 대화 종료.`, // LLM이 인식할 수 있는 명확한 선택지
-      character: playerCharacter,
-      history: gameLog,
-      activeUsers: activeUsers.filter(user => user.id !== userId),
-      privateChatHistory: privateChatMessages // 현재 개인 대화 내용 전체를 LLM에 전달
-    };
+      // [수정] LLM 호출 전에 모달을 먼저 닫아 사용자 경험 개선
+      closePlayerChatModal();
 
-    try {
-      const llmResponse = await callGeminiTextLLM(promptData);
-      setGameLog(prev => [...prev, llmResponse.story]);
+      // 로딩 상태 시작
+      setIsTextLoading(true);
+      setGameLog(prev => [...prev, `\n> ${selectedPlayerForChat.displayName}님과의 대화 내용을 바탕으로 시나리오를 진행합니다...\n`]);
 
-      // LLM 응답을 공유 로그에 추가 (멀티플레이어 기능)
-      if (db && userId) {
-        try {
-          const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
-          await addDoc(sharedLogCollectionRef, {
-            userId: userId,
-            displayName: `플레이어 ${userId.substring(0, 4)}`,
-            content: `[${playerCharacter.profession}]이(가) ${selectedPlayerForChat.displayName}님과 대화 후: ${llmResponse.story}`,
-            timestamp: serverTimestamp(),
-          });
-        } catch (error) {
-          console.error("Failed to add to shared log after private chat:", error);
-        }
+      // LLM에 전달할 promptData 구성
+      const promptData = {
+          phase: 'playing',
+          playerChoice: `플레이어 ${selectedPlayerForChat.displayName}님과의 대화 종료.`,
+          character: playerCharacter,
+          history: gameLog,
+          activeUsers: activeUsers.filter(user => user.id !== userId),
+          privateChatHistory: privateChatMessages
+      };
+
+      try {
+          // [수정] 공유 시나리오 진행 상태를 Firestore에 업데이트
+          const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+          await setDoc(gameStatusDocRef, {
+              isActionInProgress: true,
+              actingPlayer: { id: userId, displayName: `플레이어 ${userId.substring(0, 4)}` }
+          }, { merge: true });
+
+          const llmResponse = await callGeminiTextLLM(promptData);
+
+          // 여러 플레이어의 상태를 업데이트해야 하므로, Cloud Function을 사용하는 것이 이상적입니다.
+          // 클라이언트 측에서는 우선 자신의 상태와 공유 로그만 업데이트합니다.
+          setGameLog(prev => [...prev, llmResponse.story]);
+
+          if (db && userId) {
+              const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
+              await addDoc(sharedLogCollectionRef, {
+                  userId: userId,
+                  displayName: `플레이어 ${userId.substring(0, 4)}`,
+                  content: `[${playerCharacter.profession}]이(가) ${selectedPlayerForChat.displayName}님과 대화 후: ${llmResponse.story}`,
+                  timestamp: serverTimestamp(),
+              });
+          }
+
+          setPlayerCharacter(prev => ({
+              ...prev,
+              inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+              stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
+              currentLocation: llmResponse.location || prev.currentLocation,
+              reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+              activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+              companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
+          }));
+          setCurrentChoices(llmResponse.choices || []);
+
+      } catch (error) {
+          console.error("Error processing private chat with LLM:", error);
+          setGameLog(prev => [...prev, `\n오류: 개인 대화 내용을 시나리오에 반영하는 중 문제가 발생했습니다: ${error.message}`]);
+      } finally {
+          // [수정] 시나리오 진행 완료 후 상태를 다시 false로 변경
+          const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+          await setDoc(gameStatusDocRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
+
+          setIsTextLoading(false); // 로딩 상태 종료
       }
-
-      setPlayerCharacter(prev => ({
-        ...prev,
-        inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
-        stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
-        currentLocation: llmResponse.location || prev.currentLocation,
-        reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
-        activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
-        companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
-      }));
-      setCurrentChoices(llmResponse.choices || []); // LLM이 새로운 선택지를 제공하도록 함
-    } catch (error) {
-      console.error("Error processing private chat with LLM:", error);
-      setGameLog(prev => [...prev, `\n오류: 개인 대화 내용을 시나리오에 반영하는 중 문제가 발생했습니다: ${error.message}`]);
-    } finally {
-      setIsTextLoading(false);
-      closePlayerChatModal(); // 대화 종료 후 모달 닫기
-    }
   };
 
   // Helper function to check if an object is empty
   const isObjectEmpty = (obj) => Object.keys(obj).length === 0 && obj.constructor === Object;
 
-  // Player choice button click handler
+  // Player choice button click handler (수정됨)
   const handleChoiceClick = async (choice) => {
-    if (isTextLoading) return; // Do not process if text is loading
+    // [수정] 다른 플레이어가 행동 중일 때는 선택 불가
+    if (isTextLoading || isCompanionActionInProgress) return;
 
     setGameLog(prev => [...prev, `\n> 당신의 선택: ${choice}\n`]);
-    setCurrentChoices([]); // Clear choices to prevent duplicate clicks and wait for next response
+    setCurrentChoices([]);
 
     let promptData;
-    if (gamePhase === 'characterSelection') {
-      const chosenProfessionKey = choice.split('.')[0].trim();
-      const chosenProfession = professions[chosenProfessionKey];
 
-      if (chosenProfession) {
-        // Set initial character state when profession is selected
-        const initialCharacterState = {
-          profession: chosenProfession.name,
-          stats: {
-            strength: chosenProfession.name.includes('기사') || chosenProfession.name.includes('용병') ? 12 : 10,
-            intelligence: chosenProfession.name.includes('마법사') ? 12 : 10,
-            agility: chosenProfession.name.includes('도적') ? 12 : 10,
-            charisma: chosenProfession.name.includes('왕족') ? 12 : 10,
-          },
-          inventory: [],
-          initialMotivation: chosenProfession.motivation,
-          currentLocation: '방랑자의 안식처', // 초기 위치를 '방랑자의 안식처'로 설정
-          reputation: {},
-          activeQuests: [],
-          companions: [],
-        };
-        setPlayerCharacter(initialCharacterState); // Update character state first
-
-        // Construct prompt data to send to LLM
-        promptData = {
-          phase: 'characterSelection',
-          playerChoice: choice,
-          character: initialCharacterState, // Pass the updated character state to LLM
-          history: gameLog,
-          activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
-          privateChatHistory: [] // 캐릭터 선택 시에는 개인 대화 내용 없음
-        };
-
-        // Call LLM
-        const llmResponse = await callGeminiTextLLM(promptData);
-        setGameLog(prev => [...prev, llmResponse.story]);
-
-        setPlayerCharacter(prev => ({
-          ...prev,
-          // Check if the LLM response provides a non-empty update, otherwise keep previous state
-          inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
-          stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
-          currentLocation: llmResponse.location || prev.currentLocation,
-          reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
-          activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
-          companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
-        }));
-        setCurrentChoices(llmResponse.choices || []);
-        setGamePhase('playing'); // Change game phase
-      } else {
-        setGameLog(prev => [...prev, "유효하지 않은 선택입니다. 제시된 직업 중 하나를 선택해주세요."]);
-        setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`)); // Display profession choices again
-      }
-
-    } else { // gamePhase === 'playing'
-      // Construct prompt data to send to LLM during game play
-      promptData = {
-        phase: 'playing',
-        playerChoice: choice,
-        character: playerCharacter, // Pass the current character state to LLM
-        history: gameLog,
-        activeUsers: activeUsers.filter(user => user.id !== userId), // 현재 플레이어를 제외한 다른 활성 플레이어 전달
-        privateChatHistory: [] // 일반 선택지 클릭 시에는 개인 대화 내용을 LLM에 전달하지 않음
-      };
-
-      // Call LLM
-      const llmResponse = await callGeminiTextLLM(promptData);
-      setGameLog(prev => [...prev, llmResponse.story]);
-
-      // Add LLM response to shared log (multiplayer feature)
-      if (db && userId) {
-        try {
-          // Public data is at /artifacts/{appId}/public/data/{your_collection_name}
-          const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
-          await addDoc(sharedLogCollectionRef, {
-            userId: userId,
-            displayName: `플레이어 ${userId.substring(0, 4)}`,
-            content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
-            timestamp: serverTimestamp(),
-          });
-        } catch (error) {
-          console.error("Failed to add to shared log:", error);
+    try {
+        // [수정] 시나리오 진행 상태를 true로 설정
+        if (db && userId) {
+            const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+            await setDoc(gameStatusDocRef, {
+                isActionInProgress: true,
+                actingPlayer: { id: userId, displayName: `플레이어 ${userId.substring(0, 4)}` }
+            }, { merge: true });
         }
-      }
 
-      setPlayerCharacter(prev => ({
-        ...prev,
-        // Check if the LLM response provides a non-empty update, otherwise keep previous state
-        inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
-        stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
-        currentLocation: llmResponse.location || prev.currentLocation,
-        reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
-        activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
-        companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
-      }));
-      setCurrentChoices(llmResponse.choices || []);
+        if (gamePhase === 'characterSelection') {
+          const chosenProfessionKey = choice.split('.')[0].trim();
+          const chosenProfession = professions[chosenProfessionKey];
+
+          if (chosenProfession) {
+            const initialCharacterState = {
+              profession: chosenProfession.name,
+              stats: {
+                strength: chosenProfession.name.includes('기사') || chosenProfession.name.includes('용병') ? 12 : 10,
+                intelligence: chosenProfession.name.includes('마법사') ? 12 : 10,
+                agility: chosenProfession.name.includes('도적') ? 12 : 10,
+                charisma: chosenProfession.name.includes('왕족') ? 12 : 10,
+              },
+              inventory: [],
+              initialMotivation: chosenProfession.motivation,
+              currentLocation: '방랑자의 안식처',
+              reputation: {},
+              activeQuests: [],
+              companions: [],
+            };
+            setPlayerCharacter(initialCharacterState);
+
+            promptData = {
+              phase: 'characterSelection',
+              playerChoice: choice,
+              character: initialCharacterState,
+              history: gameLog,
+              activeUsers: activeUsers.filter(user => user.id !== userId),
+              privateChatHistory: []
+            };
+
+            const llmResponse = await callGeminiTextLLM(promptData);
+            setGameLog(prev => [...prev, llmResponse.story]);
+
+            setPlayerCharacter(prev => ({
+              ...prev,
+              inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+              stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
+              currentLocation: llmResponse.location || prev.currentLocation,
+              reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+              activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+              companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
+            }));
+            setCurrentChoices(llmResponse.choices || []);
+            setGamePhase('playing');
+          } else {
+            setGameLog(prev => [...prev, "유효하지 않은 선택입니다. 제시된 직업 중 하나를 선택해주세요."]);
+            setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
+          }
+
+        } else { // gamePhase === 'playing'
+          promptData = {
+            phase: 'playing',
+            playerChoice: choice,
+            character: playerCharacter,
+            history: gameLog,
+            activeUsers: activeUsers.filter(user => user.id !== userId),
+            privateChatHistory: []
+          };
+
+          const llmResponse = await callGeminiTextLLM(promptData);
+          setGameLog(prev => [...prev, llmResponse.story]);
+
+          if (db && userId) {
+            const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
+            await addDoc(sharedLogCollectionRef, {
+              userId: userId,
+              displayName: `플레이어 ${userId.substring(0, 4)}`,
+              content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
+              timestamp: serverTimestamp(),
+            });
+          }
+
+          setPlayerCharacter(prev => ({
+            ...prev,
+            inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
+            stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
+            currentLocation: llmResponse.location || prev.currentLocation,
+            reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
+            activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
+            companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
+          }));
+          setCurrentChoices(llmResponse.choices || []);
+        }
+    } catch (error) {
+        console.error("Error during choice handling:", error);
+        setGameLog(prev => [...prev, `\n오류가 발생했습니다: ${error.message}`]);
+    } finally {
+        // [수정] 시나리오 진행 완료 후 상태를 다시 false로 변경
+        if (db && userId) {
+            const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+            await setDoc(gameStatusDocRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
+        }
     }
   };
+
+  const isMyTurn = !isCompanionActionInProgress || (actingPlayer && actingPlayer.id === userId);
+  const isCompanionSystemActive = playerCharacter.companions.length > 0;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
@@ -862,6 +902,12 @@ function App() {
                 </span>
               </div>
             )}
+            {/* [추가] 동료 행동 대기 메시지 */}
+            {isCompanionSystemActive && isCompanionActionInProgress && !isMyTurn && (
+                <div className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
+                    {actingPlayer ? `${actingPlayer.displayName}님이 선택하고 있습니다...` : "동료가 선택하고 있습니다..."}
+                </div>
+            )}
             <div ref={logEndRef} /> {/* Empty div for scroll position */}
           </div>
 
@@ -885,7 +931,8 @@ function App() {
                 key={index}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => handleChoiceClick(choice)}
-                disabled={isTextLoading}
+                // [수정] 동료가 행동 중일 때 비활성화
+                disabled={isTextLoading || (isCompanionSystemActive && !isMyTurn)}
               >
                 {choice}
               </button>
@@ -921,23 +968,25 @@ function App() {
         {/* Multiplayer sidebar */}
         <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
           <h3 className="text-lg font-bold text-gray-100 text-center mb-4">공유된 모험</h3>
-          
+
           {/* Active user list */}
           <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
             <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어들:</h4>
             {activeUsers.length > 0 ? (
               <ul className="text-sm text-gray-300 space-y-1">
                 {activeUsers.map(user => (
-                  <li 
-                    key={user.id} 
+                  <li
+                    key={user.id}
                     className="truncate flex justify-between items-center p-1 rounded-md hover:bg-gray-500 cursor-pointer" // Added hover and cursor styles
                     onDoubleClick={() => user.id !== userId && openPlayerChatModal(user)} // Double-click handler
                   >
                     <span>
-                      <span className="font-medium text-blue-300">{user.displayName}</span> (ID: {user.id})
+                      <span className="font-medium text-blue-300">{user.displayName}</span>
+                       {/* [추가] 동료 표시 */}
+                       {user.isCompanion && <span className="text-green-400 ml-2">(동료)</span>}
                     </span>
                     {user.id !== userId && ( // 자신에게는 채팅 버튼을 표시하지 않음
-                      <button 
+                      <button
                         className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
                         onClick={() => openPlayerChatModal(user)}
                       >
@@ -1050,12 +1099,12 @@ function App() {
         </div>
       )}
 
-      {/* Private Chat Modal */}
+      {/* Private Chat Modal (수정됨) */}
       {showPlayerChatModal && selectedPlayerForChat && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 flex flex-col h-3/4 max-h-[80vh]">
             <h3 className="text-xl font-bold text-gray-100">
-              {selectedPlayerForChat.displayName} (ID: {selectedPlayerForChat.id}) 님과 대화
+              {selectedPlayerForChat.displayName} ({selectedPlayerForChat.profession}) 님과 대화
             </h3>
             <div className="flex-grow bg-gray-700 p-3 rounded-md overflow-y-auto custom-scrollbar text-sm text-gray-300 space-y-2">
               {privateChatMessages.length > 0 ? (
@@ -1097,10 +1146,11 @@ function App() {
                 보내기
               </button>
             </div>
-            <div className="flex justify-end gap-3 mt-4"> {/* Added gap-3 and mt-4 for spacing */}
+            {/* [수정] 버튼 영역 수정 */}
+            <div className="flex justify-end gap-3 mt-4">
               <button
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md transition duration-300"
-                onClick={handleEndPrivateChatAndReflectScenario} // 새로운 버튼 추가
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleEndPrivateChatAndReflectScenario}
                 disabled={isTextLoading || privateChatMessages.length === 0}
               >
                 대화 종료 및 시나리오 반영
@@ -1108,7 +1158,7 @@ function App() {
               <button
                 className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-bold rounded-md transition duration-300"
                 onClick={closePlayerChatModal}
-                disabled={isTextLoading}
+                // [수정] 닫기 버튼은 항상 활성화
               >
                 닫기
               </button>
