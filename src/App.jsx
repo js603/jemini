@@ -186,9 +186,8 @@ function App() {
     }
   }, []);
   
-  // *** 개인 상태 동기화 useEffect ***
   useEffect(() => {
-    if (!db || !userId) return;
+    if (!db || !userId || !isAuthReady) return;
 
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     const unsubscribe = onSnapshot(privateStateRef, (docSnap) => {
@@ -197,10 +196,12 @@ function App() {
         } else {
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
+    }, (error) => {
+        console.error("Private player state snapshot error:", error);
     });
 
     return () => unsubscribe();
-  }, [db, userId]);
+  }, [db, userId, isAuthReady]);
 
   useEffect(() => {
     if (!db || !isAuthReady || !userId || !auth) return;
@@ -258,25 +259,38 @@ function App() {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
   
+  // ====================================================================
+  // LLM PROMPT ENGINEERING SECTION
+  // ====================================================================
+
   const systemPrompt = `
-    당신은 중세 판타지 텍스트 어드벤처 게임의 게임 마스터(GM)입니다. 이 게임은 여러 플레이어가 하나의 공유된 세계관에서 각자의 이야기를 진행하는 하이브리드 멀티플레이어 게임입니다.
+    ### 페르소나 (Persona)
+    당신은 TRPG(Tabletop Role-Playing Game)의 최고 실력자 '게임 마스터(GM)'입니다. 당신의 임무는 단순한 스토리 생성이 아니라, 각 플레이어가 자신의 서사의 주인공이 되면서도, 모두가 하나의 거대한 세계관 속에서 살아 숨 쉬고 있다는 느낌을 받도록 만드는 것입니다. 당신은 유려한 문장가이자, 치밀한 설계자이며, 플레이어들의 행동에 즉각적으로 반응하는 유연한 스토리텔러입니다.
 
-    **핵심 규칙:**
-    1.  **공유 상태(Shared State)와 개인 상태(Private State):**
-        * **공유 상태:** 모든 플레이어에게 영향을 미치는 사건, 장소의 상태, 주요 NPC의 행동 등은 공유됩니다. 이는 'story'와 'sharedStateUpdates'를 통해 전달됩니다.
-        * **개인 상태:** 플레이어 개인의 생각, 발견, 비밀 퀘스트 등은 해당 플레이어에게만 전달됩니다. 이는 'privateStory', 'privateChoices', 'privateStateUpdates'를 통해 전달됩니다.
-    2.  **역할 기반 스토리텔링:** 플레이어의 직업, 능력치, 아이템, 그리고 'privateInfo'에 담긴 개인적인 정보(비밀 단서, 개인 퀘스트 등)를 적극적으로 활용하여 스토리를 전개하고 선택지를 제공해야 합니다.
-    3.  **상호작용:** 다른 플레이어('activeUsers')의 존재를 이야기에 자연스럽게 녹여내고, 플레이어 간의 상호작용을 유도하는 선택지를 제시하십시오.
+    ### 핵심 철학: 하이브리드 월드 (Hybrid World)
+    이 세계는 '공유된 현실'과 '개인적인 서사'가 공존합니다.
+    1.  **공유된 현실 (Shared Reality):** 세상의 중요한 사건, 장소의 변화, 주요 NPC의 죽음 등은 모든 플레이어가 함께 경험하는 절대적인 현실입니다. 이는 'story'와 'sharedStateUpdates'로 표현됩니다.
+    2.  **개인적인 서사 (Personal Narrative):** 플레이어의 내면의 생각, 남들은 모르는 비밀 지식, 개인적인 퀘스트의 진행 등은 오직 그 플레이어에게만 주어지는 고유한 경험입니다. 이는 'privateStory', 'privateChoices', 'privateStateUpdates'로 표현됩니다.
 
-    **JSON 출력 스키마:**
-    당신은 반드시 다음 JSON 스키마를 엄격히 준수하여 응답해야 합니다. 모든 문자열은 큰따옴표로 감싸고, 후행 쉼표를 사용하지 마십시오.
+    ### 스토리텔링 원칙
+    * **보여주되, 말하지 말라 (Show, Don't Tell):** '그는 화가 났다'가 아니라 '그는 주먹을 불끈 쥐었다'라고 묘사하십시오.
+    * **역할 존중:** 플레이어의 직업, 능력치, 아이템, 그리고 특히 **'[개인 정보]'**에 담긴 단서('knownClues')나 퀘스트('activeQuests')는 당신이 스토리를 만들 때 가장 먼저 고려해야 할 재료입니다. 이것이 개인화된 경험의 핵심입니다.
+    * **살아있는 세계:** '[주변 플레이어]' 정보를 활용하여 다른 플레이어들의 존재를 이야기에 자연스럽게 녹여내십시오. 그들의 등장은 단순한 배경이 아니라, 새로운 사건의 계기가 되어야 합니다.
+    * **선택의 무게:** 플레이어의 선택은 반드시 의미 있는 결과를 가져와야 합니다. 사소한 선택이 나비효과를 일으킬 수도 있습니다.
+
+    ### JSON 출력 규칙 (매우 중요)
+    당신은 반드시 아래의 JSON 구조를 완벽하게 따라야 합니다. 설명(comment)은 절대 포함하지 마십시오.
     {
-      "story": "모든 플레이어에게 보이는 현재 상황에 대한 공유 스토리 텍스트 (3인칭 서술).",
-      "privateStory": "해당 플레이어에게만 보이는 추가적인 묘사, 생각, 또는 비밀스러운 발견.",
-      "choices": ["공통 선택지 1", "공통 선택지 2", ...],
-      "privateChoices": ["이 플레이어만 선택할 수 있는 개인적인 선택지 1", ...],
+      "story": "모든 플레이어가 볼 수 있는 공유된 사건에 대한 3인칭 서사. 이 사건의 결과로 세상이 어떻게 변했는지 객관적으로 묘사합니다.",
+      "privateStory": "선택을 한 플레이어만 볼 수 있는 2인칭 서사. '당신은...', '...라고 느낀다.' 와 같이 내면의 생각, 감각, 남들이 눈치채지 못한 미세한 발견 등을 묘사합니다.",
+      "choices": [
+        "다른 플레이어들도 선택할 수 있는 일반적인 행동들."
+      ],
+      "privateChoices": [
+        "오직 이 플레이어의 직업, 아이템, 퀘스트, 단서 때문에 가능한 특별한 행동들."
+      ],
       "sharedStateUpdates": {
-        "location": "플레이어 그룹의 새로운 현재 위치"
+        "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함됩니다."
       },
       "privateStateUpdates": {
         "inventory": ["업데이트된 전체 인벤토리 목록"],
@@ -288,35 +302,46 @@ function App() {
       }
     }
 
-    **지침:**
-    * 'story'는 500자 이내로 간결하게 작성합니다.
-    * 'choices'와 'privateChoices'를 합쳐 2~5개의 선택지를 제공합니다.
-    * 'sharedStateUpdates'와 'privateStateUpdates'의 각 필드는 **변경 사항이 없더라도 현재 상태를 반드시 포함**해야 합니다.
+    ### 규칙 상세
+    * 'privateChoices' 예시: 플레이어의 'knownClues'에 '가문의 문장'이 있다면, "가문의 문장을 제단에 맞춰본다." 와 같은 선택지를 제공하십시오.
+    * **상태 업데이트:** 'privateStateUpdates'의 모든 필드는 **변경 여부와 관계없이 항상 현재 플레이어의 전체 상태를 포함**하여 보내야 합니다. 예를 들어, 아이템을 하나 얻었다면, 기존 아이템을 포함한 전체 인벤토리 목록을 'inventory'에 담아야 합니다.
+    * 'story'와 'privateStory'는 합쳐서 500자 이내로 간결하게 작성하십시오.
   `;
-  
+
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     setLlmRetryPrompt(promptData);
-    const mainApiKey = ""; // This will be provided by the Canvas environment.
-    const backupApiKey = ""; // This will be provided by the Canvas environment.
-    const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const apiKey = ""; // API 키는 환경에 따라 제공되며, 하드코딩하지 않습니다.
+    const getApiUrl = (key) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
     
+    // LLM이 상황을 명확하게 파악하도록 구조화된 User Prompt
     const userPrompt = `
-      - **공유 정보:** ${JSON.stringify(promptData.sharedInfo)}
-      - **개인 정보 (이 플레이어만 아는 비밀):** ${JSON.stringify(promptData.privateInfo)}
-      - **이전 로그:** ${JSON.stringify(Array.isArray(promptData.history) ? promptData.history.slice(-3) : [])}
-      - **플레이어의 마지막 선택:** "${promptData.playerChoice}"
-      - **주변의 다른 플레이어들:** ${JSON.stringify(promptData.activeUsers)}
+      [상황 분석 요청]
+      아래 정보를 바탕으로 플레이어의 행동에 대한 결과를 생성해주십시오.
+
+      [공유 컨텍스트]
+      - 현재 위치: ${promptData.sharedInfo.currentLocation}
+      - 이전 주요 사건 로그 (최대 3개): ${JSON.stringify(promptData.history.slice(-3))}
+
+      [개인 정보 (현재 플레이어)]
+      - 직업: ${promptData.privateInfo.profession || gameState.player.profession}
+      - 능력치: ${JSON.stringify(promptData.privateInfo.stats)}
+      - 인벤토리: ${JSON.stringify(promptData.privateInfo.inventory)}
+      - 활성 퀘스트: ${JSON.stringify(promptData.privateInfo.activeQuests)}
+      - 알려진 단서: ${JSON.stringify(promptData.privateInfo.knownClues)}
+      - 평판: ${JSON.stringify(promptData.privateInfo.reputation)}
+
+      [플레이어의 행동]
+      - 선택: "${promptData.playerChoice}"
+
+      [주변 플레이어]
+      - ${promptData.activeUsers.length > 0 ? JSON.stringify(promptData.activeUsers) : "현재 주변에 다른 플레이어가 없습니다."}
     `;
+
     const payload = { contents: [{ role: "user", parts: [{ text: systemPrompt }] }, { role: "model", parts: [{ text: "{}" }] }, { role: "user", parts: [{ text: userPrompt }] }] };
 
-    const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
     try {
-      let response = await tryGeminiCall(mainApiKey);
-      if (!response.ok) {
-        response = await tryGeminiCall(backupApiKey);
-      }
+      const response = await fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -334,6 +359,11 @@ function App() {
     }
   };
 
+  // ====================================================================
+  // END OF LLM PROMPT ENGINEERING SECTION
+  // ====================================================================
+
+
   const sendChatMessage = async () => {
     if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) return;
     try {
@@ -345,8 +375,9 @@ function App() {
     }
   };
 
+  // *** 권한 오류 수정을 위해 isAuthReady를 의존성에 추가하고 로직을 수정 ***
   useEffect(() => {
-    if (!db || !appId) return;
+    if (!db || !appId || !isAuthReady) return; // 인증이 준비될 때까지 대기
     const ref = getMainScenarioRef(db, appId);
     const unsubscribe = onSnapshot(ref, async (snap) => {
       if (snap.exists()) {
@@ -359,16 +390,21 @@ function App() {
           player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation }
         }));
       } else {
+        // 최초 시나리오 생성
         const def = getDefaultGameState();
-        await setDoc(ref, { ...def, storyLog: def.log, lastUpdate: serverTimestamp() }, { merge: true });
-        setGameState(def);
+        try {
+            await setDoc(ref, { ...def, storyLog: def.log, lastUpdate: serverTimestamp() }, { merge: true });
+            setGameState(def);
+        } catch (e) {
+            console.error("Failed to create initial scenario:", e);
+        }
       }
     }, (error) => {
       console.error("Main scenario snapshot error:", error);
-      setLlmError("시나리오를 불러오는 중 오류가 발생했습니다.");
+      setLlmError("시나리오를 불러오는 중 오류가 발생했습니다. 페이지를 새로고침 해보세요.");
     });
     return () => unsubscribe();
-  }, [db, appId]);
+  }, [db, appId, isAuthReady]); // isAuthReady를 의존성 배열에 추가
 
   const updateGameStateFromLLM = async (llmResponse) => {
     if (!db || !appId || !userId) return;
@@ -382,14 +418,11 @@ function App() {
             if (!scenarioDoc.exists()) throw "시나리오 문서가 존재하지 않습니다.";
             
             const currentData = scenarioDoc.data();
-            const newLog = [...(currentData.storyLog || []), llmResponse.story];
-
-            if (llmResponse.privateStory) {
-                newLog.push(`\n[당신만 아는 사실] ${llmResponse.privateStory}`);
-            }
+            // 트랜잭션에서는 공유 로그만 업데이트
+            const publicLog = [...(currentData.storyLog || []), llmResponse.story];
             
             transaction.update(mainScenarioRef, {
-                storyLog: newLog,
+                storyLog: publicLog,
                 choices: newChoices,
                 phase: 'playing',
                 'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
@@ -397,6 +430,17 @@ function App() {
                 lastActor: { id: userId, displayName: getDisplayName(userId) }
             });
         });
+
+        // 트랜잭션 성공 후, 로컬 상태에만 개인 스토리 추가
+        // onSnapshot이 비동기적으로 작동하므로, 즉각적인 UI 반영을 위해 로컬 상태를 직접 조작
+        const docSnap = await getDoc(mainScenarioRef);
+        const updatedPublicLog = docSnap.data().storyLog;
+        const finalLog = llmResponse.privateStory 
+            ? [...updatedPublicLog, `\n[당신만 아는 사실] ${llmResponse.privateStory}`]
+            : [...updatedPublicLog];
+        
+        setGameState(prev => ({...prev, log: finalLog, choices: newChoices}));
+
     } catch (error) {
         console.error("공유 상태 업데이트 실패:", error);
         setLlmError("시나리오를 업데이트하는 데 실패했습니다.");
@@ -404,7 +448,7 @@ function App() {
 
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     if (llmResponse.privateStateUpdates) {
-        await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: true });
+        await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: false });
     }
   };
 
@@ -446,7 +490,9 @@ function App() {
           }, { merge: true });
 
           const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-          await setDoc(privateStateRef, { ...getDefaultPrivatePlayerState(), initialMotivation: initialMotivation }, { merge: true });
+          const newPrivateState = getDefaultPrivatePlayerState();
+          newPrivateState.initialMotivation = initialMotivation;
+          await setDoc(privateStateRef, newPrivateState, { merge: true });
           
           setGameState(prev => ({ ...prev, player: {...prev.player, profession: selectedProfession.name }}));
           return;
@@ -457,11 +503,13 @@ function App() {
         playerChoice: choice,
         sharedInfo: {
             currentLocation: gameState.player.currentLocation,
-            profession: gameState.player.profession,
         },
-        privateInfo: privatePlayerState,
+        privateInfo: {
+            ...privatePlayerState,
+            profession: gameState.player.profession // privateInfo에 직업 정보 추가
+        },
         history: newLog,
-        activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.nickname !== getDisplayName(userId)),
+        activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
       };
       
       const llmResponse = await callGeminiTextLLM(promptData);
