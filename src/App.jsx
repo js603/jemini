@@ -74,7 +74,6 @@ const getDefaultPrivatePlayerState = () => ({
     profession: '', // 개인 직업 정보
 });
 
-
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
