@@ -605,7 +605,7 @@ function App() {
                     <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
                       {event.actor?.displayName && event.action && (
                          <p className="text-yellow-300 font-semibold italic text-sm">
-                           &gt; {event.actor.displayName} 님이 "{event.action}" 선택
+                            "{event.actor.displayName}" 님이 "{event.action}" 선택
                          </p>
                       )}
                       <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
