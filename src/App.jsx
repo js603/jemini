@@ -108,6 +108,84 @@ function App() {
   const chatEndRef = useRef(null); // Ref for public chat log
   const privateChatEndRef = useRef(null); // Ref for private chat log
 
+  // [1] 닉네임 상태 및 모달 추가
+  const [nickname, setNickname] = useState(() => localStorage.getItem('nickname') || '');
+  const [showNicknameModal, setShowNicknameModal] = useState(!localStorage.getItem('nickname'));
+  const [nicknameInput, setNicknameInput] = useState('');
+
+  // [2] 아코디언 상태 추가
+  const [accordion, setAccordion] = useState({
+    gameLog: true,
+    sharedLog: true,
+    chat: true,
+    users: true,
+  });
+
+  // [3] 데이터 초기화 모달 및 상태
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // [4] 닉네임 입력 및 저장 함수
+  const handleNicknameSubmit = () => {
+    if (nicknameInput.trim()) {
+      setNickname(nicknameInput.trim());
+      localStorage.setItem('nickname', nicknameInput.trim());
+      setShowNicknameModal(false);
+    }
+  };
+
+  // [5] displayName 대체 함수
+  const getDisplayName = (uid) => {
+    if (uid === userId) return nickname || `플레이어 ${userId?.substring(0, 4)}`;
+    const user = activeUsers.find(u => u.id === uid);
+    return user?.displayName || user?.nickname || `플레이어 ${uid?.substring(0, 4)}`;
+  };
+
+  // [6] Firestore 데이터 전체 초기화 함수
+  const resetAllGameData = async () => {
+    if (!db || !isAuthReady) return;
+    setIsResetting(true);
+    try {
+      // 삭제할 경로들
+      const paths = [
+        ['artifacts', appId, 'public', 'data', 'sharedGameLog'],
+        ['artifacts', appId, 'public', 'data', 'activeUsers'],
+        ['artifacts', appId, 'public', 'data', 'chatMessages'],
+        ['artifacts', appId, 'public', 'data', 'gameStatus'],
+        ['artifacts', appId, 'privateChats'],
+        ['artifacts', appId, 'users'],
+      ];
+      for (const pathArr of paths) {
+        const colRef = collection(db, ...pathArr);
+        const docsSnap = await getDocs(colRef);
+        for (const docSnap of docsSnap.docs) {
+          await deleteDoc(docSnap.ref);
+        }
+      }
+      setGameLog(['모든 게임 데이터가 초기화되었습니다.']);
+      setSharedGameLog([]);
+      setActiveUsers([]);
+      setChatMessages([]);
+      setPlayerCharacter({
+        profession: '',
+        stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
+        inventory: [],
+        initialMotivation: '',
+        currentLocation: '방랑자의 안식처',
+        reputation: {},
+        activeQuests: [],
+        companions: [],
+      });
+      setGamePhase('characterSelection');
+      setCurrentChoices([]);
+    } catch (e) {
+      setGameLog(['데이터 초기화 중 오류 발생: ' + e.message]);
+    } finally {
+      setIsResetting(false);
+      setShowResetModal(false);
+    }
+  };
+
   // Firebase initialization and authentication handling
   useEffect(() => {
     try {
@@ -215,9 +293,10 @@ function App() {
           const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
           await setDoc(userDocRef, {
             lastActive: serverTimestamp(),
-            displayName: `플레이어 ${userId.substring(0, 4)}`, // Display only part of the user ID
-            profession: playerCharacter.profession, // Add player profession
-            isCompanion: playerCharacter.companions.length > 0, // [추가] Companion status
+            displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
+            nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
+            profession: playerCharacter.profession,
+            isCompanion: playerCharacter.companions.length > 0,
           }, { merge: true });
         } catch (error) {
           console.error("Failed to update user presence:", error);
@@ -286,31 +365,31 @@ function App() {
 
   // Scroll to the bottom whenever the game log is updated
   useEffect(() => {
-    if (logEndRef.current) {
+    if (accordion.gameLog && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [gameLog]);
+  }, [gameLog, accordion.gameLog]);
 
   // Scroll to the bottom whenever the shared log is updated
   useEffect(() => {
-    if (sharedLogEndRef.current) {
+    if (accordion.sharedLog && sharedLogEndRef.current) {
       sharedLogEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [sharedGameLog]);
+  }, [sharedGameLog, accordion.sharedLog]);
 
   // Scroll to the bottom whenever chat messages are updated
   useEffect(() => {
-    if (chatEndRef.current) {
+    if (accordion.chat && chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [chatMessages]);
+  }, [chatMessages, accordion.chat]);
 
   // Scroll private chat messages
   useEffect(() => {
-    if (privateChatEndRef.current) {
+    if (showPlayerChatModal && privateChatEndRef.current) {
       privateChatEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [privateChatMessages]);
+  }, [privateChatMessages, showPlayerChatModal]);
 
   // Function to generate private chat room ID (sorts two user IDs for consistent ID generation)
   const getPrivateChatRoomId = (user1Id, user2Id) => {
@@ -666,7 +745,7 @@ function App() {
       const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
       await addDoc(chatCollectionRef, {
         userId: userId,
-        displayName: `플레이어 ${userId.substring(0, 4)}`,
+        displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
         message: currentChatMessage,
         timestamp: serverTimestamp(),
       });
@@ -690,7 +769,7 @@ function App() {
       await addDoc(privateChatCollectionRef, {
         senderId: userId,
         receiverId: selectedPlayerForChat.id, // Explicit receiver ID
-        displayName: `플레이어 ${userId.substring(0, 4)}`,
+        displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
         message: currentPrivateChatMessage,
         timestamp: serverTimestamp(),
       });
@@ -699,7 +778,7 @@ function App() {
       const receiverNotificationDocRef = doc(db, 'artifacts', appId, 'users', selectedPlayerForChat.id, 'incomingMessages', userId);
       await setDoc(receiverNotificationDocRef, {
         lastMessageTimestamp: serverTimestamp(),
-        senderDisplayName: `플레이어 ${userId.substring(0, 4)}`,
+        senderDisplayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
         senderId: userId // 알림 규칙을 위해 senderId 필드를 추가합니다.
       }, { merge: true });
 
@@ -826,7 +905,7 @@ function App() {
               const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
               await addDoc(sharedLogCollectionRef, {
                   userId: userId,
-                  displayName: `플레이어 ${userId.substring(0, 4)}`,
+                  displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
                   content: `[${playerCharacter.profession}]이(가) ${selectedPlayerForChat.displayName}님과 대화 후: ${llmResponse.story}`,
                   timestamp: serverTimestamp(),
               });
@@ -957,7 +1036,7 @@ function App() {
           const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
           await addDoc(sharedLogCollectionRef, {
             userId: userId,
-            displayName: `플레이어 ${userId.substring(0, 4)}`,
+            displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
             content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
             timestamp: serverTimestamp(),
           });
@@ -989,8 +1068,65 @@ function App() {
   const isMyTurn = !isCompanionActionInProgress || (actingPlayer && actingPlayer.id === userId);
   const isCompanionSystemActive = playerCharacter.companions.length > 0;
 
+  // [8] 아코디언 UI 토글 함수
+  const toggleAccordion = (key) => {
+    setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
+      {/* [닉네임 입력 모달] */}
+      {showNicknameModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-xl font-bold text-gray-100">닉네임을 입력하세요</h3>
+            <input
+              className="w-full p-3 rounded-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg"
+              placeholder="닉네임"
+              value={nicknameInput}
+              onChange={e => setNicknameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleNicknameSubmit(); }}
+              autoFocus
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleNicknameSubmit}
+                disabled={!nicknameInput.trim()}
+              >
+                시작하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* [데이터 초기화 확인 모달] */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-xl font-bold text-red-400">⚠️ 모든 데이터를 초기화할까요?</h3>
+            <p className="text-gray-200">이 작업은 되돌릴 수 없습니다. 모든 시나리오, 로그, 유저, 채팅 데이터가 삭제됩니다.</p>
+            <div className="flex justify-end gap-3">
+              <button
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-bold rounded-md"
+                onClick={() => setShowResetModal(false)}
+                disabled={isResetting}
+              >
+                취소
+              </button>
+              <button
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-md"
+                onClick={resetAllGameData}
+                disabled={isResetting}
+              >
+                {isResetting ? '초기화 중...' : '초기화'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
         {/* Main game area */}
         <div className="flex flex-col w-full lg:w-2/3 space-y-6">
@@ -1001,26 +1137,45 @@ function App() {
             </div>
           )}
 
-          {/* Game text output area */}
-          <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed">
-            {gameLog.map((line, index) => (
-              <p key={index} className="whitespace-pre-wrap mb-1" dangerouslySetInnerHTML={{ __html: line.replace(/\n/g, '<br />') }}></p>
-            ))}
-            {isTextLoading && (
-              <div className="flex justify-center items-center mt-4">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                <span className="ml-3 text-gray-400">
-                  이야기를 생성 중...
-                </span>
-              </div>
-            )}
-            {/* [추가] Companion action waiting message */}
-            {isCompanionSystemActive && isCompanionActionInProgress && !isMyTurn && (
-                <div className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
-                    {actingPlayer ? `${actingPlayer.displayName}님이 선택하고 있습니다...` : "동료가 선택하고 있습니다..."}
+          {/* [아코디언] 게임 로그 영역 */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('gameLog')}>
+              <h2 className="text-lg font-bold text-gray-100">게임 로그</h2>
+              <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
+            </div>
+            {accordion.gameLog && (
+              <>
+                {/* [관리자용 데이터 초기화 버튼] */}
+                <div className="flex justify-end mb-2">
+                  <button
+                    className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md"
+                    onClick={() => setShowResetModal(true)}
+                  >
+                    전체 데이터 초기화
+                  </button>
                 </div>
+                <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
+                  {gameLog.map((line, index) => (
+                    <p key={index} className="whitespace-pre-wrap mb-1" dangerouslySetInnerHTML={{ __html: line.replace(/\n/g, '<br />') }}></p>
+                  ))}
+                  {isTextLoading && (
+                    <div className="flex justify-center items-center mt-4">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
+                      <span className="ml-3 text-gray-400">
+                        이야기를 생성 중...
+                      </span>
+                    </div>
+                  )}
+                  {/* [추가] Companion action waiting message */}
+                  {isCompanionSystemActive && isCompanionActionInProgress && !isMyTurn && (
+                      <div className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
+                          {actingPlayer ? `${actingPlayer.displayName}님이 선택하고 있습니다...` : "동료가 선택하고 있습니다..."}
+                      </div>
+                  )}
+                  <div ref={logEndRef} /> {/* Empty div for scroll position */}
+                </div>
+              </>
             )}
-            <div ref={logEndRef} /> {/* Empty div for scroll position */}
           </div>
 
           {/* Character info display */}
@@ -1079,102 +1234,120 @@ function App() {
 
         {/* Multiplayer sidebar */}
         <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
-          <h3 className="text-lg font-bold text-gray-100 text-center mb-4">공유된 모험</h3>
-
-          {/* Active user list */}
-          <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
-            <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어들:</h4>
-            {activeUsers.length > 0 ? (
-              <ul className="text-sm text-gray-300 space-y-1">
-                {activeUsers.map(user => (
-                  <li
-                    key={user.id}
-                    className="truncate flex justify-between items-center p-1 rounded-md hover:bg-gray-500 cursor-pointer" // Added hover and cursor styles
-                    onDoubleClick={() => user.id !== userId && openPlayerChatModal(user)} // Double-click handler
-                  >
-                    <span>
-                      <span className="font-medium text-blue-300">{user.displayName}</span>
-                       {/* [추가] Companion display */}
-                       {user.isCompanion && <span className="text-green-400 ml-2">(동료)</span>}
-                    </span>
-                    {user.id !== userId && ( // Do not show chat button for self
-                      <button
-                        className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
-                        onClick={() => openPlayerChatModal(user)}
+          {/* [아코디언] 플레이어 목록 */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
+              <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어들</h4>
+              <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
+            </div>
+            {accordion.users && (
+              <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
+                {activeUsers.length > 0 ? (
+                  <ul className="text-sm text-gray-300 space-y-1">
+                    {activeUsers.map(user => (
+                      <li
+                        key={user.id}
+                        className="truncate flex justify-between items-center p-1 rounded-md hover:bg-gray-500 cursor-pointer"
+                        onDoubleClick={() => user.id !== userId && openPlayerChatModal(user)}
                       >
-                        대화하기
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>
-            )}
-          </div>
-
-          {/* Shared game log */}
-          <div className="bg-gray-600 p-3 rounded-md flex-grow h-96 overflow-y-auto custom-scrollbar">
-            <h4 className="text-md font-semibold text-gray-200 mb-2">모든 플레이어의 활동:</h4>
-            {sharedGameLog.length > 0 ? (
-              <div className="text-sm text-gray-300 space-y-2">
-                {sharedGameLog.map((logEntry) => (
-                  <div key={logEntry.id} className="border-b border-gray-500 pb-2 last:border-b-0">
-                    <p className="text-xs text-gray-400 mb-1">
-                      <span className="font-medium text-purple-300">{logEntry.displayName}</span> (
-                      {logEntry.timestamp ? new Date(logEntry.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'})
-                    </p>
-                    <p className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: logEntry.content.replace(/\n/g, '<br />') }}></p>
-                  </div>
-                ))}
-                <div ref={sharedLogEndRef} />
+                        <span>
+                          <span className="font-medium text-blue-300">{user.nickname || user.displayName || `플레이어 ${user.id.substring(0, 4)}`}</span>
+                          {user.isCompanion && <span className="text-green-400 ml-2">(동료)</span>}
+                        </span>
+                        {user.id !== userId && (
+                          <button
+                            className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
+                            onClick={() => openPlayerChatModal(user)}
+                          >
+                            대화하기
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>
+                )}
               </div>
-            ) : (
-              <p className="text-sm text-gray-400">공유된 활동이 아직 없습니다.</p>
             )}
           </div>
 
-          {/* Public Chat section */}
-          <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
-            <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅:</h4>
-            <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm text-gray-300 space-y-2">
-              {chatMessages.length > 0 ? (
-                chatMessages.map((msg) => (
-                  <div key={msg.id} className="border-b border-gray-500 pb-1 last:border-b-0">
-                    <p className="text-xs text-gray-400">
-                      <span className="font-medium text-green-300">{msg.displayName}</span> (
-                      {msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'}):
-                    </p>
-                    <p>{msg.message}</p>
+          {/* [아코디언] 공유 로그 */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('sharedLog')}>
+              <h4 className="text-md font-semibold text-gray-200 mb-2">모든 플레이어의 활동</h4>
+              <div className="text-xl">{accordion.sharedLog ? '▼' : '▲'}</div>
+            </div>
+            {accordion.sharedLog && (
+              <div className="bg-gray-600 p-3 rounded-md flex-grow h-96 overflow-y-auto custom-scrollbar">
+                {sharedGameLog.length > 0 ? (
+                  <div className="text-sm text-gray-300 space-y-2">
+                    {sharedGameLog.map((logEntry) => (
+                      <div key={logEntry.id} className="border-b border-gray-500 pb-2 last:border-b-0">
+                        <p className="text-xs text-gray-400 mb-1">
+                          <span className="font-medium text-purple-300">{logEntry.displayName}</span> (
+                          {logEntry.timestamp ? new Date(logEntry.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'})
+                        </p>
+                        <p className="whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: logEntry.content.replace(/\n/g, '<br />') }}></p>
+                      </div>
+                    ))}
+                    <div ref={sharedLogEndRef} />
                   </div>
-                ))
-              ) : (
-                <p className="text-sm text-gray-400">아직 채팅 메시지가 없습니다.</p>
-              )}
-              <div ref={chatEndRef} /> {/* Empty div for scroll position */}
+                ) : (
+                  <p className="text-sm text-gray-400">공유된 활동이 아직 없습니다.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* [아코디언] 공개 채팅 */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
+              <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅</h4>
+              <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
             </div>
-            <div className="flex">
-              <input
-                type="text"
-                className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                placeholder="메시지를 입력하세요..."
-                value={currentChatMessage}
-                onChange={(e) => setCurrentChatMessage(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    sendChatMessage();
-                  }
-                }}
-                disabled={!isAuthReady || !userId}
-              />
-              <button
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-r-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                onClick={sendChatMessage}
-                disabled={!isAuthReady || !userId || !currentChatMessage.trim()}
-              >
-                보내기
-              </button>
-            </div>
+            {accordion.chat && (
+              <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
+                <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm text-gray-300 space-y-2">
+                  {chatMessages.length > 0 ? (
+                    chatMessages.map((msg) => (
+                      <div key={msg.id} className="border-b border-gray-500 pb-1 last:border-b-0">
+                        <p className="text-xs text-gray-400">
+                          <span className="font-medium text-green-300">{msg.displayName}</span> (
+                          {msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleTimeString() : '시간 없음'}):
+                        </p>
+                        <p>{msg.message}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-gray-400">아직 채팅 메시지가 없습니다.</p>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+                <div className="flex">
+                  <input
+                    type="text"
+                    className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="메시지를 입력하세요..."
+                    value={currentChatMessage}
+                    onChange={(e) => setCurrentChatMessage(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        sendChatMessage();
+                      }
+                    }}
+                    disabled={!isAuthReady || !userId}
+                  />
+                  <button
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-r-md transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                    onClick={sendChatMessage}
+                    disabled={!isAuthReady || !userId || !currentChatMessage.trim()}
+                  >
+                    보내기
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
