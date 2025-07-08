@@ -533,7 +533,7 @@ function App() {
       현재 평판: ${JSON.stringify(promptData.character.reputation)}
       현재 활성 퀘스트: ${JSON.stringify(promptData.character.activeQuests)}
       현재 동료: ${JSON.stringify(promptData.character.companions)}
-      이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(promptData.history.slice(-5))}
+      이전 게임 로그 (마지막 5개 항목): ${JSON.stringify(Array.isArray(promptData.history) ? promptData.history.slice(-5) : [])}
       플레이어의 마지막 선택: ${promptData.playerChoice}
 
       **현재 접속 중인 다른 플레이어들:**
