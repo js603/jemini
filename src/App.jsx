@@ -49,6 +49,29 @@ const professions = {
   '6': { name: '왕족/공주/왕자', motivation: '왕실 내의 불화와 암투 속에서 자신의 입지를 다져야 합니다.' },
 };
 
+// Firestore 경로 유틸
+const getMainScenarioRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
+
+// 상태 초기화 유틸
+const getDefaultGameState = () => ({
+  phase: 'characterSelection',
+  log: [
+    "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.",
+    "어떤 직업을 선택하시겠습니까?"
+  ],
+  choices: Object.keys(professions).map(key => `${key}. ${professions[key].name}`),
+  player: {
+    profession: '',
+    stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
+    inventory: [],
+    initialMotivation: '',
+    currentLocation: '방랑자의 안식처',
+    reputation: {},
+    activeQuests: [],
+    companions: [],
+  },
+});
+
 function App() {
   // Current game text log (private)
   const [gameLog, setGameLog] = useState([]);
@@ -127,6 +150,47 @@ function App() {
 
   // [mainScenario 상태 추가]
   const [mainScenario, setMainScenario] = useState({ storyLog: [], choices: [] });
+
+  // gameState 통합
+  const [gameState, setGameState] = useState(getDefaultGameState());
+  const [llmError, setLlmError] = useState(null);
+  const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
+
+  // (1) LLM 호출 실패 시 임시 선택지 제공
+  const getFallbackLLMResponse = (promptData) => ({
+    story: 'LLM 호출에 실패했습니다. 임시로 진행할 수 있습니다.',
+    choices: ['임시 선택지 1', '임시 선택지 2', '게임 재시도'],
+    inventoryUpdates: promptData.character?.inventory || [],
+    statChanges: promptData.character?.stats || {},
+    location: promptData.character?.currentLocation || '',
+    reputationUpdates: promptData.character?.reputation || {},
+    activeQuestsUpdates: promptData.character?.activeQuests || [],
+    companionsUpdates: promptData.character?.companions || [],
+  });
+
+  // (2) 임시 선택지/로그 수동 추가 UI 상태
+  const [manualChoiceInput, setManualChoiceInput] = useState('');
+  const [manualLogInput, setManualLogInput] = useState('');
+
+  // (3) 임시 선택지 추가 함수
+  const addManualChoice = () => {
+    if (!manualChoiceInput.trim()) return;
+    setGameState(prev => ({
+      ...prev,
+      choices: [...(prev.choices || []), manualChoiceInput.trim()]
+    }));
+    setManualChoiceInput('');
+  };
+
+  // (4) 임시 로그 추가 함수
+  const addManualLog = () => {
+    if (!manualLogInput.trim()) return;
+    setGameState(prev => ({
+      ...prev,
+      log: [...(prev.log || []), manualLogInput.trim()]
+    }));
+    setManualLogInput('');
+  };
 
   // [4] 닉네임 입력 및 저장 함수
   const handleNicknameSubmit = () => {
@@ -957,128 +1021,90 @@ function App() {
 
   // [mainScenario Firestore 구독]
   useEffect(() => {
-    if (!db) return;
-    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
-    const unsubscribe = onSnapshot(mainScenarioRef, async (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setMainScenario(data);
-        setGameLog(data.storyLog || []);
-        setCurrentChoices(data.choices || []);
+    if (!db || !appId) return;
+    const ref = getMainScenarioRef(db, appId);
+    const unsubscribe = onSnapshot(ref, async (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setGameState(prev => ({
+          ...prev,
+          log: data.storyLog || [],
+          choices: data.choices || [],
+          phase: data.gamePhase || prev.phase,
+        }));
       } else {
-        // Firestore에 문서가 없으면 기본값 세팅
-        const defaultLog = [
-          "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.",
-          "어떤 직업을 선택하시겠습니까?"
-        ];
-        const defaultChoices = Object.keys(professions).map(key => `${key}. ${professions[key].name}`);
-        await setDoc(mainScenarioRef, {
-          storyLog: defaultLog,
-          choices: defaultChoices,
+        // merge로 race condition 방지
+        const def = getDefaultGameState();
+        await setDoc(ref, {
+          storyLog: def.log,
+          choices: def.choices,
+          gamePhase: def.phase,
           lastUpdate: serverTimestamp(),
-        });
-        setMainScenario({ storyLog: defaultLog, choices: defaultChoices });
-        setGameLog(defaultLog);
-        setCurrentChoices(defaultChoices);
+        }, { merge: true });
+        setGameState(def);
       }
     });
     return () => unsubscribe();
-  }, [db]);
+  }, [db, appId]);
 
-  // [handleChoiceClick 수정: mainScenario 기반 동기화 및 사망 감지]
-  const handleChoiceClick = async (choice) => {
-    if (isTextLoading) return;
-    const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
-    let statusData = {};
-    try {
-      const gameStatusSnap = await getDoc(gameStatusDocRef);
-      statusData = gameStatusSnap.exists() ? gameStatusSnap.data() : {};
-    } catch (e) {
-      setGameLog(prev => [...prev, '\n진행 상태를 확인할 수 없습니다.']);
-      return;
-    }
-    if (statusData.isActionInProgress) {
-      setGameLog(prev => [...prev, '\n다른 플레이어가 사용중입니다...']);
-      return;
-    }
-    await setDoc(gameStatusDocRef, {
-      isActionInProgress: true,
-      actingPlayer: { id: userId, displayName: `플레이어 ${userId.substring(0, 4)}` },
-      lastAction: { playerId: userId, choice, timestamp: new Date().toISOString() }
-    }, { merge: true });
+  // 상태 초기화 함수
+  const resetGameState = () => setGameState(getDefaultGameState());
+
+  // LLM 호출 후 상태 업데이트 함수
+  const updateGameStateFromLLM = (llmResponse) => {
+    setGameState(prev => ({
+      ...prev,
+      log: [...prev.log, llmResponse.story],
+      choices: llmResponse.choices || [],
+      player: {
+        ...prev.player,
+        inventory: llmResponse.inventoryUpdates || prev.player.inventory,
+        stats: llmResponse.statChanges || prev.player.stats,
+        currentLocation: llmResponse.location || prev.player.currentLocation,
+        reputation: llmResponse.reputationUpdates || prev.player.reputation,
+        activeQuests: llmResponse.activeQuestsUpdates || prev.player.activeQuests,
+        companions: llmResponse.companionsUpdates || prev.player.companions,
+      },
+    }));
+  };
+
+  // LLM 호출 실패 시 재시도
+  const retryLLM = async () => {
+    if (!llmRetryPrompt) return;
+    setLlmError(null);
+    await handleLLMCall(llmRetryPrompt);
+  };
+
+  // (5) LLM 호출 함수 보완
+  const handleLLMCall = async (promptData) => {
     setIsTextLoading(true);
-    setGameLog(prev => [...prev, `\n> 당신의 선택: ${choice}\n`]);
-    setCurrentChoices([]);
-    let promptData;
+    setLlmRetryPrompt(promptData);
     try {
-      // Firestore에서 mainScenario 상태 불러오기
-      const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
-      let mainScenarioSnap = await getDoc(mainScenarioRef);
-      let mainScenarioData = mainScenarioSnap.exists() ? mainScenarioSnap.data() : null;
-      if (!mainScenarioData) {
-        mainScenarioData = { storyLog: [], choices: [] };
-        await setDoc(mainScenarioRef, mainScenarioData);
-      }
-      promptData = {
-        ...mainScenarioData,
-        playerChoice: choice,
-        character: playerCharacter,
-        activeUsers: activeUsers.filter(user => user.id !== userId),
-        privateChatHistory: []
-      };
       const llmResponse = await callGeminiTextLLM(promptData);
-      // 사망 감지 및 리셋(개인 상태만 초기화)
-      if (llmResponse.story && /사망|죽음|목숨을 잃|죽었다|죽임을 당하|숨을 거두|생명을 잃/i.test(llmResponse.story)) {
-        setGameLog(prev => [...prev, '\n[알림] 당신은 사망했습니다. 처음부터 다시 시작합니다.']);
-        setPlayerCharacter({
-          profession: '',
-          stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
-          inventory: [],
-          initialMotivation: '',
-          currentLocation: '방랑자의 안식처',
-          reputation: {},
-          activeQuests: [],
-          companions: [],
-        });
-        setGamePhase('characterSelection');
-        setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
-        setIsTextLoading(false);
-        if (db && userId) {
-          const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
-          await setDoc(userDocRef, {
-            profession: '',
-            currentLocation: '방랑자의 안식처',
-          }, { merge: true });
-        }
-        return;
-      }
-      // Firestore에 mainScenario 갱신
-      await setDoc(mainScenarioRef, {
-        storyLog: [...(mainScenarioData.storyLog || []), llmResponse.story],
-        choices: llmResponse.choices || [],
-        lastUpdate: serverTimestamp(),
-      }, { merge: true });
-      // Firestore에 sharedLog도 갱신(선택적)
-      if (db && userId) {
-        const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
-        await addDoc(sharedLogCollectionRef, {
-          userId: userId,
-          displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
-          content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
-          timestamp: serverTimestamp(),
-        });
-      }
-      setIsTextLoading(false);
+      updateGameStateFromLLM(llmResponse);
+      setLlmError(null);
     } catch (error) {
-      setGameLog(prev => [...prev, `\n오류가 발생했습니다: ${error.message}`]);
-      setIsTextLoading(false);
-      setIsTextLoading(false);
+      setLlmError(error.message || 'LLM 호출 실패');
+      // LLM 실패 시에도 진행 가능하도록 fallback 적용
+      const fallback = getFallbackLLMResponse(promptData);
+      updateGameStateFromLLM(fallback);
     } finally {
-      await setDoc(gameStatusDocRef, {
-        isActionInProgress: false,
-        actingPlayer: null,
-      }, { merge: true });
+      setIsTextLoading(false);
     }
+  };
+
+  // 선택지 클릭 핸들러 예시
+  const handleChoiceClick = (choice) => {
+    if (isTextLoading) return;
+    const promptData = {
+      phase: gameState.phase,
+      playerChoice: choice,
+      character: gameState.player,
+      history: gameState.log,
+      activeUsers: activeUsers.filter(user => user.id !== userId),
+      privateChatHistory: [],
+    };
+    handleLLMCall(promptData);
   };
 
   const isMyTurn = !isCompanionActionInProgress || (actingPlayer && actingPlayer.id === userId);
