@@ -1062,7 +1062,6 @@ function App() {
       await setDoc(gameStatusDocRef, {
         isActionInProgress: false,
         actingPlayer: null,
-        actingPlayer: null,
       }, { merge: true });
     }
   };
