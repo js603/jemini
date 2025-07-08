@@ -311,8 +311,9 @@ function App() {
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     setLlmRetryPrompt(promptData);
-    const apiKey = ""; // API 키는 환경에 따라 제공되며, 하드코딩하지 않습니다.
-    const getApiUrl = (key) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // This will be provided by the Canvas environment.
+    const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR"; // This will be provided by the Canvas environment.
+    const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
     // LLM이 상황을 명확하게 파악하도록 구조화된 User Prompt
     const userPrompt = `
@@ -321,7 +322,7 @@ function App() {
 
       [공유 컨텍스트]
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
-      - 이전 주요 사건 로그 (최대 3개): ${JSON.stringify(promptData.history.slice(-3))}
+      - 이전 주요 사건 로그 (최대 5개): ${JSON.stringify(promptData.history.slice(-5))}
 
       [개인 정보 (현재 플레이어)]
       - 직업: ${promptData.privateInfo.profession || gameState.player.profession}
@@ -340,8 +341,13 @@ function App() {
 
     const payload = { contents: [{ role: "user", parts: [{ text: systemPrompt }] }, { role: "model", parts: [{ text: "{}" }] }, { role: "user", parts: [{ text: userPrompt }] }] };
 
+    const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
     try {
-      const response = await fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      let response = await tryGeminiCall(mainApiKey);
+      if (!response.ok) {
+        response = await tryGeminiCall(backupApiKey);
+      }
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
