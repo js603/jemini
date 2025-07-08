@@ -1130,6 +1130,81 @@ function App() {
     return () => unsubscribe();
   }, [db]);
 
+  // (8) Firestore 기본 컬렉션/문서 자동 생성 useEffect
+  useEffect(() => {
+    if (!db || !appId || !isAuthReady || !userId) return;
+    (async () => {
+      try {
+        // mainScenario 문서
+        const mainScenarioRef = getMainScenarioRef(db, appId);
+        const mainSnap = await getDoc(mainScenarioRef);
+        if (!mainSnap.exists()) {
+          const def = getDefaultGameState();
+          await setDoc(mainScenarioRef, {
+            storyLog: def.log,
+            choices: def.choices,
+            gamePhase: def.phase,
+            lastUpdate: serverTimestamp(),
+          }, { merge: true });
+        }
+        // sharedGameLog 컬렉션(최소 1개 더미 문서)
+        const sharedLogCol = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
+        const sharedLogSnap = await getDocs(sharedLogCol);
+        if (sharedLogSnap.empty) {
+          await addDoc(sharedLogCol, {
+            userId: 'system',
+            displayName: '시스템',
+            content: '공유 로그가 시작되었습니다.',
+            timestamp: serverTimestamp(),
+          });
+        }
+        // activeUsers 컬렉션(최소 1개 더미 문서)
+        const activeUsersCol = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
+        const activeUsersSnap = await getDocs(activeUsersCol);
+        if (activeUsersSnap.empty) {
+          await addDoc(activeUsersCol, {
+            id: 'system',
+            displayName: '시스템',
+            lastActive: serverTimestamp(),
+          });
+        }
+        // chatMessages 컬렉션(최소 1개 더미 문서)
+        const chatCol = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
+        const chatSnap = await getDocs(chatCol);
+        if (chatSnap.empty) {
+          await addDoc(chatCol, {
+            userId: 'system',
+            displayName: '시스템',
+            message: '채팅이 시작되었습니다.',
+            timestamp: serverTimestamp(),
+          });
+        }
+        // users 컬렉션(최소 1개 더미 문서)
+        const usersCol = collection(db, 'artifacts', appId, 'users');
+        const usersSnap = await getDocs(usersCol);
+        if (usersSnap.empty) {
+          await addDoc(usersCol, {
+            id: 'system',
+            displayName: '시스템',
+            created: serverTimestamp(),
+          });
+        }
+        // privateChats 컬렉션(최소 1개 더미 문서)
+        const privateChatsCol = collection(db, 'artifacts', appId, 'privateChats');
+        const privateChatsSnap = await getDocs(privateChatsCol);
+        if (privateChatsSnap.empty) {
+          await addDoc(privateChatsCol, {
+            id: 'system',
+            created: serverTimestamp(),
+          });
+        }
+      } catch (e) {
+        // 생성 실패해도 게임 진행에는 영향 없음
+        console.warn('Firestore 기본 컬렉션/문서 자동 생성 실패:', e);
+      }
+    })();
+  }, [db, appId, isAuthReady, userId]);
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
       {/* [닉네임 입력 모달] */}
