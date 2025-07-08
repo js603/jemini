@@ -323,7 +323,7 @@ function App() {
   `;
 
   const callGeminiTextLLM = async (promptData) => {
-    setIsTextLoading(true);
+    setIsTextLoading(true); 
     setLlmRetryPrompt(promptData);
     const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
