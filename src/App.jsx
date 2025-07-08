@@ -311,8 +311,8 @@ function App() {
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     setLlmRetryPrompt(promptData);
-    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // This will be provided by the Canvas environment.
-    const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR"; // This will be provided by the Canvas environment.
+    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
+    const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
     // LLM이 상황을 명확하게 파악하도록 구조화된 User Prompt
