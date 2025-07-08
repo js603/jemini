@@ -1057,9 +1057,11 @@ function App() {
     } catch (error) {
       setGameLog(prev => [...prev, `\n오류가 발생했습니다: ${error.message}`]);
       setIsTextLoading(false);
+      setIsTextLoading(false);
     } finally {
       await setDoc(gameStatusDocRef, {
         isActionInProgress: false,
+        actingPlayer: null,
         actingPlayer: null,
       }, { merge: true });
     }
@@ -1072,6 +1074,21 @@ function App() {
   const toggleAccordion = (key) => {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  // Firestore mainScenario 구독
+  useEffect(() => {
+    if (!db) return;
+    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+    const unsubscribe = onSnapshot(mainScenarioRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setMainScenario(data);
+        setGameLog(data.storyLog || []);
+        setCurrentChoices(data.choices || []);
+      }
+    });
+    return () => unsubscribe();
+  }, [db]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
