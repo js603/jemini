@@ -125,6 +125,9 @@ function App() {
   const [showResetModal, setShowResetModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // [mainScenario 상태 추가]
+  const [mainScenario, setMainScenario] = useState({ storyLog: [], choices: [] });
+
   // [4] 닉네임 입력 및 저장 함수
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -937,11 +940,39 @@ function App() {
   // Helper function to check if an object is empty
   const isObjectEmpty = (obj) => Object.keys(obj).length === 0 && obj.constructor === Object;
 
-  // Player choice button click handler (단일 스레드 LLM 호출 구조)
+  // [여관 이동 함수 추가]
+  const moveToInn = async () => {
+    setPlayerCharacter(prev => ({
+      ...prev,
+      currentLocation: '방랑자의 안식처',
+    }));
+    setGameLog(prev => [...prev, '\n여관(방랑자의 안식처)으로 이동했습니다.']);
+    if (db && userId) {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+      await setDoc(userDocRef, {
+        currentLocation: '방랑자의 안식처',
+      }, { merge: true });
+    }
+  };
+
+  // [mainScenario Firestore 구독]
+  useEffect(() => {
+    if (!db) return;
+    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+    const unsubscribe = onSnapshot(mainScenarioRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setMainScenario(data);
+        setGameLog(data.storyLog || []);
+        setCurrentChoices(data.choices || []);
+      }
+    });
+    return () => unsubscribe();
+  }, [db]);
+
+  // [handleChoiceClick 수정: mainScenario 기반 동기화 및 사망 감지]
   const handleChoiceClick = async (choice) => {
     if (isTextLoading) return;
-
-    // Firestore에서 현재 진행 상태 확인
     const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
     let statusData = {};
     try {
@@ -951,117 +982,86 @@ function App() {
       setGameLog(prev => [...prev, '\n진행 상태를 확인할 수 없습니다.']);
       return;
     }
-
     if (statusData.isActionInProgress) {
       setGameLog(prev => [...prev, '\n다른 플레이어가 사용중입니다...']);
       return;
     }
-
-    // 내가 진행권을 획득
     await setDoc(gameStatusDocRef, {
       isActionInProgress: true,
       actingPlayer: { id: userId, displayName: `플레이어 ${userId.substring(0, 4)}` },
       lastAction: { playerId: userId, choice, timestamp: new Date().toISOString() }
     }, { merge: true });
-
     setIsTextLoading(true);
     setGameLog(prev => [...prev, `\n> 당신의 선택: ${choice}\n`]);
     setCurrentChoices([]);
-
     let promptData;
     try {
-      if (gamePhase === 'characterSelection') {
-        const chosenProfessionKey = choice.split('.')[0].trim();
-        const chosenProfession = professions[chosenProfessionKey];
-
-        if (chosenProfession) {
-          const initialCharacterState = {
-            profession: chosenProfession.name,
-            stats: {
-              strength: chosenProfession.name.includes('기사') || chosenProfession.name.includes('용병') ? 12 : 10,
-              intelligence: chosenProfession.name.includes('마법사') ? 12 : 10,
-              agility: chosenProfession.name.includes('도적') ? 12 : 10,
-              charisma: chosenProfession.name.includes('왕족') ? 12 : 10,
-            },
-            inventory: [],
-            initialMotivation: chosenProfession.motivation,
-            currentLocation: '방랑자의 안식처',
-            reputation: {},
-            activeQuests: [],
-            companions: [],
-          };
-          setPlayerCharacter(initialCharacterState);
-
-          promptData = {
-            phase: 'characterSelection',
-            playerChoice: choice,
-            character: initialCharacterState,
-            history: gameLog,
-            activeUsers: activeUsers.filter(user => user.id !== userId),
-            privateChatHistory: []
-          };
-
-          const llmResponse = await callGeminiTextLLM(promptData);
-          setGameLog(prev => [...prev, llmResponse.story]);
-
-          setPlayerCharacter(prev => ({
-            ...prev,
-            inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
-            stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
-            currentLocation: llmResponse.location || prev.currentLocation,
-            reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
-            activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
-            companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
-          }));
-          setCurrentChoices(llmResponse.choices || []);
-          setGamePhase('playing');
-        } else {
-          setGameLog(prev => [...prev, "유효하지 않은 선택입니다. 제시된 직업 중 하나를 선택해주세요."]);
-          setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
-        }
-      } else { // gamePhase === 'playing'
-        promptData = {
-          phase: 'playing',
-          playerChoice: choice,
-          character: playerCharacter,
-          history: gameLog,
-          activeUsers: activeUsers.filter(user => user.id !== userId),
-          privateChatHistory: []
-        };
-
-        const llmResponse = await callGeminiTextLLM(promptData);
-        setGameLog(prev => [...prev, llmResponse.story]);
-
-        if (db && userId) {
-          const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
-          await addDoc(sharedLogCollectionRef, {
-            userId: userId,
-            displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
-            content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
-            timestamp: serverTimestamp(),
-          });
-        }
-
-        setPlayerCharacter(prev => ({
-          ...prev,
-          inventory: (llmResponse.inventoryUpdates && llmResponse.inventoryUpdates.length > 0) ? llmResponse.inventoryUpdates : prev.inventory,
-          stats: (llmResponse.statChanges && !isObjectEmpty(llmResponse.statChanges)) ? llmResponse.statChanges : prev.stats,
-          currentLocation: llmResponse.location || prev.currentLocation,
-          reputation: (llmResponse.reputationUpdates && !isObjectEmpty(llmResponse.reputationUpdates)) ? llmResponse.reputationUpdates : prev.reputation,
-          activeQuests: (llmResponse.activeQuestsUpdates && llmResponse.activeQuestsUpdates.length > 0) ? llmResponse.activeQuestsUpdates : prev.activeQuests,
-          companions: (llmResponse.companionsUpdates && llmResponse.companionsUpdates.length > 0) ? llmResponse.companionsUpdates : prev.companions,
-        }));
-        setCurrentChoices(llmResponse.choices || []);
+      // Firestore에서 mainScenario 상태 불러오기
+      const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+      let mainScenarioSnap = await getDoc(mainScenarioRef);
+      let mainScenarioData = mainScenarioSnap.exists() ? mainScenarioSnap.data() : null;
+      if (!mainScenarioData) {
+        mainScenarioData = { storyLog: [], choices: [] };
+        await setDoc(mainScenarioRef, mainScenarioData);
       }
+      promptData = {
+        ...mainScenarioData,
+        playerChoice: choice,
+        character: playerCharacter,
+        activeUsers: activeUsers.filter(user => user.id !== userId),
+        privateChatHistory: []
+      };
+      const llmResponse = await callGeminiTextLLM(promptData);
+      // 사망 감지 및 리셋(개인 상태만 초기화)
+      if (llmResponse.story && /사망|죽음|목숨을 잃|죽었다|죽임을 당하|숨을 거두|생명을 잃/i.test(llmResponse.story)) {
+        setGameLog(prev => [...prev, '\n[알림] 당신은 사망했습니다. 처음부터 다시 시작합니다.']);
+        setPlayerCharacter({
+          profession: '',
+          stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
+          inventory: [],
+          initialMotivation: '',
+          currentLocation: '방랑자의 안식처',
+          reputation: {},
+          activeQuests: [],
+          companions: [],
+        });
+        setGamePhase('characterSelection');
+        setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
+        setIsTextLoading(false);
+        if (db && userId) {
+          const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+          await setDoc(userDocRef, {
+            profession: '',
+            currentLocation: '방랑자의 안식처',
+          }, { merge: true });
+        }
+        return;
+      }
+      // Firestore에 mainScenario 갱신
+      await setDoc(mainScenarioRef, {
+        storyLog: [...(mainScenarioData.storyLog || []), llmResponse.story],
+        choices: llmResponse.choices || [],
+        lastUpdate: serverTimestamp(),
+      }, { merge: true });
+      // Firestore에 sharedLog도 갱신(선택적)
+      if (db && userId) {
+        const sharedLogCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'sharedGameLog');
+        await addDoc(sharedLogCollectionRef, {
+          userId: userId,
+          displayName: nickname || `플레이어 ${userId.substring(0, 4)}`,
+          content: `[${playerCharacter.profession}]의 선택: ${choice}\n\n${llmResponse.story}`,
+          timestamp: serverTimestamp(),
+        });
+      }
+      setIsTextLoading(false);
     } catch (error) {
       setGameLog(prev => [...prev, `\n오류가 발생했습니다: ${error.message}`]);
+      setIsTextLoading(false);
     } finally {
-      // Firestore 락 해제
       await setDoc(gameStatusDocRef, {
         isActionInProgress: false,
-        actingPlayer: null
+        actingPlayer: null,
       }, { merge: true });
-      setIsTextLoading(false);
     }
   };
 
@@ -1258,6 +1258,7 @@ function App() {
                           <button
                             className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
                             onClick={() => openPlayerChatModal(user)}
+                            disabled={user.currentLocation !== playerCharacter.currentLocation}
                           >
                             대화하기
                           </button>
@@ -1451,6 +1452,17 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* [여관 이동 버튼 UI 추가] */}
+      <div className="flex flex-col md:flex-row gap-3 mt-4">
+        <button
+          className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={moveToInn}
+          disabled={isTextLoading || playerCharacter.currentLocation === '방랑자의 안식처'}
+        >
+          여관(방랑자의 안식처)으로 이동
+        </button>
+      </div>
 
       <style>
         {`
