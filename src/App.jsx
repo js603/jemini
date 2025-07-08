@@ -958,7 +958,7 @@ function App() {
   // [mainScenario Firestore 구독]
   useEffect(() => {
     if (!db) return;
-    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
     const unsubscribe = onSnapshot(mainScenarioRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -997,7 +997,7 @@ function App() {
     let promptData;
     try {
       // Firestore에서 mainScenario 상태 불러오기
-      const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+      const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
       let mainScenarioSnap = await getDoc(mainScenarioRef);
       let mainScenarioData = mainScenarioSnap.exists() ? mainScenarioSnap.data() : null;
       if (!mainScenarioData) {
@@ -1077,7 +1077,7 @@ function App() {
   // Firestore mainScenario 구독
   useEffect(() => {
     if (!db) return;
-    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario');
+    const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
     const unsubscribe = onSnapshot(mainScenarioRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
