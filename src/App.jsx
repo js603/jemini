@@ -1063,6 +1063,33 @@ function App() {
       }, { merge: true });
       setIsTextLoading(false);
     }
+
+    // 사망 감지 및 리셋
+    if (llmResponse.story && /사망|죽음|목숨을 잃|죽었다|죽임을 당하|숨을 거두|생명을 잃/i.test(llmResponse.story)) {
+      setGameLog(prev => [...prev, '\n[알림] 당신은 사망했습니다. 처음부터 다시 시작합니다.']);
+      setPlayerCharacter({
+        profession: '',
+        stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
+        inventory: [],
+        initialMotivation: '',
+        currentLocation: '방랑자의 안식처',
+        reputation: {},
+        activeQuests: [],
+        companions: [],
+      });
+      setGamePhase('characterSelection');
+      setCurrentChoices(Object.keys(professions).map(key => `${key}. ${professions[key].name}`));
+      setIsTextLoading(false);
+      // Firestore에 상태 반영(선택적)
+      if (db && userId) {
+        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+        await setDoc(userDocRef, {
+          profession: '',
+          currentLocation: '방랑자의 안식처',
+        }, { merge: true });
+      }
+      return;
+    }
   };
 
   const isMyTurn = !isCompanionActionInProgress || (actingPlayer && actingPlayer.id === userId);
@@ -1071,6 +1098,22 @@ function App() {
   // [8] 아코디언 UI 토글 함수
   const toggleAccordion = (key) => {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // 1. 여관 이동 함수 추가
+  const moveToInn = async () => {
+    setPlayerCharacter(prev => ({
+      ...prev,
+      currentLocation: '방랑자의 안식처',
+    }));
+    setGameLog(prev => [...prev, '\n여관(방랑자의 안식처)으로 이동했습니다.']);
+    // Firestore에 위치 반영(선택적)
+    if (db && userId) {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+      await setDoc(userDocRef, {
+        currentLocation: '방랑자의 안식처',
+      }, { merge: true });
+    }
   };
 
   return (
@@ -1258,6 +1301,7 @@ function App() {
                           <button
                             className="ml-2 px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded-md"
                             onClick={() => openPlayerChatModal(user)}
+                            disabled={user.currentLocation !== playerCharacter.currentLocation}
                           >
                             대화하기
                           </button>
@@ -1451,6 +1495,17 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 여관 이동 버튼 UI 추가 (선택지 버튼 아래, 저장/불러오기 버튼 위 등 적절한 위치) */}
+      <div className="flex flex-col md:flex-row gap-3 mt-4">
+        <button
+          className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={moveToInn}
+          disabled={isTextLoading || playerCharacter.currentLocation === '방랑자의 안식처'}
+        >
+          여관(방랑자의 안식처)으로 이동
+        </button>
+      </div>
 
       <style>
         {`
