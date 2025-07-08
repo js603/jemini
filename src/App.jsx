@@ -74,6 +74,7 @@ const getDefaultPrivatePlayerState = () => ({
     profession: '', // 개인 직업 정보
 });
 
+
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
@@ -97,7 +98,7 @@ function App() {
   const [isResetting, setIsResetting] = useState(false);
   const [llmError, setLlmError] = useState(null);
   const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
-  const [uiMode, setUiMode] = useState('loading');
+  const [isLoading, setIsLoading] = useState(true); // 로딩 상태 관리
 
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -137,8 +138,12 @@ function App() {
         const usersColRef = collection(db, 'artifacts', appId, 'users');
         const usersSnapshot = await getDocs(usersColRef);
         for (const userDoc of usersSnapshot.docs) {
-            await deleteDoc(userDoc.ref); // 하위 컬렉션은 자동으로 삭제되지 않으므로 주의, 여기서는 유저 문서 자체를 삭제
+            // Firestore doesn't automatically delete subcollections. For a full wipe,
+            // you might need a cloud function. This deletes the user document,
+            // which orphansthe subcollections but works for this reset's purpose.
+            await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
         }
+
 
         const mainScenarioRef = getMainScenarioRef(db, appId);
         await deleteDoc(mainScenarioRef);
@@ -146,16 +151,24 @@ function App() {
         const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
         await deleteDoc(gameStatusRef);
 
+        // Reset local state
         setGameState(getDefaultGameState());
         setPrivatePlayerState(getDefaultPrivatePlayerState());
         setChatMessages([]);
-        setUiMode('creation'); // 리셋 후 생성 모드로 전환
+        
+        // Force re-initialization of the player's own state
+        if (userId) {
+          const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+          await setDoc(privateStateRef, getDefaultPrivatePlayerState());
+        }
 
     } catch (e) {
         console.error("Data reset error:", e);
     } finally {
       setIsResetting(false);
       setShowResetModal(false);
+      // Reload to ensure a clean state from the server
+      window.location.reload();
     }
   };
 
@@ -177,37 +190,36 @@ function App() {
       return () => unsubscribeAuth();
     } catch (error) {
       console.error("Firebase initialization error:", error);
+      setLlmError("Firebase 초기화에 실패했습니다.");
     }
   }, []);
   
   useEffect(() => {
     if (!db || !userId || !isAuthReady) return;
-
+    setIsLoading(true);
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     const unsubscribe = onSnapshot(privateStateRef, (docSnap) => {
         if (docSnap.exists()) {
-            const privateData = docSnap.data();
-            setPrivatePlayerState(privateData);
-            if (privateData.characterCreated) {
-                setUiMode('playing');
-            } else {
-                setUiMode('creation');
-            }
+            setPrivatePlayerState(docSnap.data());
         } else {
+            // If the player state doc doesn't exist, create it.
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
-            setUiMode('creation');
         }
+        setIsLoading(false);
     }, (error) => {
         console.error("Private player state snapshot error:", error);
         setLlmError("개인 정보를 불러오는 데 실패했습니다.");
-        setUiMode('error');
+        setIsLoading(false);
     });
 
     return () => unsubscribe();
   }, [db, userId, isAuthReady]);
 
   useEffect(() => {
-    if (uiMode !== 'playing' || !db || !isAuthReady || !userId || !auth) return;
+    if (isLoading || !db || !isAuthReady || !userId || !auth) return;
+
+    // Only subscribe to game documents if the character has been created.
+    if (!privatePlayerState.characterCreated) return;
 
     const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
     const unsubscribeGameStatus = onSnapshot(gameStatusDocRef, (docSnap) => {
@@ -265,7 +277,7 @@ function App() {
       unsubscribeMainScenario();
       clearInterval(presenceInterval);
     };
-  }, [db, isAuthReady, userId, auth, nickname, uiMode, privatePlayerState.profession]);
+  }, [db, isAuthReady, userId, auth, nickname, isLoading, privatePlayerState.characterCreated, privatePlayerState.profession]);
 
 
   useEffect(() => {
@@ -422,7 +434,11 @@ function App() {
 
         const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
         if (llmResponse.privateStateUpdates) {
-            await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: false });
+            // ============ [THE FIX] ============
+            // Use { merge: true } to update only the fields returned by the LLM
+            // and leave other fields like `characterCreated` untouched.
+            await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: true });
+            // ===================================
         }
     } catch (error) {
         console.error("공유 상태 업데이트 실패:", error);
@@ -431,9 +447,10 @@ function App() {
   };
   
   const handleChoiceClick = async (choice) => {
-    if (isTextLoading || (uiMode === 'playing' && isActionInProgress)) return;
+    if (isTextLoading || isActionInProgress) return;
 
-    if (uiMode === 'creation') {
+    // 캐릭터 생성 로직 (기존 creation 모드 대체)
+    if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
         const choiceKey = choice.split('.')[0];
         const selectedProfession = professions[choiceKey];
@@ -461,9 +478,9 @@ function App() {
             try {
                 await runTransaction(db, async (transaction) => {
                     const scenarioDoc = await transaction.get(mainScenarioRef);
+                    const initialChoices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
                     if (!scenarioDoc.exists()) {
                         const initialGameState = getDefaultGameState();
-                        const initialChoices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
                         transaction.set(mainScenarioRef, {
                             ...initialGameState,
                             storyLog: [newEvent],
@@ -473,7 +490,11 @@ function App() {
                     } else {
                         const currentData = scenarioDoc.data();
                         const newStoryLog = [...(currentData.storyLog || []), newEvent];
-                        transaction.update(mainScenarioRef, { storyLog: newStoryLog, lastUpdate: serverTimestamp() });
+                        transaction.update(mainScenarioRef, { 
+                            storyLog: newStoryLog, 
+                            choices: initialChoices, // 새로운 플레이어 등장 시 선택지를 초기화
+                            lastUpdate: serverTimestamp() 
+                        });
                     }
                 });
             } catch (e) {
@@ -486,6 +507,7 @@ function App() {
         return;
     }
 
+    // 일반 게임 플레이 로직
     const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
     try {
         await runTransaction(db, async (transaction) => {
@@ -539,37 +561,12 @@ function App() {
     )
   }
 
-  if (uiMode === 'loading') {
+  if (isLoading) {
     return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">데이터를 불러오는 중...</span></div>;
   }
   
-  if (uiMode === 'error') {
+  if (llmError) {
      return <div className="min-h-screen bg-gray-900 text-red-400 flex items-center justify-center"><p>{llmError}</p></div>
-  }
-
-  if (uiMode === 'creation') {
-    return (
-      <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-2xl text-center">
-            <h1 className="text-3xl font-bold mb-2 text-yellow-300">모험의 서막</h1>
-            <p className="text-lg text-gray-300 mb-8">당신은 어떤 운명을 선택하시겠습니까?</p>
-            <div className="flex flex-col gap-4">
-                {Object.keys(professions).map(key => (
-                    <button
-                        key={key}
-                        onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
-                        disabled={isTextLoading}
-                        className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
-                    >
-                        <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
-                        <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
-                    </button>
-                ))}
-            </div>
-            {isTextLoading && <div className="mt-4 flex justify-center items-center"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-300"></div><p className="ml-3 text-gray-400">세계에 당신의 존재를 기록하는 중...</p></div>}
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -600,6 +597,12 @@ function App() {
                   <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
                 </div>
                 <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
+                  {!privatePlayerState.characterCreated && (
+                    <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
+                        <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
+                        <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
+                    </div>
+                  )}
                   {gameState.log.map((event, index) => (
                     <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
                       {event.actor?.displayName && event.action && (
@@ -635,16 +638,30 @@ function App() {
           </div>
 
           <div className="flex flex-col gap-3">
-            {gameState.choices.map((choice, index) => (
-              <button
-                key={index}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => handleChoiceClick(choice)}
-                disabled={isTextLoading || isActionInProgress}
-              >
-                {choice}
-              </button>
-            ))}
+            {privatePlayerState.characterCreated ? (
+                gameState.choices.map((choice, index) => (
+                <button
+                    key={index}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => handleChoiceClick(choice)}
+                    disabled={isTextLoading || isActionInProgress}
+                >
+                    {choice}
+                </button>
+                ))
+            ) : (
+                Object.keys(professions).map(key => (
+                <button
+                    key={key}
+                    onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
+                    disabled={isTextLoading}
+                    className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
+                >
+                    <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
+                    <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
+                </button>
+                ))
+            )}
           </div>
         </div>
 
@@ -657,7 +674,7 @@ function App() {
                 {accordion.playerInfo && (
                   <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
                     <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
-                    <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession}</p>
+                    <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
                     <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
                     <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats.strength}) 지능({privatePlayerState.stats.intelligence}) 민첩({privatePlayerState.stats.agility}) 카리스마({privatePlayerState.stats.charisma})</p>
                     <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
