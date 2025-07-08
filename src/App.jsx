@@ -736,38 +736,24 @@ function App() {
   // Function to load game state.
   const loadGame = async () => {
     if (!db || !userId || !isAuthReady) {
-      setGameLog(prev => [...prev, "오류: 게임을 불러올 수 없습니다. 인증 상태를 확인해주세요."]);
+      setLlmError("오류: 게임을 불러올 수 없습니다. 인증 상태를 확인해주세요.");
       return;
     }
-
     setIsTextLoading(true);
     try {
-      // Private data is at /artifacts/{appId}/users/{userId}/{your_collection_name}
       const gameDocRef = doc(db, 'artifacts', appId, 'users', userId, 'textAdventureGame', 'gameState');
       const docSnap = await getDoc(gameDocRef);
-
       if (docSnap.exists()) {
         const savedData = docSnap.data();
-        setGameLog(savedData.gameLog || []);
-        setGamePhase(savedData.gamePhase || 'characterSelection');
-        setPlayerCharacter(savedData.playerCharacter || {
-          profession: '',
-          stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
-          inventory: [],
-          initialMotivation: '',
-          currentLocation: '방랑자의 안식처', // Set initial location to 'Wanderer's Rest'
-          reputation: {},
-          activeQuests: [],
-          companions: [],
-        });
-        setCurrentChoices(savedData.currentChoices || []);
-        setGameLog(prev => [...prev, "\n게임이 성공적으로 불러와졌습니다."]);
+        setGameState(savedData); // 기존 저장 데이터로 복원
       } else {
-        setGameLog(prev => [...prev, "\n저장된 게임이 없습니다."]);
+        // 저장된 데이터가 없으면 기본값으로 초기화
+        setGameState(getDefaultGameState());
+        setLlmError("저장된 게임이 없어 새로 시작합니다.");
       }
     } catch (error) {
-      console.error("Game load error:", error);
-      setGameLog(prev => [...prev, `\n게임 불러오기 중 오류가 발생했습니다: ${error.message}`]);
+      setLlmError("게임 불러오기 중 오류: " + error.message);
+      setGameState(getDefaultGameState());
     } finally {
       setIsTextLoading(false);
     }
@@ -1204,6 +1190,13 @@ function App() {
       }
     })();
   }, [db, appId, isAuthReady, userId]);
+
+  // (10) 게임 상태가 비정상적으로 비어 있으면 자동 복구
+  useEffect(() => {
+    if (!gameState.log || gameState.log.length === 0 || !gameState.choices) {
+      setGameState(getDefaultGameState());
+    }
+  }, [gameState.log, gameState.choices]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
