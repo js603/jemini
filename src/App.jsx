@@ -56,12 +56,17 @@ const getPrivatePlayerStateRef = (db, appId, userId) => doc(db, 'artifacts', app
 // 상태 초기화 유틸
 const getDefaultGameState = () => ({
   phase: 'characterSelection',
-  log: [
-    "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.",
-    "어떤 직업을 선택하시겠습니까?"
+  log: [ // 로그 구조를 이벤트 객체로 변경
+    {
+      actor: { displayName: '게임 마스터' },
+      action: '게임 시작',
+      publicStory: "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.\n어떤 직업을 선택하시겠습니까?",
+      privateStories: {},
+      timestamp: new Date()
+    }
   ],
   choices: Object.keys(professions).map(key => `${key}. ${professions[key].name}`),
-  player: { // 공유 정보나 기본 UI 표시용
+  player: {
     profession: '',
     currentLocation: '방랑자의 안식처',
   },
@@ -74,7 +79,7 @@ const getDefaultPrivatePlayerState = () => ({
     reputation: {},
     activeQuests: [],
     companions: [],
-    knownClues: [], // 개인적으로 알고 있는 단서
+    knownClues: [],
 });
 
 
@@ -148,17 +153,26 @@ function App() {
         }
 
         const mainScenarioRef = getMainScenarioRef(db, appId);
-        await setDoc(mainScenarioRef, { ...getDefaultGameState(), storyLog: getDefaultGameState().log, lastUpdate: serverTimestamp() });
+        const initialGameState = getDefaultGameState();
+        await setDoc(mainScenarioRef, { ...initialGameState, storyLog: initialGameState.log, lastUpdate: serverTimestamp() });
         
         const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
         await deleteDoc(gameStatusRef);
 
-        setGameState(getDefaultGameState());
+        setGameState(initialGameState);
         setPrivatePlayerState(getDefaultPrivatePlayerState());
         setChatMessages([]);
 
     } catch (e) {
-      setGameState(prev => ({ ...prev, log: [...prev.log, '데이터 초기화 중 오류 발생: ' + e.message] }));
+        // Log structure changed, so push a new event object for the error.
+        const errorEvent = {
+            actor: { displayName: '시스템' },
+            action: '데이터 초기화 오류',
+            publicStory: '데이터 초기화 중 오류 발생: ' + e.message,
+            privateStories: {},
+            timestamp: new Date()
+        };
+        setGameState(prev => ({ ...prev, log: [...prev.log, errorEvent] }));
     } finally {
       setIsResetting(false);
       setShowResetModal(false);
@@ -259,10 +273,6 @@ function App() {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
   
-  // ====================================================================
-  // LLM PROMPT ENGINEERING SECTION
-  // ====================================================================
-
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 TRPG(Tabletop Role-Playing Game)의 최고 실력자 '게임 마스터(GM)'입니다. 당신의 임무는 단순한 스토리 생성이 아니라, 각 플레이어가 자신의 서사의 주인공이 되면서도, 모두가 하나의 거대한 세계관 속에서 살아 숨 쉬고 있다는 느낌을 받도록 만드는 것입니다. 당신은 유려한 문장가이자, 치밀한 설계자이며, 플레이어들의 행동에 즉각적으로 반응하는 유연한 스토리텔러입니다.
@@ -315,14 +325,16 @@ function App() {
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     
-    // LLM이 상황을 명확하게 파악하도록 구조화된 User Prompt
+    // 이전 로그에서 publicStory만 추출하여 간결한 히스토리 생성
+    const history = promptData.history.map(event => event.publicStory).slice(-5);
+
     const userPrompt = `
       [상황 분석 요청]
       아래 정보를 바탕으로 플레이어의 행동에 대한 결과를 생성해주십시오.
 
       [공유 컨텍스트]
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
-      - 이전 주요 사건 로그 (최대 5개): ${JSON.stringify(promptData.history.slice(-5))}
+      - 이전 주요 사건 로그 (최대 5개): ${JSON.stringify(history)}
 
       [개인 정보 (현재 플레이어)]
       - 직업: ${promptData.privateInfo.profession || gameState.player.profession}
@@ -365,11 +377,6 @@ function App() {
     }
   };
 
-  // ====================================================================
-  // END OF LLM PROMPT ENGINEERING SECTION
-  // ====================================================================
-
-
   const sendChatMessage = async () => {
     if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) return;
     try {
@@ -381,22 +388,20 @@ function App() {
     }
   };
 
-  // *** 권한 오류 수정을 위해 isAuthReady를 의존성에 추가하고 로직을 수정 ***
   useEffect(() => {
-    if (!db || !appId || !isAuthReady) return; // 인증이 준비될 때까지 대기
+    if (!db || !appId || !isAuthReady) return;
     const ref = getMainScenarioRef(db, appId);
     const unsubscribe = onSnapshot(ref, async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setGameState(prev => ({
           ...prev,
-          log: data.storyLog || prev.log,
+          log: data.storyLog || prev.log, // 이제 storyLog는 객체 배열
           choices: data.choices || [],
           phase: data.phase || prev.phase,
           player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation }
         }));
       } else {
-        // 최초 시나리오 생성
         const def = getDefaultGameState();
         try {
             await setDoc(ref, { ...def, storyLog: def.log, lastUpdate: serverTimestamp() }, { merge: true });
@@ -410,51 +415,53 @@ function App() {
       setLlmError("시나리오를 불러오는 중 오류가 발생했습니다. 페이지를 새로고침 해보세요.");
     });
     return () => unsubscribe();
-  }, [db, appId, isAuthReady]); // isAuthReady를 의존성 배열에 추가
+  }, [db, appId, isAuthReady]);
 
-  const updateGameStateFromLLM = async (llmResponse) => {
+  // ★★★★★ [수정됨] 이벤트 중심 로직으로 변경된 함수 ★★★★★
+  const updateGameStateFromLLM = async (llmResponse, playerChoice) => {
     if (!db || !appId || !userId) return;
-    
+
     const mainScenarioRef = getMainScenarioRef(db, appId);
     const newChoices = [...(llmResponse.choices || []), ...(llmResponse.privateChoices || [])];
+
+    // 1. 새로운 이벤트 객체 생성
+    const newEvent = {
+        actor: { id: userId, displayName: getDisplayName(userId) },
+        action: playerChoice, // 사용자가 선택한 행동
+        publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
+        privateStories: {
+            [userId]: llmResponse.privateStory || null
+        },
+        timestamp: serverTimestamp()
+    };
 
     try {
         await runTransaction(db, async (transaction) => {
             const scenarioDoc = await transaction.get(mainScenarioRef);
             if (!scenarioDoc.exists()) throw "시나리오 문서가 존재하지 않습니다.";
-            
+
             const currentData = scenarioDoc.data();
-            // 트랜잭션에서는 공유 로그만 업데이트
-            const publicLog = [...(currentData.storyLog || []), llmResponse.story];
-            
+            // 2. 기존 로그에 새 이벤트 객체 추가
+            const newStoryLog = [...(currentData.storyLog || []), newEvent];
+
             transaction.update(mainScenarioRef, {
-                storyLog: publicLog,
+                storyLog: newStoryLog,
                 choices: newChoices,
                 phase: 'playing',
                 'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
-                lastUpdate: serverTimestamp(),
-                lastActor: { id: userId, displayName: getDisplayName(userId) }
+                lastUpdate: serverTimestamp()
             });
         });
 
-        // 트랜잭션 성공 후, 로컬 상태에만 개인 스토리 추가
-        // onSnapshot이 비동기적으로 작동하므로, 즉각적인 UI 반영을 위해 로컬 상태를 직접 조작
-        const docSnap = await getDoc(mainScenarioRef);
-        const updatedPublicLog = docSnap.data().storyLog;
-        const finalLog = llmResponse.privateStory 
-            ? [...updatedPublicLog, `\n[당신만 아는 사실] ${llmResponse.privateStory}`]
-            : [...updatedPublicLog];
-        
-        setGameState(prev => ({...prev, log: finalLog, choices: newChoices}));
-
+        // 3. 개인 상태 업데이트
+        const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+        if (llmResponse.privateStateUpdates) {
+            // merge:false -> LLM이 항상 전체 상태를 반환하므로 덮어쓰기
+            await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: false });
+        }
     } catch (error) {
         console.error("공유 상태 업데이트 실패:", error);
         setLlmError("시나리오를 업데이트하는 데 실패했습니다.");
-    }
-
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    if (llmResponse.privateStateUpdates) {
-        await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: false });
     }
   };
 
@@ -475,24 +482,31 @@ function App() {
         }, { merge: true });
       });
 
-      const newLog = [...gameState.log, `\n> ${choice}`];
-      setGameState(prev => ({ ...prev, log: newLog }));
-      
       if (gameState.phase === 'characterSelection') {
         const choiceKey = choice.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
           const initialMotivation = selectedProfession.motivation;
-          const finalLog = [...newLog, `\n당신은 '${selectedProfession.name}'입니다. ${initialMotivation}`];
           const choices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
           
+          const newEvent = {
+            actor: { id: userId, displayName: getDisplayName(userId) },
+            action: choice,
+            publicStory: `당신은 '${selectedProfession.name}'입니다. ${initialMotivation}`,
+            privateStories: {},
+            timestamp: serverTimestamp()
+          };
+          
           const mainScenarioRef = getMainScenarioRef(db, appId);
+          // 이전 로그를 가져와서 새 이벤트를 추가
+          const docSnap = await getDoc(mainScenarioRef);
+          const currentLog = docSnap.exists() ? docSnap.data().storyLog : [];
+          
           await setDoc(mainScenarioRef, {
               phase: 'playing',
-              storyLog: finalLog,
+              storyLog: [...currentLog, newEvent],
               choices: choices,
               lastUpdate: serverTimestamp(),
-              lastActor: { id: userId, displayName: getDisplayName(userId) }
           }, { merge: true });
 
           const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
@@ -501,26 +515,23 @@ function App() {
           await setDoc(privateStateRef, newPrivateState, { merge: true });
           
           setGameState(prev => ({ ...prev, player: {...prev.player, profession: selectedProfession.name }}));
-          return;
+          return; // LLM 호출 없이 종료
         }
       }
 
+      // 일반적인 행동 처리
       const promptData = {
         playerChoice: choice,
-        sharedInfo: {
-            currentLocation: gameState.player.currentLocation,
-        },
-        privateInfo: {
-            ...privatePlayerState,
-            profession: gameState.player.profession // privateInfo에 직업 정보 추가
-        },
-        history: newLog,
+        sharedInfo: { currentLocation: gameState.player.currentLocation },
+        privateInfo: { ...privatePlayerState, profession: gameState.player.profession },
+        history: gameState.log, // 전체 로그 객체 배열 전달
         activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
       };
       
       const llmResponse = await callGeminiTextLLM(promptData);
       if (llmResponse) {
-        await updateGameStateFromLLM(llmResponse);
+        // ★★★★★ [수정됨] choice를 함께 전달 ★★★★★
+        await updateGameStateFromLLM(llmResponse, choice);
         setLlmError(null);
       } else {
         throw new Error("LLM으로부터 유효한 응답을 받지 못했습니다.");
@@ -588,9 +599,23 @@ function App() {
                 <div className="flex justify-end mb-2">
                   <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
                 </div>
+                {/* ★★★★★ [수정됨] 이벤트 객체 렌더링 로직 ★★★★★ */}
                 <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-                  {gameState.log.map((line, index) => (
-                    <p key={index} className="whitespace-pre-wrap mb-1" dangerouslySetInnerHTML={{ __html: line.replace(/\n/g, '<br />') }}></p>
+                  {gameState.log.map((event, index) => (
+                    <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
+                      {event.actor?.displayName && event.action && (
+                         <p className="text-yellow-300 font-semibold italic text-sm">
+                           &gt; {event.actor.displayName} 님이 "{event.action}" 선택
+                         </p>
+                      )}
+                      <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
+                      {event.privateStories && event.privateStories[userId] && (
+                        <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
+                          <span className="font-bold">[당신만 아는 사실] </span>
+                          {event.privateStories[userId]}
+                        </p>
+                      )}
+                    </div>
                   ))}
                   {isTextLoading && (
                     <div className="flex justify-center items-center mt-4">
