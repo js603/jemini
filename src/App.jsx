@@ -489,6 +489,25 @@ function App() {
     }
   };
 
+  const handleLLMCall = async (promptData) => {
+    setIsTextLoading(true);
+    try {
+      const llmResponse = await callGeminiTextLLM(promptData);
+      if (llmResponse && llmResponse.story) {
+        await updateGameStateFromLLM(llmResponse);
+        setLlmError(null);
+      } else {
+        throw new Error("LLM으로부터 유효한 응답을 받지 못했습니다.");
+      }
+    } catch (error) {
+      setLlmError(error.message || 'LLM 호출 실패');
+      const fallback = getFallbackLLMResponse(promptData);
+      updateGameStateFromLLM(fallback);
+    } finally {
+      setIsTextLoading(false);
+    }
+  };
+
   const toggleAccordion = (key) => {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
