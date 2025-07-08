@@ -432,7 +432,7 @@ function App() {
         privateStories: {
             [userId]: llmResponse.privateStory || null
         },
-        timestamp: serverTimestamp()
+        timestamp: new Date() // <--- 이렇게 수정
     };
 
     try {
@@ -494,7 +494,7 @@ function App() {
             action: choice,
             publicStory: `당신은 '${selectedProfession.name}'입니다. ${initialMotivation}`,
             privateStories: {},
-            timestamp: serverTimestamp()
+            timestamp: new Date() // <--- 이렇게 수정
           };
           
           const mainScenarioRef = getMainScenarioRef(db, appId);
