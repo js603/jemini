@@ -959,12 +959,27 @@ function App() {
   useEffect(() => {
     if (!db) return;
     const mainScenarioRef = doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
-    const unsubscribe = onSnapshot(mainScenarioRef, (docSnap) => {
+    const unsubscribe = onSnapshot(mainScenarioRef, async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setMainScenario(data);
         setGameLog(data.storyLog || []);
         setCurrentChoices(data.choices || []);
+      } else {
+        // Firestore에 문서가 없으면 기본값 세팅
+        const defaultLog = [
+          "환영합니다! 당신은 중세 유럽풍 판타지 왕국의 모험가가 될 것입니다. 당신은 지금 '방랑자의 안식처'라는 아늑한 여관에 도착했습니다.",
+          "어떤 직업을 선택하시겠습니까?"
+        ];
+        const defaultChoices = Object.keys(professions).map(key => `${key}. ${professions[key].name}`);
+        await setDoc(mainScenarioRef, {
+          storyLog: defaultLog,
+          choices: defaultChoices,
+          lastUpdate: serverTimestamp(),
+        });
+        setMainScenario({ storyLog: defaultLog, choices: defaultChoices });
+        setGameLog(defaultLog);
+        setCurrentChoices(defaultChoices);
       }
     });
     return () => unsubscribe();
