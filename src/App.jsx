@@ -138,25 +138,19 @@ function App() {
         const usersColRef = collection(db, 'artifacts', appId, 'users');
         const usersSnapshot = await getDocs(usersColRef);
         for (const userDoc of usersSnapshot.docs) {
-            // Firestore doesn't automatically delete subcollections. For a full wipe,
-            // you might need a cloud function. This deletes the user document,
-            // which orphansthe subcollections but works for this reset's purpose.
             await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
         }
 
-
         const mainScenarioRef = getMainScenarioRef(db, appId);
         await deleteDoc(mainScenarioRef);
-        
+
         const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
         await deleteDoc(gameStatusRef);
 
-        // Reset local state
         setGameState(getDefaultGameState());
         setPrivatePlayerState(getDefaultPrivatePlayerState());
         setChatMessages([]);
-        
-        // Force re-initialization of the player's own state
+
         if (userId) {
           const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
           await setDoc(privateStateRef, getDefaultPrivatePlayerState());
@@ -167,7 +161,6 @@ function App() {
     } finally {
       setIsResetting(false);
       setShowResetModal(false);
-      // Reload to ensure a clean state from the server
       window.location.reload();
     }
   };
@@ -193,7 +186,7 @@ function App() {
       setLlmError("Firebase 초기화에 실패했습니다.");
     }
   }, []);
-  
+
   useEffect(() => {
     if (!db || !userId || !isAuthReady) return;
     setIsLoading(true);
@@ -202,7 +195,6 @@ function App() {
         if (docSnap.exists()) {
             setPrivatePlayerState(docSnap.data());
         } else {
-            // If the player state doc doesn't exist, create it.
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
         setIsLoading(false);
@@ -218,7 +210,6 @@ function App() {
   useEffect(() => {
     if (isLoading || !db || !isAuthReady || !userId || !auth) return;
 
-    // Only subscribe to game documents if the character has been created.
     if (!privatePlayerState.characterCreated) return;
 
     const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
@@ -241,19 +232,6 @@ function App() {
       setActiveUsers(users);
     });
     
-    const updateUserPresence = async () => {
-      if (userId) {
-        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
-        await setDoc(userDocRef, {
-          lastActive: serverTimestamp(),
-          nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
-          profession: privatePlayerState.profession,
-        }, { merge: true });
-      }
-    };
-    updateUserPresence();
-    const presenceInterval = setInterval(updateUserPresence, 30000);
-
     const mainScenarioRef = getMainScenarioRef(db, appId);
     const unsubscribeMainScenario = onSnapshot(mainScenarioRef, (snap) => {
       if (snap.exists()) {
@@ -275,9 +253,37 @@ function App() {
       unsubscribeChat();
       unsubscribeActiveUsers();
       unsubscribeMainScenario();
-      clearInterval(presenceInterval);
     };
-  }, [db, isAuthReady, userId, auth, nickname, isLoading, privatePlayerState.characterCreated, privatePlayerState.profession]);
+  }, [db, isAuthReady, userId, auth, isLoading, privatePlayerState.characterCreated]);
+
+
+  // ============ [NEW] Presence detection using Page Visibility API ============
+  useEffect(() => {
+    if (!db || !userId || !nickname) return;
+
+    const updateUserPresence = async () => {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+      await setDoc(userDocRef, {
+        lastActive: serverTimestamp(),
+        nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
+        profession: privatePlayerState.profession,
+      }, { merge: true });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        updateUserPresence();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    updateUserPresence();
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [db, userId, nickname, privatePlayerState.profession]);
+  // =======================================================================
 
 
   useEffect(() => {
@@ -287,7 +293,7 @@ function App() {
   useEffect(() => {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
-  
+
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 TRPG(Tabletop Role-Playing Game)의 최고 실력자 '게임 마스터(GM)'입니다. 당신의 임무는 단순한 스토리 생성이 아니라, 각 플레이어가 자신의 서사의 주인공이 되면서도, 모두가 하나의 거대한 세계관 속에서 살아 숨 쉬고 있다는 느낌을 받도록 만드는 것입니다. 당신은 유려한 문장가이자, 치밀한 설계자이며, 플레이어들의 행동에 즉각적으로 반응하는 유연한 스토리텔러입니다.
@@ -339,7 +345,7 @@ function App() {
     const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-    
+
     const history = promptData.history.map(event => event.publicStory).slice(-5);
 
     const userPrompt = `
@@ -434,22 +440,17 @@ function App() {
 
         const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
         if (llmResponse.privateStateUpdates) {
-            // ============ [THE FIX] ============
-            // Use { merge: true } to update only the fields returned by the LLM
-            // and leave other fields like `characterCreated` untouched.
             await setDoc(privateStateRef, llmResponse.privateStateUpdates, { merge: true });
-            // ===================================
         }
     } catch (error) {
         console.error("공유 상태 업데이트 실패:", error);
         setLlmError("시나리오를 업데이트하는 데 실패했습니다.");
     }
   };
-  
+
   const handleChoiceClick = async (choice) => {
     if (isTextLoading || isActionInProgress) return;
 
-    // 캐릭터 생성 로직 (기존 creation 모드 대체)
     if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
         const choiceKey = choice.split('.')[0];
@@ -492,7 +493,7 @@ function App() {
                         const newStoryLog = [...(currentData.storyLog || []), newEvent];
                         transaction.update(mainScenarioRef, { 
                             storyLog: newStoryLog, 
-                            choices: initialChoices, // 새로운 플레이어 등장 시 선택지를 초기화
+                            choices: initialChoices,
                             lastUpdate: serverTimestamp() 
                         });
                     }
@@ -507,7 +508,6 @@ function App() {
         return;
     }
 
-    // 일반 게임 플레이 로직
     const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
     try {
         await runTransaction(db, async (transaction) => {
@@ -528,7 +528,7 @@ function App() {
             history: gameState.log,
             activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
         };
-        
+
         const llmResponse = await callGeminiTextLLM(promptData);
         if (llmResponse) {
             await updateGameStateFromLLM(llmResponse, choice);
@@ -564,7 +564,7 @@ function App() {
   if (isLoading) {
     return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">데이터를 불러오는 중...</span></div>;
   }
-  
+
   if (llmError) {
      return <div className="min-h-screen bg-gray-900 text-red-400 flex items-center justify-center"><p>{llmError}</p></div>
   }
