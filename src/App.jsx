@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useMediaQuery } from 'react-responsive';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInAnonymously,
-  signInWithCustomToken,
   onAuthStateChanged
 } from 'firebase/auth';
 import {
@@ -22,7 +22,7 @@ import {
 } from 'firebase/firestore';
 
 // ====================================================================
-// Firebase configuration information - 수정 금지
+// Firebase configuration information
 const defaultFirebaseConfig = {
   apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8",
   authDomain: "text-adventure-game-cb731.firebaseapp.com",
@@ -32,11 +32,8 @@ const defaultFirebaseConfig = {
   appId: "1:1092941614820:web:5545f36014b73c268026f1",
   measurementId: "G-FNGF42T1FP"
 };
-
-// 수정금지
 const firebaseConfig = defaultFirebaseConfig;
 const appId = firebaseConfig.projectId;
-const initialAuthToken = null;
 // ====================================================================
 
 const professions = {
@@ -48,80 +45,61 @@ const professions = {
   '6': { name: '왕족/공주/왕자', motivation: '왕실 내의 불화와 암투 속에서 자신의 입지를 다져야 합니다.' },
 };
 
-// Firestore 경로 유틸
+// Firestore Path Utils
 const getMainScenarioRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
 const getPrivatePlayerStateRef = (db, appId, userId) => doc(db, 'artifacts', appId, 'users', userId, 'playerState', 'state');
 const getGameStatusRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
-const getMajorEventsRef = (db, appId) => collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
 
-
-// 상태 초기화 유틸
+// State Initializers
 const getDefaultGameState = () => ({
-  phase: 'playing',
   log: [],
   choices: [
     { id: 'inn_look_around', text: "여관을 둘러본다", type: 'location_default', location: '방랑자의 안식처' },
     { id: 'inn_talk_to_owner', text: "여관 주인에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
-    { id: 'inn_talk_to_adventurer', text: "다른 모험가에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
   ],
-  player: {
-    currentLocation: '방랑자의 안식처',
-  },
-  subtleClues: [],
+  player: { currentLocation: '방랑자의 안식처' },
+  leaderId: null, // 선착순 리더 ID
 });
 
 const getDefaultPrivatePlayerState = () => ({
     stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
     inventory: [],
-    initialMotivation: '',
-    reputation: {},
-    activeQuests: [],
-    companions: [],
-    knownClues: [],
     characterCreated: false,
     profession: '',
-    choices: [],
-    groups: [],
-    npcRelations: {},
+    choices: [], // 개인 선택지 풀
 });
 
-
+// Main App Component
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
+  const [actionLocks, setActionLocks] = useState({});
   const [isTextLoading, setIsTextLoading] = useState(false);
   const [activeUsers, setActiveUsers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
-  const [currentChatMessage, setCurrentChatMessage] = useState('');
-  const [actionLocks, setActionLocks] = useState({});
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const logEndRef = useRef(null);
-  const chatEndRef = useRef(null);
   const [nickname, setNickname] = useState(() => localStorage.getItem('nickname') || '');
   const [showNicknameModal, setShowNicknameModal] = useState(!localStorage.getItem('nickname'));
   const [nicknameInput, setNicknameInput] = useState('');
-  const [accordion, setAccordion] = useState({ gameLog: true, chat: true, users: true, playerInfo: true });
-  const [showResetModal, setShowResetModal] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
   const [llmError, setLlmError] = useState(null);
-  const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [worldHistory, setWorldHistory] = useState([]);
   const [cooperativeAction, setCooperativeAction] = useState(null);
+  
+  const isDesktopOrLaptop = useMediaQuery({ query: '(min-width: 1024px)' });
+  const isMobile = useMediaQuery({ query: '(max-width: 1023px)' });
+  const [mobileTab, setMobileTab] = useState('game');
 
+  // --- Core Functions ---
+  
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
       const finalNickname = nicknameInput.trim();
       setNickname(finalNickname);
       localStorage.setItem('nickname', finalNickname);
       setShowNicknameModal(false);
-      if (userId && db) {
-          const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
-          setDoc(userDocRef, { nickname: finalNickname }, { merge: true });
-      }
     }
   };
 
@@ -130,168 +108,17 @@ function App() {
     const user = activeUsers.find(u => u.id === uid);
     return user?.nickname || `플레이어 ${uid?.substring(0, 4)}`;
   };
-
-  const resetAllGameData = async () => {
-    if (!db || !isAuthReady) return;
-    setIsResetting(true);
+  
+  const sendChatMessage = async (message) => {
+    if (!db || !userId || !isAuthReady || !message.trim()) return;
     try {
-        const collectionsToDelete = [
-            collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages'),
-            collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers'),
-            getMajorEventsRef(db, appId)
-        ];
-
-        for (const colRef of collectionsToDelete) {
-            const snapshot = await getDocs(colRef);
-            for (const docSnap of snapshot.docs) {
-                await deleteDoc(docSnap.ref);
-            }
-        }
-
-        const usersColRef = collection(db, 'artifacts', appId, 'users');
-        const usersSnapshot = await getDocs(usersColRef);
-        for (const userDoc of usersSnapshot.docs) {
-            const playerStateColRef = collection(db, 'artifacts', appId, 'users', userDoc.id, 'playerState');
-            const playerStateSnapshot = await getDocs(playerStateColRef);
-            for (const stateDoc of playerStateSnapshot.docs) {
-                await deleteDoc(stateDoc.ref);
-            }
-            await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
-        }
-
-        await deleteDoc(getMainScenarioRef(db, appId));
-        await deleteDoc(getGameStatusRef(db, appId));
-        
-        localStorage.clear();
-
-        setGameState(getDefaultGameState());
-        setPrivatePlayerState(getDefaultPrivatePlayerState());
-        setChatMessages([]);
-        setActionLocks({});
-
-        console.log("모든 서버 및 클라이언트 데이터가 성공적으로 초기화되었습니다.");
-
-    } catch (e) {
-        console.error("전체 데이터 초기화 중 오류 발생:", e);
-    } finally {
-      setIsResetting(false);
-      setShowResetModal(false);
-      window.location.reload();
+      const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
+      await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message, timestamp: serverTimestamp() });
+    } catch (error) {
+      console.error("Error sending chat message:", error);
     }
   };
-
-  useEffect(() => {
-    try {
-      const app = initializeApp(firebaseConfig);
-      const firestoreDb = getFirestore(app);
-      const firebaseAuth = getAuth(app);
-      setDb(firestoreDb);
-      setAuth(firebaseAuth);
-      const unsubscribeAuth = onAuthStateChanged(firebaseAuth, async (user) => {
-        if (user) {
-          setUserId(user.uid);
-          setIsAuthReady(true);
-        } else {
-            await (initialAuthToken ? signInWithCustomToken(firebaseAuth, initialAuthToken) : signInAnonymously(firebaseAuth));
-        }
-      });
-      return () => unsubscribeAuth();
-    } catch (error) {
-      console.error("Firebase initialization error:", error);
-      setLlmError("Firebase 초기화에 실패했습니다.");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isAuthReady || !db || !userId) return;
-
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    
-    getDoc(privateStateRef).then(docSnap => {
-        if (!docSnap.exists()) {
-            setDoc(privateStateRef, getDefaultPrivatePlayerState());
-        }
-    });
-
-    const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
-      }
-      if (isLoading) setIsLoading(false);
-    }, (err) => {
-      console.error("Private state listener error:", err);
-      setIsLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [isAuthReady, db, userId]);
-
-  useEffect(() => {
-    if (!isAuthReady || !db) return;
-
-    const unsubscribes = [
-      onSnapshot(getMainScenarioRef(db, appId), (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          setGameState(prev => ({
-            ...prev,
-            log: data.storyLog || [],
-            choices: data.choices || [],
-            player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
-            subtleClues: data.subtleClues || []
-          }));
-        } else {
-          setGameState(getDefaultGameState());
-        }
-      }),
-      onSnapshot(getGameStatusRef(db, appId), (docSnap) => {
-        setActionLocks(docSnap.data()?.actionLocks || {});
-      }),
-      onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages')), (snapshot) => {
-        const messages = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
-        setChatMessages(messages);
-      }),
-      onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers')), (snapshot) => {
-        const cutoffTime = Date.now() - 60 * 1000;
-        const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.lastActive && u.lastActive.toMillis() > cutoffTime);
-        setActiveUsers(users);
-      })
-    ];
-
-    getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
-      const historyData = historySnapshot.docs.map(doc => doc.data().summary);
-      setWorldHistory(historyData);
-    });
-
-    return () => unsubscribes.forEach(unsub => unsub());
-  }, [isAuthReady, db]);
-
-  useEffect(() => {
-    if (!db || !userId || !nickname) return;
-    const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
-    setDoc(userDocRef, {
-      lastActive: serverTimestamp(),
-      nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
-      profession: privatePlayerState.profession,
-    }, { merge: true });
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        setDoc(userDocRef, { lastActive: serverTimestamp() }, { merge: true });
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [db, userId, nickname, privatePlayerState.profession]);
-
-  useEffect(() => {
-    if (accordion.gameLog && logEndRef.current) logEndRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [gameState.log, accordion.gameLog]);
-
-  useEffect(() => {
-    if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, accordion.chat]);
-
+  
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 살아 숨 쉬는 세계를 창조하고, 플레이어의 선택에 따라 '선택지 풀'을 유기적으로 관리하는 것입니다.
@@ -299,42 +126,28 @@ function App() {
     ### 핵심 규칙 (매우 중요)
     1.  **행동 주체 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어(들)의 시점에서, 그(들)이 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다. 여러 명이 참여하는 행동의 경우, 모두를 조명해야 합니다.
     2.  **선택지 풀 관리**: 당신은 선택지 목록 전체를 교체하는 것이 아니라, 특정 선택지를 '추가(add)'하거나 '제거(remove)'하는 명령을 내려야 합니다.
-        -   **제거**: 특정 조건이 만족되지 않아 더 이상 유효하지 않은 선택지는 \`choices_to_remove\` 또는 \`privateChoices_to_remove\`에 \`id\`를 담아 제거하십시오. (예: NPC가 죽으면, 그와 대화하는 선택지 \`id\`를 제거)
-        -   **추가**: 새로운 사건이나 상황으로 인해 생긴 선택지는 \`choices_to_add\` 또는 \`privateChoices_to_add\`에 새로운 선택지 객체를 담아 추가하십시오.
 
     ### JSON 출력 구조
     {
       "story": "공유된 사건에 대한 3인칭 서사.",
       "privateStory": "행동 주체만 볼 수 있는 2인칭 서사.",
-      "groupStory": "같은 그룹 소속원들만 볼 수 있는 이야기. (없으면 null)",
-      "choices_to_add": [
-        { "id": "unique_id_for_new_choice", "text": "새로운 사건에 대한 선택지", "type": "event_driven", "location": "현재 장소" }
-      ],
+      "choices_to_add": [ { "id": "unique_id_1", "text": "새로운 선택지", "type": "location_default", "location": "현재 장소" } ],
       "choices_to_remove": ["obsolete_choice_id_1"],
-      "privateChoices_to_add": [
-        { "id": "private_choice_id", "text": "오직 행동 주체만 가능한 선택지", "type": "private" }
-      ],
-      "privateChoices_to_remove": ["obsolete_private_choice_id"],
-      "sharedStateUpdates": {
-        "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
-        "subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]
-      },
+      "privateChoices_to_add": [ { "id": "private_choice_1", "text": "개인 선택지", "type": "private" } ],
+      "privateChoices_to_remove": ["obsolete_private_id_1"],
       "privateStateUpdates": {
         "inventory": ["업데이트된 전체 인벤토리 목록"],
-        "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },
-        "activeQuests": ["업데이트된 개인 퀘스트 목록"],
-        "knownClues": ["새롭게 알게 된 단서 목록"],
-        "groups": ["업데이트된 소속 그룹 목록"],
-        "npcRelations": {"가라크": 55, "엘라라": -10}
+        "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 }
+      },
+      "sharedStateUpdates": {
+        "leaderId": null
       }
     }
   `;
 
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
-    setLlmRetryPrompt(promptData);
     const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
-    const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     const userPrompt = `
@@ -349,24 +162,14 @@ function App() {
       - "${promptData.playerChoice}"
 
       ### [배경 정보]
-      - 세상의 주요 역사: ${promptData.worldHistory.length > 0 ? promptData.worldHistory.join(', ') : "없음"}
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
-      - 개인화된 최근 사건 로그: ${promptData.personalizedHistory}
       - 현재 공개 선택지 풀: ${JSON.stringify(promptData.sharedInfo.currentChoices)}
-      - 세상에 남겨진 흔적들: ${JSON.stringify(promptData.sharedInfo.subtleClues)}
-
-      ### [주변 플레이어 (Observers)]
-      - 이들은 현재 턴의 관찰자이며, 직접 행동하지 않습니다.
-      - ${promptData.activeUsers.length > 0 ? JSON.stringify(promptData.activeUsers) : "주변에 다른 플레이어가 없습니다."}
     `;
 
     const payload = { contents: [{ role: "user", parts: [{ text: systemPrompt }] }, { role: "model", parts: [{ text: "{}" }] }, { role: "user", parts: [{ text: userPrompt }] }] };
-
-    const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-
+    
     try {
-      let response = await tryGeminiCall(mainApiKey);
-      if (!response.ok) { response = await tryGeminiCall(backupApiKey); }
+      const response = await fetch(getApiUrl(mainApiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); }
       const result = await response.json();
       const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -382,122 +185,78 @@ function App() {
     }
   };
 
-  const sendChatMessage = async () => {
-    if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) return;
-    try {
-      const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
-      await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message: currentChatMessage, timestamp: serverTimestamp() });
-      setCurrentChatMessage('');
-    } catch (error) {
-      console.error("Error sending chat message:", error);
-    }
-  };
-
-  const updatePublicState = async (llmResponse, playerChoice, actors) => {
-    const mainScenarioRef = getMainScenarioRef(db, appId);
-    const newEvent = {
-        actor: actors,
-        action: playerChoice,
-        publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
-        privateStories: llmResponse.privateStory ? { [actors[0].id]: llmResponse.privateStory } : {},
-        groupStory: llmResponse.groupStory || null,
-        timestamp: new Date()
-    };
-  
-    await runTransaction(db, async (transaction) => {
-        const scenarioDoc = await transaction.get(mainScenarioRef);
-        const currentData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-        const newStoryLog = [...(currentData.storyLog || []), newEvent];
-        let newChoicePool = [...(currentData.choices || [])];
-  
-        if (llmResponse.choices_to_remove && llmResponse.choices_to_remove.length > 0) {
-          const idsToRemove = new Set(llmResponse.choices_to_remove);
-          newChoicePool = newChoicePool.filter(choice => !idsToRemove.has(choice.id));
-        }
-        if (llmResponse.choices_to_add && llmResponse.choices_to_add.length > 0) {
-          const newChoices = llmResponse.choices_to_add.filter(c => c.id && c.text); // 유효성 검사
-          newChoicePool.push(...newChoices);
-        }
-
-        const updateData = {
-          storyLog: newStoryLog,
-          choices: newChoicePool,
-          lastUpdate: serverTimestamp()
-        };
-  
-        if (llmResponse.sharedStateUpdates?.location) {
-          updateData['player.currentLocation'] = llmResponse.sharedStateUpdates.location;
-        }
-        if (llmResponse.sharedStateUpdates?.subtleClues) {
-          updateData.subtleClues = llmResponse.sharedStateUpdates.subtleClues;
-        }
-        
-        if (scenarioDoc.exists()) { transaction.update(mainScenarioRef, updateData); } 
-        else { transaction.set(mainScenarioRef, { ...getDefaultGameState(), ...updateData }); }
-    });
-  };
-  
-  const updatePrivateState = async (llmResponse) => {
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    const docSnap = await getDoc(privateStateRef);
-    const currentPrivateData = docSnap.exists() ? docSnap.data() : getDefaultPrivatePlayerState();
-    
-    const updates = llmResponse.privateStateUpdates ? { ...llmResponse.privateStateUpdates } : {};
-
-    let newPrivateChoicePool = [...(currentPrivateData.choices || [])];
-
-    if (llmResponse.privateChoices_to_remove && llmResponse.privateChoices_to_remove.length > 0) {
-        const idsToRemove = new Set(llmResponse.privateChoices_to_remove);
-        newPrivateChoicePool = newPrivateChoicePool.filter(choice => !idsToRemove.has(choice.id));
-    }
-    if (llmResponse.privateChoices_to_add && llmResponse.privateChoices_to_add.length > 0) {
-      const newChoices = llmResponse.privateChoices_to_add.filter(c => c.id && c.text); // 유효성 검사
-      newPrivateChoicePool.push(...newChoices);
-    }
-
-    updates.choices = newPrivateChoicePool;
-
-    if (Object.keys(updates).length > 0) {
-      await setDoc(privateStateRef, updates, { merge: true });
-    }
-  };
-
   const getActionScope = (choiceText) => {
     const talkMatch = choiceText.match(/(.+)에게 말을 건다/);
     if (talkMatch) return `interaction:talk_to:${talkMatch[1].trim()}`;
-    
     const lookMatch = choiceText.match(/(.+)을[를]? 살펴본다/);
     if (lookMatch) return `action:examine:${lookMatch[1].trim()}`;
-
     return `location:${gameState.player.currentLocation}`;
   };
 
-  const getVisibleChoices = () => {
-    const masterChoicePool = gameState.choices || [];
-    const privateChoicePool = privatePlayerState.choices || [];
+  const performAction = async (choiceObject, participants) => {
+      const choiceText = choiceObject.text;
+      setIsTextLoading(true);
+      try {
+          const actorDisplayNames = participants.map(pid => getDisplayName(pid));
+          const privateInfos = {};
+          // For now, the action is based on the initiator's state.
+          privateInfos[userId] = privatePlayerState;
 
-    const visiblePublicChoices = masterChoicePool.filter(choice => {
-      if (choice.location && choice.location !== gameState.player.currentLocation) return false;
-      return true;
-    });
-    
-    let allVisibleChoices = [...visiblePublicChoices, ...privateChoicePool];
+          const promptData = {
+              actorDisplayNames,
+              playerChoice: choiceText,
+              sharedInfo: { currentLocation: gameState.player.currentLocation, currentChoices: gameState.choices },
+              privateInfos,
+          };
 
-    // 현재 참여중인 협력 행동이 있다면, '대화 떠나기' 선택지 추가
-    const myLocks = Object.entries(actionLocks).filter(([, p]) => Array.isArray(p) && p.includes(userId));
-    myLocks.forEach(([scope]) => {
-      allVisibleChoices.push({
-        id: `action:leave_conversation:${scope}`,
-        text: `'${scope.split(':')[2] || '현재 활동'}'에서 벗어나기`,
-        type: 'action_leave'
-      });
-    });
-    
-    return allVisibleChoices.filter((choice, index, self) =>
-        index === self.findIndex((c) => c.id === choice.id)
-    );
+          const llmResponse = await callGeminiTextLLM(promptData);
+
+          if (llmResponse) {
+              await runTransaction(db, async (transaction) => {
+                  const scenarioDoc = await transaction.get(getMainScenarioRef(db, appId));
+                  const privateDoc = await transaction.get(getPrivatePlayerStateRef(db, appId, userId));
+                  const statusDoc = await transaction.get(getGameStatusRef(db, appId));
+
+                  const currentPublicData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
+                  const currentPrivateData = privateDoc.exists() ? privateDoc.data() : getDefaultPrivatePlayerState();
+
+                  let newChoicePool = [...(currentPublicData.choices || [])];
+                  if (llmResponse.choices_to_remove) newChoicePool = newChoicePool.filter(c => !llmResponse.choices_to_remove.includes(c.id));
+                  if (llmResponse.choices_to_add) newChoicePool.push(...llmResponse.choices_to_add.filter(c=>c.id && c.text));
+                  
+                  transaction.set(getMainScenarioRef(db, appId), {
+                      log: [...(currentPublicData.log || []), {
+                          actor: participants.map(pid => ({id: pid, displayName: getDisplayName(pid)})),
+                          action: choiceText,
+                          publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
+                          timestamp: serverTimestamp()
+                      }],
+                      choices: newChoicePool,
+                  }, {merge: true});
+
+                  let newPrivateChoices = [...(currentPrivateData.choices || [])];
+                  if (llmResponse.privateChoices_to_remove) newPrivateChoices = newPrivateChoices.filter(c => !llmResponse.privateChoices_to_remove.includes(c.id));
+                  if (llmResponse.privateChoices_to_add) newPrivateChoices.push(...llmResponse.privateChoices_to_add.filter(c=>c.id && c.text));
+                  
+                  transaction.set(getPrivatePlayerStateRef(db, appId, userId), {
+                      ...llmResponse.privateStateUpdates,
+                      choices: newPrivateChoices,
+                  }, {merge: true});
+                  
+                  // 리더십 해제 및 잠금 관리
+                  const currentLocks = statusDoc.exists() ? statusDoc.data().actionLocks : {};
+                  const scope = getActionScope(choiceText);
+                  delete currentLocks[scope];
+                  transaction.set(getGameStatusRef(db, appId), { leaderId: null, actionLocks: currentLocks });
+              });
+          }
+      } catch (error) {
+          setLlmError(error.message);
+      } finally {
+          setIsTextLoading(false);
+      }
   };
-
+  
   const handleLeaveConversation = async (scope) => {
     const gameStatusRef = getGameStatusRef(db, appId);
     setIsTextLoading(true);
@@ -505,23 +264,19 @@ function App() {
         await runTransaction(db, async (transaction) => {
             const statusDoc = await transaction.get(gameStatusRef);
             if (!statusDoc.exists()) return;
-
             const currentLocks = statusDoc.data().actionLocks || {};
             let participants = currentLocks[scope] || [];
-            
             if (Array.isArray(participants)) {
                 const newParticipants = participants.filter(pId => pId !== userId);
                 if (newParticipants.length > 0) {
                     transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: newParticipants });
                 } else {
-                    const newLocks = { ...currentLocks };
-                    delete newLocks[scope];
-                    transaction.set(gameStatusRef, { actionLocks: newLocks });
+                    delete currentLocks[scope];
+                    transaction.update(gameStatusRef, { actionLocks: currentLocks });
                 }
             }
         });
     } catch (error) {
-        console.error("Error leaving conversation:", error);
         setLlmError("대화에서 벗어나는 중 오류가 발생했습니다.");
     } finally {
         setIsTextLoading(false);
@@ -531,88 +286,31 @@ function App() {
   const handleCooperativeAction = async (scope, choiceObject) => {
     const gameStatusRef = getGameStatusRef(db, appId);
     setCooperativeAction(null);
-
     try {
+        let finalParticipants;
         await runTransaction(db, async (transaction) => {
             const statusDoc = await transaction.get(gameStatusRef);
             const currentLocks = statusDoc.exists() ? statusDoc.data().actionLocks : {};
             const participants = currentLocks[scope] || [];
             if(Array.isArray(participants) && !participants.includes(userId)) {
-                transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: [...participants, userId] });
+                finalParticipants = [...participants, userId];
+                transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: finalParticipants });
+            } else {
+              finalParticipants = participants;
             }
         });
-        
-        // 참여 후 바로 이어서 행동 수행
-        await performAction(choiceObject, true);
-
+        if (finalParticipants) {
+          await performAction(choiceObject, finalParticipants);
+        }
     } catch(error) {
-        console.error("Cooperative action failed", error);
         setLlmError("대화 참여에 실패했습니다.");
     }
-  };
-
-  const performAction = async (choiceObject, isCooperative = false) => {
-      const choiceText = choiceObject.text;
-      const gameStatusRef = getGameStatusRef(db, appId);
-      const scope = getActionScope(choiceText);
-
-      setIsTextLoading(true);
-      try {
-          const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
-          let participants = [userId];
-
-          if (isCooperative) {
-              participants = currentLocks[scope] || [userId];
-              if(!participants.includes(userId)) participants.push(userId);
-          } else {
-              await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: [userId] } }, { merge: true });
-          }
-
-          const actorDisplayNames = participants.map(pid => getDisplayName(pid));
-          const privateInfos = { [userId]: privatePlayerState };
-
-          const personalizedHistory = gameState.log.slice(-10).map(event => {
-            let historyEntry = `[${Array.isArray(event.actor) ? event.actor.map(a => a.displayName).join(',') : event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
-            if(event.privateStories && event.privateStories[userId]) {
-                historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
-            }
-            return historyEntry;
-          }).join('\n');
-
-          const promptData = {
-              actorDisplayNames,
-              playerChoice: choiceText,
-              sharedInfo: { 
-                  currentLocation: gameState.player.currentLocation, 
-                  subtleClues: gameState.subtleClues,
-                  currentChoices: gameState.choices 
-              },
-              privateInfos: privateInfos,
-              personalizedHistory: personalizedHistory,
-              activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => !participants.includes(u.id)),
-              worldHistory: worldHistory,
-          };
-
-          const llmResponse = await callGeminiTextLLM(promptData);
-
-          if (llmResponse) {
-              await updatePublicState(llmResponse, choiceText, participants.map(pid => ({ id: pid, displayName: getDisplayName(pid) })));
-              await updatePrivateState(llmResponse);
-          }
-      } catch (error) {
-          setLlmError(error.message);
-      } finally {
-          // 잠금 해제는 이제 '대화 떠나기' 등으로 개별적으로 처리되므로, 여기서 바로 해제하지 않음.
-          // 단, 단독 행동이었다면 해제할 수 있음. 지금은 단순화를 위해 유지.
-          setIsTextLoading(false);
-      }
   };
 
   const handleChoiceClick = async (choiceObject) => {
     if (isTextLoading) return;
     setCooperativeAction(null);
 
-    // [신규] '대화 떠나기'와 같은 특수 액션 처리
     if (choiceObject.type === 'action_leave') {
         const scope = choiceObject.id.replace('action:leave_conversation:', '');
         await handleLeaveConversation(scope);
@@ -620,93 +318,331 @@ function App() {
     }
 
     if (!privatePlayerState.characterCreated) {
-        const choiceText = choiceObject.text;
         setIsTextLoading(true);
-        const choiceKey = choiceText.split('.')[0];
+        const choiceKey = choiceObject.text.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
             await setDoc(getPrivatePlayerStateRef(db, appId, userId), {
-                ...getDefaultPrivatePlayerState(), characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation,
+                ...getDefaultPrivatePlayerState(), characterCreated: true, profession: selectedProfession.name,
             }, { merge: true });
             
             const mainScenarioRef = getMainScenarioRef(db, appId);
             const newEvent = {
                 actor: { id: userId, displayName: getDisplayName(userId) }, action: "여관에 들어선다",
                 publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
-                privateStories: { [userId]: selectedProfession.motivation }, timestamp: new Date()
+                timestamp: serverTimestamp()
             };
             await setDoc(mainScenarioRef, { ...getDefaultGameState(), log: [newEvent] }, { merge: true });
         }
         setIsTextLoading(false);
         return;
     }
-
+    
+    // 리더 시스템 + 협력 시스템 결합
     const scope = getActionScope(choiceObject.text);
     const lockedBy = actionLocks[scope];
-
-    // 잠겨있고, 내가 참여자가 아닐 때 협력 제안
-    if (lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId)) {
-      setCooperativeAction({ scope, choiceObject, lockedBy });
-      return;
+    const isPublicAction = choiceObject.type !== 'private';
+    
+    // 공개 행동은 리더가 필요
+    if(isPublicAction && !gameState.leaderId) {
+        setLlmError("먼저 '행동권 잡기'를 통해 리더가 되어주세요.");
+        setTimeout(()=>setLlmError(null), 3000);
+        return;
     }
     
-    performAction(choiceObject, Array.isArray(lockedBy));
+    // 리더가 아니면 공개 행동 불가
+    if (isPublicAction && gameState.leaderId !== userId) {
+        // 단, 다른 사람이 진행중인 행동에 참여는 가능
+        if (lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId)) {
+            setCooperativeAction({ scope, choiceObject, lockedBy });
+        } else {
+            setLlmError("현재 턴의 리더만 주요 행동을 할 수 있습니다.");
+            setTimeout(()=>setLlmError(null), 3000);
+        }
+        return;
+    }
+
+    // 내가 리더거나, 개인 행동이거나, 이미 참여중인 협력 행동일 경우
+    const participants = lockedBy && Array.isArray(lockedBy) ? lockedBy : [userId];
+    if (!lockedBy && isPublicAction) {
+      const gameStatusRef = getGameStatusRef(db, appId);
+      await setDoc(gameStatusRef, { actionLocks: { ...actionLocks, [scope]: participants } }, { merge: true });
+    }
+    await performAction(choiceObject, participants);
   };
+  
+  // --- useEffect Hooks ---
+  
+  useEffect(() => {
+    const app = initializeApp(firebaseConfig);
+    const firestoreDb = getFirestore(app);
+    const firebaseAuth = getAuth(app);
+    setDb(firestoreDb);
+    setAuth(firebaseAuth);
+    const unsubAuth = onAuthStateChanged(firebaseAuth, user => {
+      if (user) { setUserId(user.uid); setIsAuthReady(true); } 
+      else { signInAnonymously(firebaseAuth); }
+    });
+    return () => unsubAuth();
+  }, []);
 
-  const toggleAccordion = (key) => { setAccordion(prev => ({ ...prev, [key]: !prev[key] })); };
+  useEffect(() => {
+    if (!isAuthReady || !db || !userId) return;
 
-  const LlmErrorModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-      <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
-        <h3 className="text-xl font-bold text-red-400">오류가 발생했습니다</h3>
-        <p className="text-gray-200">{llmError}</p>
-        <div className="flex justify-center gap-4">
-          {llmRetryPrompt && (
-            <button
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
-              onClick={async () => {
-                setLlmError(null);
-                if (llmRetryPrompt.playerChoice) {
-                  await handleChoiceClick({ id: 'retry', text: llmRetryPrompt.playerChoice });
-                }
-              }}
-            >
-              재시도
-            </button>
-          )}
-          <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => { setLlmError(null); setLlmRetryPrompt(null); }}>
-            닫기
-          </button>
+    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+    getDoc(privateStateRef).then(docSnap => {
+        if (!docSnap.exists()) setDoc(privateStateRef, getDefaultPrivatePlayerState());
+    });
+    const unsubPrivate = onSnapshot(privateStateRef, (snapshot) => {
+      if (snapshot.exists()) setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
+      if (isLoading) setIsLoading(false);
+    });
+
+    const unsubPublic = onSnapshot(getMainScenarioRef(db, appId), (snap) => {
+        if (snap.exists()) setGameState(prev => ({...prev, ...snap.data()}));
+    });
+
+    const unsubStatus = onSnapshot(getGameStatusRef(db, appId), (snap) => {
+        const data = snap.data() || {};
+        setActionLocks(data.actionLocks || {});
+        setGameState(prev => ({...prev, leaderId: data.leaderId || null}));
+    });
+    
+    const unsubChat = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages')), (snapshot) => {
+        setChatMessages(snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)));
+    });
+    
+    const unsubUsers = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers')), (snapshot) => {
+        setActiveUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => { unsubPrivate(); unsubPublic(); unsubStatus(); unsubChat(); unsubUsers(); };
+  }, [isAuthReady, db, userId]);
+
+  useEffect(() => {
+    if (!db || !userId || !nickname) return;
+    const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+    setDoc(userDocRef, {
+      lastActive: serverTimestamp(),
+      nickname,
+      profession: privatePlayerState.profession,
+    }, { merge: true });
+  }, [db, userId, nickname, privatePlayerState.profession]);
+
+  // --- Render Components ---
+
+  const gameLogRef = useRef(null);
+  useEffect(() => { if (gameLogRef.current) gameLogRef.current.scrollTop = gameLogRef.current.scrollHeight; }, [gameState.log]);
+
+  const GameLogPanel = () => (
+    <div className="flex-grow bg-gray-700/50 p-4 rounded-md overflow-y-auto h-full custom-scrollbar" ref={gameLogRef}>
+        {!privatePlayerState.characterCreated && (
+            <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
+                <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
+                <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
+            </div>
+        )}
+        {gameState.log.map((event, index) => (
+            <div key={index} className="mb-4 p-3 rounded bg-gray-900/50">
+                <p className="text-yellow-300 font-semibold italic text-sm">
+                  {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 "{event.action}" 선택
+                </p>
+                <p className="whitespace-pre-wrap mt-2">{event.publicStory}</p>
+            </div>
+        ))}
+        {isTextLoading && <div className="text-center text-yellow-400 p-2">이야기 생성 중...</div>}
+    </div>
+  );
+  
+  const chatLogRef = useRef(null);
+  useEffect(() => { if(chatLogRef.current) chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight; }, [chatMessages]);
+
+  const ChatPanel = ({isMobile}) => (
+    <div className={`flex flex-col h-full rounded-md ${isMobile ? 'bg-gray-900' : 'bg-gray-700/50'}`}>
+        <div className="flex-grow p-4 overflow-y-auto custom-scrollbar" ref={chatLogRef}>
+            {chatMessages.map((msg) => (
+                <div key={msg.id} className="mb-2 leading-snug">
+                    <span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> <span className="text-gray-200">{msg.message}</span>
+                </div>
+            ))}
         </div>
-      </div>
     </div>
   );
 
+  const ChatInput = ({ onSendMessage }) => {
+    const [message, setMessage] = useState('');
+    const handleSend = () => { onSendMessage(message); setMessage(''); };
+    return (
+        <div className="flex p-2 bg-gray-800/80 border-t border-gray-700">
+            <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-600 border border-gray-500 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none" value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSend()} placeholder="메시지 입력..." />
+            <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md text-white" onClick={handleSend} disabled={!message.trim()}>보내기</button>
+        </div>
+    );
+  };
+  
+  const ChoicesPanel = () => {
+    const myLocks = Object.entries(actionLocks).filter(([, p]) => Array.isArray(p) && p.includes(userId));
+    const visibleChoices = [
+        ...(gameState.choices || []).filter(c => c.location === gameState.player.currentLocation), 
+        ...(privatePlayerState.choices || []),
+        ...myLocks.map(([scope]) => ({
+            id: `action:leave_conversation:${scope}`,
+            text: `'${scope.split(':')[2] || '현재 활동'}'에서 벗어나기`,
+            type: 'action_leave'
+        }))
+    ].filter((c, i, self) => i === self.findIndex(t => t.id === c.id));
+    
+    return (
+      <div className="flex flex-col gap-3 p-4 overflow-y-auto custom-scrollbar">
+          {!privatePlayerState.characterCreated ? (
+                Object.keys(professions).map(key => (
+                    <button key={key} onClick={() => handleChoiceClick({ id: key, text: `${key}. ${professions[key].name}`})}
+                        className="p-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white rounded-md text-left">
+                        <p className="text-lg text-blue-300 font-bold">{professions[key].name}</p>
+                        <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
+                    </button>
+                ))
+            ) : (
+                <>
+                {gameState.leaderId === null && !myLocks.length && (
+                    <button className="px-6 py-3 font-bold rounded-md shadow-lg bg-green-600 hover:bg-green-700 text-white transition-transform transform hover:scale-105" onClick={takeLead}>
+                        행동권 잡기
+                    </button>
+                )}
+                {gameState.leaderId !== null && gameState.leaderId !== userId && (
+                    <div className="text-center p-3 bg-yellow-900/50 rounded-md text-yellow-300 font-bold">
+                        {getDisplayName(gameState.leaderId)}님이 행동 중입니다...
+                    </div>
+                )}
+                {visibleChoices.map((choice) => {
+                    const scope = getActionScope(choice.text);
+                    const lockedBy = actionLocks[scope];
+                    const isLockedByOther = lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId);
+                    
+                    let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
+                    let prefix = '';
 
+                    if (choice.type === 'private') buttonStyle = 'bg-purple-600 hover:bg-purple-700';
+                    else if (choice.type === 'action_leave') buttonStyle = 'bg-red-600 hover:bg-red-700';
+                    
+                    if (isLockedByOther) {
+                      buttonStyle = 'bg-yellow-600 hover:bg-yellow-700';
+                      prefix = `[참여] `;
+                    }
+
+                    return (
+                        <button key={choice.id}
+                            className={`px-6 py-3 font-bold rounded-md shadow-lg transition-transform transform hover:scale-105 disabled:opacity-50 ${buttonStyle} text-white`}
+                            onClick={() => handleChoiceClick(choice)}
+                            disabled={isTextLoading}>
+                            {prefix}{choice.text}
+                        </button>
+                    )
+                })}
+                </>
+            )
+          }
+      </div>
+    );
+  };
+
+  const Sidebar = () => (
+    <div className="w-full lg:w-1/3 flex flex-col space-y-4 p-4 bg-gray-800/50 rounded-lg">
+        <div>
+            <h4 className="text-md font-semibold text-gray-200 mb-2">내 정보</h4>
+            <div className="bg-gray-700/50 p-3 rounded-md text-sm text-gray-300 space-y-1">
+                <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
+                <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
+                <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
+            </div>
+        </div>
+        <div>
+            <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어 ({activeUsers.length})</h4>
+            <div className="bg-gray-700/50 p-3 rounded-md text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
+                {activeUsers.map(user => (
+                    <div key={user.id} className={`p-1 rounded transition-colors ${gameState.leaderId === user.id ? 'bg-yellow-500 text-black font-bold' : ''}`}>
+                      {getDisplayName(user.id)} {gameState.leaderId === user.id && '(리더)'}
+                    </div>
+                ))}
+            </div>
+        </div>
+        <div className="flex-grow flex flex-col min-h-0">
+            <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅</h4>
+            <ChatPanel />
+        </div>
+    </div>
+  );
+
+  const DesktopLayout = () => (
+    <div className="w-full max-w-7xl h-[90vh] bg-gray-900/50 rounded-lg shadow-2xl p-6 flex space-x-6 border border-gray-700">
+        <div className="w-2/3 flex flex-col space-y-4">
+            <div className="flex-grow h-1/2 min-h-0">
+                <GameLogPanel />
+            </div>
+            <div className="flex-grow h-1/2 min-h-0 border-t-2 border-gray-700 pt-4">
+                <ChoicesPanel />
+            </div>
+        </div>
+        <div className="w-1/3 h-full flex flex-col">
+            <Sidebar />
+            <ChatInput onSendMessage={sendChatMessage} />
+        </div>
+    </div>
+  );
+
+  const MobileLayout = () => (
+    <div className="w-full h-[95vh] bg-gray-900 rounded-lg shadow-xl flex flex-col">
+        <div className="flex border-b border-gray-700">
+            <button className={`flex-1 p-3 font-bold text-lg ${mobileTab === 'game' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400'}`} onClick={() => setMobileTab('game')}>게임</button>
+            <button className={`flex-1 p-3 font-bold text-lg ${mobileTab === 'chat' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400'}`} onClick={() => setMobileTab('chat')}>채팅</button>
+        </div>
+        
+        <div className="flex-grow min-h-0">
+            {mobileTab === 'game' ? <GameLogPanel /> : <ChatPanel isMobile={true}/>}
+        </div>
+        
+        <div className="flex-shrink-0 border-t border-gray-700 bg-gray-800">
+            {mobileTab === 'game' ? <ChoicesPanel /> : <ChatInput onSendMessage={sendChatMessage} />}
+        </div>
+    </div>
+  );
+
+  // --- Main Render ---
+
+  if (!isAuthReady) {
+    return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">연결 중...</span></div>;
+  }
+  
   if (showNicknameModal) {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-xl font-bold text-gray-100">닉네임을 입력하세요</h3>
+            <h3 className="text-xl font-bold text-gray-100">모험에 사용할 이름을 입력하세요</h3>
             <input className="w-full p-3 rounded-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg" placeholder="닉네임" value={nicknameInput} onChange={e => setNicknameInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleNicknameSubmit(); }} autoFocus />
-            <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim()}>시작하기</button>
+            <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim()}>모험 시작</button>
           </div>
         </div>
-    )
+    );
   }
 
   if (isLoading) {
-    return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">데이터를 불러오는 중...</span></div>;
+    return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">세계의 문을 여는 중...</span></div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
-      {llmError && <LlmErrorModal />}
+    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-2 font-sans">
+      {llmError && (
+          <div className="fixed top-5 right-5 bg-red-800/90 text-white p-4 rounded-lg shadow-lg z-50 border border-red-600 max-w-sm">
+              <p className="font-bold">오류 발생</p>
+              <p className="text-sm mt-1">{llmError}</p>
+              <button onClick={() => setLlmError(null)} className="absolute top-1 right-2 text-lg font-bold">&times;</button>
+          </div>
+      )}
       {cooperativeAction && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
               <h3 className="text-xl font-bold text-yellow-400">진행 중인 대화</h3>
-              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 {cooperativeAction.choiceObject.text} 행동을 하고 있습니다. 참여하시겠습니까?</p>
+              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 "{cooperativeAction.choiceObject.text}" 행동을 하고 있습니다. 참여하시겠습니까?</p>
               <div className="flex justify-center gap-4">
                   <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md"
                       onClick={() => handleCooperativeAction(cooperativeAction.scope, cooperativeAction.choiceObject)}>
@@ -720,201 +656,16 @@ function App() {
           </div>
           </div>
       )}
-      {showResetModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-xl font-bold text-red-400">⚠️ 모든 데이터를 초기화할까요?</h3>
-            <p className="text-gray-200">이 작업은 되돌릴 수 없습니다. 모든 시나리오, 로그, 유저, 채팅 데이터가 삭제됩니다.</p>
-            <div className="flex justify-end gap-3">
-              <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => setShowResetModal(false)} disabled={isResetting}>취소</button>
-              <button className="px-4 py-2 bg-red-600 hover:bg-red-700 font-bold rounded-md" onClick={resetAllGameData} disabled={isResetting}>{isResetting ? '초기화 중...' : '초기화'}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
-        <div className="flex flex-col w-full lg:w-2/3 space-y-6">
-          <div className="mb-2">
-            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('gameLog')}>
-              <h2 className="text-lg font-bold text-gray-100">게임 로그</h2>
-              <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
-            </div>
-            {accordion.gameLog && (
-              <>
-                <div className="flex justify-end mb-2">
-                  <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
-                </div>
-                <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-                  {!privatePlayerState.characterCreated && (
-                    <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
-                        <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
-                        <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
-                    </div>
-                  )}
-                  {gameState.log.map((event, index) => (
-                    <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
-                      {event.actor && (
-                         <p className="text-yellow-300 font-semibold italic text-sm">
-                            {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 {event.action} 선택
-                         </p>
-                      )}
-                      <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
-                      {event.groupStory && privatePlayerState.groups.length > 0 && (
-                          <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-green-900/30 border-l-4 border-green-400 text-green-200">
-                              <span className="font-bold">[그룹 이야기] </span>
-                              {event.groupStory}
-                          </p>
-                      )}
-                      {event.privateStories && event.privateStories[userId] && (
-                        <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
-                          <span className="font-bold">[당신만 아는 사실] </span>
-                          {event.privateStories[userId]}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {isTextLoading && (
-                    <div className="flex justify-center items-center mt-4">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                      <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
-                    </div>
-                  )}
-                  <div ref={logEndRef} />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3">
-              {privatePlayerState.characterCreated ? (
-                  getVisibleChoices().map((choice) => {
-                      const scope = getActionScope(choice.text);
-                      const lockedBy = actionLocks[scope];
-                      const isLocked = lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId);
-                      
-                      let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
-                      let prefix = '';
-
-                      if (choice.type === 'private' || choice.type === 'group') {
-                        buttonStyle = 'bg-green-600 hover:bg-green-700';
-                        prefix = '[개인/그룹] ';
-                      } else if (choice.type === 'action_leave') {
-                        buttonStyle = 'bg-red-600 hover:bg-red-700';
-                        prefix = '[행동 종료] '
-                      }
-                      
-                      if (isLocked) {
-                        buttonStyle = 'bg-yellow-600 hover:bg-yellow-700';
-                        prefix = `[${getDisplayName(lockedBy[0])}와 함께하기] `;
-                      }
-
-                      return (
-                          <button
-                              key={choice.id}
-                              className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
-                              onClick={() => handleChoiceClick(choice)}
-                              disabled={isTextLoading}
-                          >
-                              {prefix}{choice.text}
-                          </button>
-                      )
-                  })
-              ) : (
-                  Object.keys(professions).map(key => (
-                      <button
-                          key={key}
-                          onClick={() => handleChoiceClick({ id: key, text: `${key}. ${professions[key].name}`})}
-                          disabled={isTextLoading}
-                          className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
-                      >
-                          <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
-                          <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
-                      </button>
-                  ))
-              )}
-          </div>
-        </div>
-
-        <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
-                    <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
-                    <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
-                </div>
-                {accordion.playerInfo && (
-                  <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
-                    <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
-                    <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
-                    <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
-                    <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats.strength}) 지능({privatePlayerState.stats.intelligence}) 민첩({privatePlayerState.stats.agility}) 카리스마({privatePlayerState.stats.charisma})</p>
-                    <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
-                    <p><span className="font-semibold text-blue-300">퀘스트:</span> {privatePlayerState.activeQuests.join(', ') || '없음'}</p>
-                    <p><span className="font-semibold text-blue-300">단서:</span> {privatePlayerState.knownClues.join(', ') || '없음'}</p>
-                    <p><span className="font-semibold text-green-300">소속 그룹:</span> {privatePlayerState.groups.join(', ') || '없음'}</p>
-                    <div>
-                        <span className="font-semibold text-yellow-300">NPC 관계:</span>
-                        <ul className="list-disc list-inside ml-4">
-                            {Object.entries(privatePlayerState.npcRelations).length > 0 ? 
-                                Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name}>{`${name}: ${value}`}</li>) :
-                                <li>알려진 관계 없음</li>
-                            }
-                        </ul>
-                    </div>
-                  </div>
-                )}
-            </div>
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
-                    <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
-                    <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
-                </div>
-                {accordion.users && (
-                    <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
-                        {activeUsers.length > 0 ? (
-                            <ul className="text-sm text-gray-300 space-y-1">
-                                {activeUsers.map(user => (
-                                    <li key={user.id} className="truncate p-1 rounded-md">
-                                        <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
-                                        <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        ) : <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>}
-                    </div>
-                )}
-            </div>
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
-                    <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4>
-                    <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
-                </div>
-                {accordion.chat && (
-                    <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
-                        <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
-                            {chatMessages.map((msg) => (
-                                <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div>
-                            ))}
-                            <div ref={chatEndRef} />
-                        </div>
-                        <div className="flex">
-                            <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600" value={currentChatMessage} onChange={(e) => setCurrentChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()} disabled={!isAuthReady} />
-                            <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md" onClick={sendChatMessage} disabled={!isAuthReady || !currentChatMessage.trim()}>보내기</button>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
-      </div>
-
+      {isDesktopOrLaptop && <DesktopLayout />}
+      {isMobile && <MobileLayout />}
       <style>
         {`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap');
-        body { font-family: 'Noto Sans KR', sans-serif; }
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #111827; }
         .custom-scrollbar::-webkit-scrollbar { width: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #4a5568; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #6b7280; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #6b7280; }
         `}
       </style>
     </div>
