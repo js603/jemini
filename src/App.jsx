@@ -19,7 +19,7 @@ import {
   getDocs,
   deleteDoc,
   runTransaction,
-  updateDoc // updateDoc import 추가
+  updateDoc
 } from 'firebase/firestore';
 
 // ====================================================================
@@ -73,7 +73,7 @@ const getDefaultPrivatePlayerState = () => ({
     knownClues: [],
     characterCreated: false,
     profession: '',
-    choices: [], // [NEW] 개인 선택지를 저장할 배열 추가
+    choices: [],
 });
 
 
@@ -189,13 +189,15 @@ function App() {
     }
   }, []);
 
+  // [FIX] 데이터를 읽어올 때 기본 객체와 병합하여 누락된 필드에 대한 오류 방지
   useEffect(() => {
     if (!db || !userId || !isAuthReady) return;
     setIsLoading(true);
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     const unsubscribe = onSnapshot(privateStateRef, (docSnap) => {
         if (docSnap.exists()) {
-            setPrivatePlayerState(docSnap.data());
+            const data = docSnap.data();
+            setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...data });
         } else {
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
@@ -406,7 +408,6 @@ function App() {
     }
   };
 
-  // [MODIFIED] 로직 분리를 위해 함수를 분할
   const updatePublicState = async (llmResponse, playerChoice) => {
       const mainScenarioRef = getMainScenarioRef(db, appId);
       const newEvent = {
@@ -426,7 +427,7 @@ function App() {
 
           transaction.update(mainScenarioRef, {
               storyLog: newStoryLog,
-              choices: llmResponse.choices || [], // 공용 선택지만 업데이트
+              choices: llmResponse.choices || [],
               'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
               lastUpdate: serverTimestamp()
           });
@@ -437,16 +438,14 @@ function App() {
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
       const updates = {
         ...llmResponse.privateStateUpdates,
-        choices: llmResponse.privateChoices || [], // 개인 선택지 업데이트
+        choices: llmResponse.privateChoices || [],
       };
       await setDoc(privateStateRef, updates, { merge: true });
   };
 
   const handleChoiceClick = async (choice) => {
-    // [MODIFIED] 로컬 상태로 로딩 상태 관리 (전역 잠금과 무관하게 즉각적인 피드백 제공)
     if (isTextLoading) return;
 
-    // 캐릭터 생성 로직은 동일
     if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
         const choiceKey = choice.split('.')[0];
@@ -490,14 +489,12 @@ function App() {
         return;
     }
 
-    // [MODIFIED] 공용 선택지인지 개인 선택지인지 구분
     const isPublicChoice = gameState.choices.includes(choice);
     const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
 
-    setIsTextLoading(true); // 어떤 선택이든 로딩 시작
+    setIsTextLoading(true);
 
     try {
-        // 공용 선택지일 경우에만 전역 잠금 사용
         if (isPublicChoice) {
             if (isActionInProgress) {
                  throw new Error("다른 플레이어가 주요 행동을 하고 있습니다. 잠시 후 다시 시도해주세요.");
@@ -516,11 +513,9 @@ function App() {
         const llmResponse = await callGeminiTextLLM(promptData);
 
         if (llmResponse) {
-            // 공용 선택지였을 경우에만 공용 상태 업데이트
             if (isPublicChoice) {
                 await updatePublicState(llmResponse, choice);
             }
-            // 개인 상태와 개인 선택지는 항상 업데이트
             await updatePrivateState(llmResponse);
             setLlmError(null);
         } else {
@@ -531,14 +526,12 @@ function App() {
         console.error("행동 처리 중 오류:", error.message);
         setLlmError(error.message);
     } finally {
-        // 공용 선택지였을 경우에만 전역 잠금 해제
         if (isPublicChoice) {
             await setDoc(gameStatusRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
         }
-        setIsTextLoading(false); // 모든 경우에 로딩 종료
+        setIsTextLoading(false);
     }
   };
-
 
   const toggleAccordion = (key) => {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
@@ -633,20 +626,20 @@ function App() {
           </div>
 
           <div className="flex flex-col gap-3">
-             {/* [MODIFIED] 공용 선택지와 개인 선택지를 모두 표시 */}
-            {[...gameState.choices, ...privatePlayerState.choices].map((choice, index) => (
+             {/* [FIX] 렌더링 시 privatePlayerState.choices가 undefined일 경우를 대비하여 || [] 추가 */}
+            {[...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
                 <button
                     key={index}
                     className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed
                       ${gameState.choices.includes(choice)
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white' // 공용 선택지
-                        : 'bg-purple-600 hover:bg-purple-700 text-white' // 개인 선택지
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-purple-600 hover:bg-purple-700 text-white'
                       }`
                     }
                     onClick={() => handleChoiceClick(choice)}
                     disabled={isTextLoading || (gameState.choices.includes(choice) && isActionInProgress)}
                 >
-                    {privatePlayerState.choices.includes(choice) && '[개인] '}{choice}
+                    {privatePlayerState.choices?.includes(choice) && '[개인] '}{choice}
                 </button>
             ))}
           </div>
