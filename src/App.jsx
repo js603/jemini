@@ -120,10 +120,17 @@ function App() {
     }
   };
 
+  // [수정됨] 어떤 타입의 uid가 들어와도 안전하게 처리하도록 변경
   const getDisplayName = (uid) => {
-    if (uid === userId) return nickname || `플레이어 ${userId?.substring(0, 4)}`;
+    const safeUid = String(uid || '');
+
+    if (uid === userId) {
+      const safeUserId = String(userId || '');
+      return nickname || `플레이어 ${safeUserId.substring(0, 4)}`;
+    }
+    
     const user = activeUsers.find(u => u.id === uid);
-    return user?.nickname || `플레이어 ${uid?.substring(0, 4)}`;
+    return user?.nickname || `플레이어 ${safeUid.substring(0, 4)}`;
   };
 
   const resetAllGameData = async () => {
@@ -253,9 +260,12 @@ function App() {
       })
     ];
 
+    // [수정됨] 올바른 정렬을 위해 객체로 데이터를 받은 후 timestamp 기준으로 정렬
     getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
-      const historyData = historySnapshot.docs.map(doc => doc.data().summary).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
-      setWorldHistory(historyData);
+        const historyData = historySnapshot.docs
+            .map(doc => doc.data()) // 먼저 전체 데이터를 가져옵니다.
+            .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)); // timestamp로 정렬합니다.
+        setWorldHistory(historyData);
     });
 
     return () => unsubscribes.forEach(unsub => unsub());
@@ -749,7 +759,7 @@ function App() {
             )}
         </div>
 
-        {/* 세계의 역사 (신규) */}
+        {/* 세계의 역사 */}
         <div className="mb-2">
             <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('worldHistory')}>
                 <h4 className="text-md font-semibold text-gray-200">세계의 역사</h4>
