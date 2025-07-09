@@ -37,12 +37,12 @@ const appId = firebaseConfig.projectId;
 // ====================================================================
 
 const professions = {
-  '1': { name: '몰락한 귀족/기사', motivation: '가문의 몰락 원인을 조사하고, 잃어버린 가문의 보물을 찾아야 합니다.' },
-  '2': { name: '평범한 마을 사람/농부', motivation: '갑자기 마을에 나타난 괴생명체로부터 마을을 지켜야 합니다.' },
-  '3': { name: '젊은 마법사/견습생', motivation: '스승님의 실종에 대한 단서를 찾아야 합니다.' },
-  '4': { name: '용병/모험가', motivation: '의뢰받은 임무를 수행하던 중 예상치 못한 사건에 휘말렸습니다.' },
-  '5': { name: '도적/암살자', motivation: '길드에서 내려온 첫 번째 임무를 완수하고, 그 과정에서 수상한 음모를 감지해야 합니다.' },
-  '6': { name: '왕족/공주/왕자', motivation: '왕실 내의 불화와 암투 속에서 자신의 입지를 다져야 합니다.' },
+    '1': { name: '몰락한 귀족/기사', motivation: '가문의 몰락 원인을 조사하고, 잃어버린 가문의 보물을 찾아야 합니다.' },
+    '2': { name: '평범한 마을 사람/농부', motivation: '갑자기 마을에 나타난 괴생명체로부터 마을을 지켜야 합니다.' },
+    '3': { name: '젊은 마법사/견습생', motivation: '스승님의 실종에 대한 단서를 찾아야 합니다.' },
+    '4': { name: '용병/모험가', motivation: '의뢰받은 임무를 수행하던 중 예상치 못한 사건에 휘말렸습니다.' },
+    '5': { name: '도적/암살자', motivation: '길드에서 내려온 첫 번째 임무를 완수하고, 그 과정에서 수상한 음모를 감지해야 합니다.' },
+    '6': { name: '왕족/공주/왕자', motivation: '왕실 내의 불화와 암투 속에서 자신의 입지를 다져야 합니다.' },
 };
 
 // Firestore Path Utils
@@ -58,7 +58,7 @@ const getDefaultGameState = () => ({
     { id: 'inn_talk_to_owner', text: "여관 주인에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
   ],
   player: { currentLocation: '방랑자의 안식처' },
-  leaderId: null, // 선착순 리더 ID
+  leaderId: null,
 });
 
 const getDefaultPrivatePlayerState = () => ({
@@ -66,14 +66,13 @@ const getDefaultPrivatePlayerState = () => ({
     inventory: [],
     characterCreated: false,
     profession: '',
-    choices: [], // 개인 선택지 풀
+    choices: [],
 });
 
 // Main App Component
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
-  const [actionLocks, setActionLocks] = useState({});
   const [isTextLoading, setIsTextLoading] = useState(false);
   const [activeUsers, setActiveUsers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
@@ -86,7 +85,6 @@ function App() {
   const [nicknameInput, setNicknameInput] = useState('');
   const [llmError, setLlmError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [cooperativeAction, setCooperativeAction] = useState(null);
   
   const isDesktopOrLaptop = useMediaQuery({ query: '(min-width: 1024px)' });
   const isMobile = useMediaQuery({ query: '(max-width: 1023px)' });
@@ -118,13 +116,24 @@ function App() {
       console.error("Error sending chat message:", error);
     }
   };
+
+  const takeLead = async () => {
+    if (gameState.leaderId || !isAuthReady || !db) return;
+    const gameStatusRef = getGameStatusRef(db, appId);
+    try {
+        await setDoc(gameStatusRef, { leaderId: userId }, { merge: true });
+    } catch(e) {
+        console.error("Failed to take lead:", e);
+        setLlmError("행동권을 가져오는 데 실패했습니다.");
+    }
+  };
   
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 살아 숨 쉬는 세계를 창조하고, 플레이어의 선택에 따라 '선택지 풀'을 유기적으로 관리하는 것입니다.
 
     ### 핵심 규칙 (매우 중요)
-    1.  **행동 주체 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어(들)의 시점에서, 그(들)이 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다. 여러 명이 참여하는 행동의 경우, 모두를 조명해야 합니다.
+    1.  **행동 주체 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어의 시점에서, 그가 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다.
     2.  **선택지 풀 관리**: 당신은 선택지 목록 전체를 교체하는 것이 아니라, 특정 선택지를 '추가(add)'하거나 '제거(remove)'하는 명령을 내려야 합니다.
 
     ### JSON 출력 구조
@@ -138,9 +147,6 @@ function App() {
       "privateStateUpdates": {
         "inventory": ["업데이트된 전체 인벤토리 목록"],
         "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 }
-      },
-      "sharedStateUpdates": {
-        "leaderId": null
       }
     }
   `;
@@ -155,8 +161,8 @@ function App() {
       아래 정보를 바탕으로, '[행동 주체]'가 '[선택]'을 한 결과에 대한 이야기를 생성하고 '선택지 풀'을 관리해주십시오.
 
       ### [행동 주체 (Actor)]
-      - 이름(들): ${promptData.actorDisplayNames.join(', ')}
-      - 정보: ${JSON.stringify(promptData.privateInfos)}
+      - 이름: ${promptData.actorDisplayName}
+      - 정보: ${JSON.stringify(promptData.privateInfo)}
 
       ### [선택 (Action)]
       - "${promptData.playerChoice}"
@@ -185,137 +191,8 @@ function App() {
     }
   };
 
-  const getActionScope = (choiceText) => {
-    const talkMatch = choiceText.match(/(.+)에게 말을 건다/);
-    if (talkMatch) return `interaction:talk_to:${talkMatch[1].trim()}`;
-    const lookMatch = choiceText.match(/(.+)을[를]? 살펴본다/);
-    if (lookMatch) return `action:examine:${lookMatch[1].trim()}`;
-    return `location:${gameState.player.currentLocation}`;
-  };
-
-  const performAction = async (choiceObject, participants) => {
-      const choiceText = choiceObject.text;
-      setIsTextLoading(true);
-      try {
-          const actorDisplayNames = participants.map(pid => getDisplayName(pid));
-          const privateInfos = {};
-          // For now, the action is based on the initiator's state.
-          privateInfos[userId] = privatePlayerState;
-
-          const promptData = {
-              actorDisplayNames,
-              playerChoice: choiceText,
-              sharedInfo: { currentLocation: gameState.player.currentLocation, currentChoices: gameState.choices },
-              privateInfos,
-          };
-
-          const llmResponse = await callGeminiTextLLM(promptData);
-
-          if (llmResponse) {
-              await runTransaction(db, async (transaction) => {
-                  const scenarioDoc = await transaction.get(getMainScenarioRef(db, appId));
-                  const privateDoc = await transaction.get(getPrivatePlayerStateRef(db, appId, userId));
-                  const statusDoc = await transaction.get(getGameStatusRef(db, appId));
-
-                  const currentPublicData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-                  const currentPrivateData = privateDoc.exists() ? privateDoc.data() : getDefaultPrivatePlayerState();
-
-                  let newChoicePool = [...(currentPublicData.choices || [])];
-                  if (llmResponse.choices_to_remove) newChoicePool = newChoicePool.filter(c => !llmResponse.choices_to_remove.includes(c.id));
-                  if (llmResponse.choices_to_add) newChoicePool.push(...llmResponse.choices_to_add.filter(c=>c.id && c.text));
-                  
-                  transaction.set(getMainScenarioRef(db, appId), {
-                      log: [...(currentPublicData.log || []), {
-                          actor: participants.map(pid => ({id: pid, displayName: getDisplayName(pid)})),
-                          action: choiceText,
-                          publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
-                          timestamp: serverTimestamp()
-                      }],
-                      choices: newChoicePool,
-                  }, {merge: true});
-
-                  let newPrivateChoices = [...(currentPrivateData.choices || [])];
-                  if (llmResponse.privateChoices_to_remove) newPrivateChoices = newPrivateChoices.filter(c => !llmResponse.privateChoices_to_remove.includes(c.id));
-                  if (llmResponse.privateChoices_to_add) newPrivateChoices.push(...llmResponse.privateChoices_to_add.filter(c=>c.id && c.text));
-                  
-                  transaction.set(getPrivatePlayerStateRef(db, appId, userId), {
-                      ...llmResponse.privateStateUpdates,
-                      choices: newPrivateChoices,
-                  }, {merge: true});
-                  
-                  // 리더십 해제 및 잠금 관리
-                  const currentLocks = statusDoc.exists() ? statusDoc.data().actionLocks : {};
-                  const scope = getActionScope(choiceText);
-                  delete currentLocks[scope];
-                  transaction.set(getGameStatusRef(db, appId), { leaderId: null, actionLocks: currentLocks });
-              });
-          }
-      } catch (error) {
-          setLlmError(error.message);
-      } finally {
-          setIsTextLoading(false);
-      }
-  };
-  
-  const handleLeaveConversation = async (scope) => {
-    const gameStatusRef = getGameStatusRef(db, appId);
-    setIsTextLoading(true);
-    try {
-        await runTransaction(db, async (transaction) => {
-            const statusDoc = await transaction.get(gameStatusRef);
-            if (!statusDoc.exists()) return;
-            const currentLocks = statusDoc.data().actionLocks || {};
-            let participants = currentLocks[scope] || [];
-            if (Array.isArray(participants)) {
-                const newParticipants = participants.filter(pId => pId !== userId);
-                if (newParticipants.length > 0) {
-                    transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: newParticipants });
-                } else {
-                    delete currentLocks[scope];
-                    transaction.update(gameStatusRef, { actionLocks: currentLocks });
-                }
-            }
-        });
-    } catch (error) {
-        setLlmError("대화에서 벗어나는 중 오류가 발생했습니다.");
-    } finally {
-        setIsTextLoading(false);
-    }
-  };
-  
-  const handleCooperativeAction = async (scope, choiceObject) => {
-    const gameStatusRef = getGameStatusRef(db, appId);
-    setCooperativeAction(null);
-    try {
-        let finalParticipants;
-        await runTransaction(db, async (transaction) => {
-            const statusDoc = await transaction.get(gameStatusRef);
-            const currentLocks = statusDoc.exists() ? statusDoc.data().actionLocks : {};
-            const participants = currentLocks[scope] || [];
-            if(Array.isArray(participants) && !participants.includes(userId)) {
-                finalParticipants = [...participants, userId];
-                transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: finalParticipants });
-            } else {
-              finalParticipants = participants;
-            }
-        });
-        if (finalParticipants) {
-          await performAction(choiceObject, finalParticipants);
-        }
-    } catch(error) {
-        setLlmError("대화 참여에 실패했습니다.");
-    }
-  };
-
   const handleChoiceClick = async (choiceObject) => {
     if (isTextLoading) return;
-    setCooperativeAction(null);
-
-    if (choiceObject.type === 'action_leave') {
-        const scope = choiceObject.id.replace('action:leave_conversation:', '');
-        await handleLeaveConversation(scope);
-        return;
-    }
 
     if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
@@ -328,7 +205,8 @@ function App() {
             
             const mainScenarioRef = getMainScenarioRef(db, appId);
             const newEvent = {
-                actor: { id: userId, displayName: getDisplayName(userId) }, action: "여관에 들어선다",
+                actor: { id: userId, displayName: getDisplayName(userId) },
+                action: "여관에 들어선다",
                 publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
                 timestamp: serverTimestamp()
             };
@@ -338,37 +216,78 @@ function App() {
         return;
     }
     
-    // 리더 시스템 + 협력 시스템 결합
-    const scope = getActionScope(choiceObject.text);
-    const lockedBy = actionLocks[scope];
-    const isPublicAction = choiceObject.type !== 'private';
-    
-    // 공개 행동은 리더가 필요
-    if(isPublicAction && !gameState.leaderId) {
-        setLlmError("먼저 '행동권 잡기'를 통해 리더가 되어주세요.");
+    if (choiceObject.type !== 'private' && gameState.leaderId !== userId) {
+        setLlmError("현재 턴의 리더만 주요 행동을 할 수 있습니다. '행동권 잡기'를 눌러 리더가 되어주세요.");
         setTimeout(()=>setLlmError(null), 3000);
         return;
     }
     
-    // 리더가 아니면 공개 행동 불가
-    if (isPublicAction && gameState.leaderId !== userId) {
-        // 단, 다른 사람이 진행중인 행동에 참여는 가능
-        if (lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId)) {
-            setCooperativeAction({ scope, choiceObject, lockedBy });
-        } else {
-            setLlmError("현재 턴의 리더만 주요 행동을 할 수 있습니다.");
-            setTimeout(()=>setLlmError(null), 3000);
-        }
-        return;
+    setIsTextLoading(true);
+
+    const promptData = {
+        actorDisplayName: getDisplayName(userId),
+        playerChoice: choiceObject.text,
+        sharedInfo: { 
+            currentLocation: gameState.player.currentLocation, 
+            currentChoices: gameState.choices 
+        },
+        privateInfo: privatePlayerState,
+    };
+
+    const llmResponse = await callGeminiTextLLM(promptData);
+
+    if (llmResponse) {
+        const mainScenarioRef = getMainScenarioRef(db, appId);
+        const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+
+        await runTransaction(db, async (transaction) => {
+            const scenarioDoc = await transaction.get(mainScenarioRef);
+            const privateDoc = await transaction.get(privateStateRef);
+
+            const currentPublicData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
+            const currentPrivateData = privateDoc.exists() ? privateDoc.data() : getDefaultPrivatePlayerState();
+
+            // Public State 업데이트
+            let newChoicePool = [...(currentPublicData.choices || [])];
+            if (llmResponse.choices_to_remove) {
+                const idsToRemove = new Set(llmResponse.choices_to_remove);
+                newChoicePool = newChoicePool.filter(c => !idsToRemove.has(c.id));
+            }
+            if (llmResponse.choices_to_add) {
+                newChoicePool.push(...llmResponse.choices_to_add.filter(c=>c.id && c.text));
+            }
+            const publicUpdates = {
+                log: [...(currentPublicData.log || []), {
+                    actor: {id: userId, displayName: getDisplayName(userId)},
+                    action: choiceObject.text,
+                    publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
+                    timestamp: serverTimestamp()
+                }],
+                choices: newChoicePool,
+            };
+            transaction.set(mainScenarioRef, publicUpdates, {merge: true});
+
+            // Private State 업데이트
+            let newPrivateChoices = [...(currentPrivateData.choices || [])];
+             if (llmResponse.privateChoices_to_remove) {
+                const idsToRemove = new Set(llmResponse.privateChoices_to_remove);
+                newPrivateChoices = newPrivateChoices.filter(c => !idsToRemove.has(c.id));
+            }
+            if (llmResponse.privateChoices_to_add) {
+                newPrivateChoices.push(...llmResponse.privateChoices_to_add.filter(c=>c.id && c.text));
+            }
+            const privateUpdates = {
+                ...llmResponse.privateStateUpdates,
+                choices: newPrivateChoices,
+            };
+            transaction.set(privateStateRef, privateUpdates, {merge: true});
+        });
     }
 
-    // 내가 리더거나, 개인 행동이거나, 이미 참여중인 협력 행동일 경우
-    const participants = lockedBy && Array.isArray(lockedBy) ? lockedBy : [userId];
-    if (!lockedBy && isPublicAction) {
-      const gameStatusRef = getGameStatusRef(db, appId);
-      await setDoc(gameStatusRef, { actionLocks: { ...actionLocks, [scope]: participants } }, { merge: true });
-    }
-    await performAction(choiceObject, participants);
+    // 행동 후 리더십 해제
+    const gameStatusRef = getGameStatusRef(db, appId);
+    await setDoc(gameStatusRef, { leaderId: null }, { merge: true });
+    setIsTextLoading(false);
   };
   
   // --- useEffect Hooks ---
@@ -403,9 +322,7 @@ function App() {
     });
 
     const unsubStatus = onSnapshot(getGameStatusRef(db, appId), (snap) => {
-        const data = snap.data() || {};
-        setActionLocks(data.actionLocks || {});
-        setGameState(prev => ({...prev, leaderId: data.leaderId || null}));
+        if(snap.exists()) setGameState(prev => ({...prev, leaderId: snap.data().leaderId || null }));
     });
     
     const unsubChat = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages')), (snapshot) => {
@@ -429,6 +346,7 @@ function App() {
     }, { merge: true });
   }, [db, userId, nickname, privatePlayerState.profession]);
 
+
   // --- Render Components ---
 
   const gameLogRef = useRef(null);
@@ -444,9 +362,7 @@ function App() {
         )}
         {gameState.log.map((event, index) => (
             <div key={index} className="mb-4 p-3 rounded bg-gray-900/50">
-                <p className="text-yellow-300 font-semibold italic text-sm">
-                  {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 {event.action} 선택
-                </p>
+                <p className="text-yellow-300 font-semibold italic text-sm">{event.actor.displayName} 님이 "{event.action}" 선택</p>
                 <p className="whitespace-pre-wrap mt-2">{event.publicStory}</p>
             </div>
         ))}
@@ -457,7 +373,7 @@ function App() {
   const chatLogRef = useRef(null);
   useEffect(() => { if(chatLogRef.current) chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight; }, [chatMessages]);
 
-  const ChatPanel = ({isMobile}) => (
+  const ChatPanel = ({ isMobile }) => (
     <div className={`flex flex-col h-full rounded-md ${isMobile ? 'bg-gray-900' : 'bg-gray-700/50'}`}>
         <div className="flex-grow p-4 overflow-y-auto custom-scrollbar" ref={chatLogRef}>
             {chatMessages.map((msg) => (
@@ -481,17 +397,7 @@ function App() {
   };
   
   const ChoicesPanel = () => {
-    const myLocks = Object.entries(actionLocks).filter(([, p]) => Array.isArray(p) && p.includes(userId));
-    const visibleChoices = [
-        ...(gameState.choices || []).filter(c => c.location === gameState.player.currentLocation), 
-        ...(privatePlayerState.choices || []),
-        ...myLocks.map(([scope]) => ({
-            id: `action:leave_conversation:${scope}`,
-            text: `'${scope.split(':')[2] || '현재 활동'}'에서 벗어나기`,
-            type: 'action_leave'
-        }))
-    ].filter((c, i, self) => i === self.findIndex(t => t.id === c.id));
-    
+    const visibleChoices = [...(gameState.choices || []).filter(c => c.location === gameState.player.currentLocation), ...(privatePlayerState.choices || [])];
     return (
       <div className="flex flex-col gap-3 p-4 overflow-y-auto custom-scrollbar">
           {!privatePlayerState.characterCreated ? (
@@ -504,7 +410,7 @@ function App() {
                 ))
             ) : (
                 <>
-                {gameState.leaderId === null && !myLocks.length && (
+                {gameState.leaderId === null && (
                     <button className="px-6 py-3 font-bold rounded-md shadow-lg bg-green-600 hover:bg-green-700 text-white transition-transform transform hover:scale-105" onClick={takeLead}>
                         행동권 잡기
                     </button>
@@ -514,31 +420,15 @@ function App() {
                         {getDisplayName(gameState.leaderId)}님이 행동 중입니다...
                     </div>
                 )}
-                {visibleChoices.map((choice) => {
-                    const scope = getActionScope(choice.text);
-                    const lockedBy = actionLocks[scope];
-                    const isLockedByOther = lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId);
-                    
-                    let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
-                    let prefix = '';
-
-                    if (choice.type === 'private') buttonStyle = 'bg-purple-600 hover:bg-purple-700';
-                    else if (choice.type === 'action_leave') buttonStyle = 'bg-red-600 hover:bg-red-700';
-                    
-                    if (isLockedByOther) {
-                      buttonStyle = 'bg-yellow-600 hover:bg-yellow-700';
-                      prefix = `[참여] `;
-                    }
-
-                    return (
-                        <button key={choice.id}
-                            className={`px-6 py-3 font-bold rounded-md shadow-lg transition-transform transform hover:scale-105 disabled:opacity-50 ${buttonStyle} text-white`}
-                            onClick={() => handleChoiceClick(choice)}
-                            disabled={isTextLoading}>
-                            {prefix}{choice.text}
-                        </button>
-                    )
-                })}
+                {visibleChoices.map((choice) => (
+                    <button
+                        key={choice.id}
+                        className={`px-6 py-3 font-bold rounded-md shadow-lg transition-transform transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none ${choice.type === 'private' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
+                        onClick={() => handleChoiceClick(choice)}
+                        disabled={isTextLoading || (choice.type !== 'private' && gameState.leaderId !== userId)}>
+                        {choice.type === 'private' && '[개인] '}{choice.text}
+                    </button>
+                ))}
                 </>
             )
           }
@@ -560,15 +450,15 @@ function App() {
             <h4 className="text-md font-semibold text-gray-200 mb-2">현재 플레이어 ({activeUsers.length})</h4>
             <div className="bg-gray-700/50 p-3 rounded-md text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
                 {activeUsers.map(user => (
-                    <div key={user.id} className={`p-1 rounded transition-colors ${gameState.leaderId === user.id ? 'bg-yellow-500 text-black font-bold' : ''}`}>
-                      {getDisplayName(user.id)} {gameState.leaderId === user.id && '(리더)'}
+                    <div key={user.id} className={`p-1 rounded transition-colors ${user.id === gameState.leaderId ? 'bg-yellow-500 text-black font-bold' : ''}`}>
+                      {getDisplayName(user.id)} {user.id === gameState.leaderId && '(리더)'}
                     </div>
                 ))}
             </div>
         </div>
         <div className="flex-grow flex flex-col min-h-0">
             <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅</h4>
-            <ChatPanel />
+            <ChatPanel isMobile={false} />
         </div>
     </div>
   );
@@ -636,24 +526,6 @@ function App() {
               <p className="font-bold">오류 발생</p>
               <p className="text-sm mt-1">{llmError}</p>
               <button onClick={() => setLlmError(null)} className="absolute top-1 right-2 text-lg font-bold">&times;</button>
-          </div>
-      )}
-      {cooperativeAction && (
-          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
-              <h3 className="text-xl font-bold text-yellow-400">진행 중인 대화</h3>
-              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 {cooperativeAction.choiceObject.text} 행동을 하고 있습니다. 참여하시겠습니까?</p>
-              <div className="flex justify-center gap-4">
-                  <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md"
-                      onClick={() => handleCooperativeAction(cooperativeAction.scope, cooperativeAction.choiceObject)}>
-                      대화 참여하기
-                  </button>
-                  <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md"
-                      onClick={() => setCooperativeAction(null)}>
-                      나중에 하기
-                  </button>
-              </div>
-          </div>
           </div>
       )}
       {isDesktopOrLaptop && <DesktopLayout />}
