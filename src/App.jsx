@@ -79,6 +79,7 @@ const getDefaultPrivatePlayerState = () => ({
     choices: [],
     groups: [],
     npcRelations: {},
+    knownEventIds: [],
 });
 
 
@@ -99,13 +100,14 @@ function App() {
   const [nickname, setNickname] = useState(() => localStorage.getItem('nickname') || '');
   const [showNicknameModal, setShowNicknameModal] = useState(!localStorage.getItem('nickname'));
   const [nicknameInput, setNicknameInput] = useState('');
-  const [accordion, setAccordion] = useState({ gameLog: true, chat: true, users: true, playerInfo: true, worldHistory: true });
+  const [accordion, setAccordion] = useState({ gameLog: true, chat: true, users: true, playerInfo: true, chronicle: true });
   const [showResetModal, setShowResetModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [llmError, setLlmError] = useState(null);
   const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [worldHistory, setWorldHistory] = useState([]);
+  const [allMajorEvents, setAllMajorEvents] = useState([]);
+  const [knownMajorEvents, setKnownMajorEvents] = useState([]);
 
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -120,15 +122,12 @@ function App() {
     }
   };
 
-  // [수정됨] 어떤 타입의 uid가 들어와도 안전하게 처리하도록 변경
   const getDisplayName = (uid) => {
     const safeUid = String(uid || '');
-
     if (uid === userId) {
       const safeUserId = String(userId || '');
       return nickname || `플레이어 ${safeUserId.substring(0, 4)}`;
     }
-    
     const user = activeUsers.find(u => u.id === uid);
     return user?.nickname || `플레이어 ${safeUid.substring(0, 4)}`;
   };
@@ -182,7 +181,6 @@ function App() {
     }
   };
   
-  // [1] useEffects: Firebase 초기화, 데이터 리스닝, 부가 기능
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
@@ -207,15 +205,12 @@ function App() {
 
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
-
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    
     getDoc(privateStateRef).then(docSnap => {
         if (!docSnap.exists()) {
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
     });
-
     const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
       if (snapshot.exists()) {
         setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
@@ -226,7 +221,6 @@ function App() {
       setLlmError("개인 정보를 불러오는 중 오류가 발생했습니다.");
       setIsLoading(false);
     });
-
     return () => unsubscribe();
   }, [isAuthReady, db, userId]);
 
@@ -257,19 +251,38 @@ function App() {
         const cutoffTime = Date.now() - 60 * 1000;
         const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.lastActive && u.lastActive.toMillis() > cutoffTime);
         setActiveUsers(users);
+      }),
+      onSnapshot(query(getMajorEventsRef(db, appId)), (snapshot) => {
+        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+            .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+        setAllMajorEvents(events);
       })
     ];
-
-    // [수정됨] 올바른 정렬을 위해 객체로 데이터를 받은 후 timestamp 기준으로 정렬
-    getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
-        const historyData = historySnapshot.docs
-            .map(doc => doc.data()) // 먼저 전체 데이터를 가져옵니다.
-            .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0)); // timestamp로 정렬합니다.
-        setWorldHistory(historyData);
-    });
-
     return () => unsubscribes.forEach(unsub => unsub());
   }, [isAuthReady, db]);
+
+  useEffect(() => {
+    if (!db || !userId || allMajorEvents.length === 0) return;
+
+    const currentKnownIds = privatePlayerState.knownEventIds || [];
+    const newDiscoveredEvents = [];
+
+    allMajorEvents.forEach(event => {
+        if (event.location === gameState.player.currentLocation && !currentKnownIds.includes(event.id)) {
+            newDiscoveredEvents.push(event.id);
+        }
+    });
+
+    if (newDiscoveredEvents.length > 0) {
+        const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+        const updatedKnownEventIds = [...currentKnownIds, ...newDiscoveredEvents];
+        setDoc(privateStateRef, { knownEventIds: updatedKnownEventIds }, { merge: true });
+    }
+
+    const knownEvents = allMajorEvents.filter(event => (privatePlayerState.knownEventIds || []).includes(event.id));
+    setKnownMajorEvents(knownEvents);
+
+  }, [gameState.player.currentLocation, allMajorEvents, privatePlayerState.knownEventIds, db, userId]);
 
 
   useEffect(() => {
@@ -298,7 +311,6 @@ function App() {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
 
-  // [2] Helper Functions: 로직 분리 (가독성 향상)
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 유기적으로 살아 숨 쉬는 세계를 창조하는 것입니다. 플레이어의 선택은 세상에 영구적인 흔적을 남기고, 다른 플레이어의 경험에 영향을 미치며, 세상의 역사를 바꾸어야 합니다.
@@ -306,16 +318,19 @@ function App() {
     ### 핵심 규칙 (매우 중요)
     1.  **행동 주체 절대 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어의 시점에서, 그가 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다.
     2.  **관찰자 원칙**: '[주변 플레이어]' 목록에 있는 인물들은 현재 턴의 관찰자일 뿐, 절대 행동하지 않습니다. 그들의 존재를 묘사할 수는 있지만, 그들이 행동의 주체가 되어서는 안 됩니다.
-    3.  **다층적 서사**: 이 원칙들 위에서 '공유된 현실(story)', '개인적 서사(privateStory)', '그룹 서사(groupStory)'를 구분하여 이야기를 전개하십시오.
+    3.  **다층적 서사**: 이 원칙들 위에서 '공유된 현실(story)', '그룹 서사(groupStory)'를 구분하여 이야기를 전개하십시오.
 
     ### JSON 출력 구조
     {
       "story": "모든 플레이어가 볼 수 있는 공유된 사건에 대한 3인칭 서사.",
-      "privateStory": "오직 행동 주체만 볼 수 있는 2인칭 서사. ('당신은...')",
       "groupStory": "행동 주체와 같은 그룹 소속원들만 볼 수 있는 비밀스러운 이야기. 해당사항 없으면 null.",
       "choices": ["다른 플레이어들도 선택할 수 있는 일반적인 행동들."],
       "privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],
       "groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],
+      "majorEvent": {
+        "summary": "만약 이 사건이 세상에 기록될 만큼 중요하다면, 객관적인 요약을 작성. 그렇지 않으면 null.",
+        "location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."
+      },
       "sharedStateUpdates": {
         "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
         "subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]
@@ -352,7 +367,7 @@ function App() {
       ### [배경 정보]
       - 세상의 주요 역사: ${promptData.worldHistory.length > 0 ? promptData.worldHistory.join(', ') : "없음"}
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
-      - 개인화된 최근 사건 로그: ${promptData.personalizedHistory}
+      - 최근 사건 로그: ${promptData.personalizedHistory}
       - 세상에 남겨진 흔적들: ${JSON.stringify(promptData.sharedInfo.subtleClues)}
 
       ### [주변 플레이어 (Observers)]
@@ -399,11 +414,20 @@ function App() {
 
   const updatePublicState = async (llmResponse, playerChoice) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
+
+    if (llmResponse.majorEvent && llmResponse.majorEvent.summary && llmResponse.majorEvent.location) {
+        const majorEventsRef = collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
+        await addDoc(majorEventsRef, {
+            ...llmResponse.majorEvent,
+            timestamp: serverTimestamp(),
+            actor: { id: userId, displayName: getDisplayName(userId) }
+        });
+    }
+
     const newEvent = {
         actor: { id: userId, displayName: getDisplayName(userId) },
         action: playerChoice,
         publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
-        privateStories: { [userId]: llmResponse.privateStory || null },
         groupStory: llmResponse.groupStory || null,
         timestamp: new Date()
     };
@@ -411,26 +435,20 @@ function App() {
     await runTransaction(db, async (transaction) => {
         const scenarioDoc = await transaction.get(mainScenarioRef);
         const currentData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-        
         const newStoryLog = [...(currentData.storyLog || []), newEvent];
-        
         const updateData = {
           storyLog: newStoryLog,
           lastUpdate: serverTimestamp()
         };
-  
         if (llmResponse.choices && llmResponse.choices.length > 0) {
           updateData.choices = llmResponse.choices;
         }
-  
         if (llmResponse.sharedStateUpdates?.location) {
           updateData['player.currentLocation'] = llmResponse.sharedStateUpdates.location;
         }
-  
         if (llmResponse.sharedStateUpdates?.subtleClues) {
           updateData.subtleClues = llmResponse.sharedStateUpdates.subtleClues;
         }
-        
         if (scenarioDoc.exists()) {
             transaction.update(mainScenarioRef, updateData);
         } else {
@@ -465,11 +483,7 @@ function App() {
 
   const buildLlmPrompt = (choice) => {
     const personalizedHistory = gameState.log.slice(-10).map(event => {
-        let historyEntry = `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
-        if (event.privateStories && event.privateStories[userId]) {
-            historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
-        }
-        return historyEntry;
+        return `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
     }).join('\n');
 
     return {
@@ -479,7 +493,7 @@ function App() {
         privateInfo: privatePlayerState,
         personalizedHistory: personalizedHistory,
         activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
-        worldHistory: worldHistory.map(h => h.summary),
+        worldHistory: knownMajorEvents.map(h => h.summary),
     };
   };
 
@@ -498,8 +512,7 @@ function App() {
             }, { merge: true });
 
             const newEvent = {
-                story: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
-                privateStory: selectedProfession.motivation,
+                story: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다. 그의 마음 속에는 '${selectedProfession.motivation}'라는 동기가 자리잡고 있습니다.`,
                 choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."]
             };
 
@@ -567,7 +580,6 @@ function App() {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // [3] Render Functions: UI 분리 (가독성 향상)
   const LlmErrorModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -649,12 +661,6 @@ function App() {
                         {event.groupStory}
                     </p>
                 )}
-                {event.privateStories && event.privateStories[userId] && (
-                  <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
-                    <span className="font-bold">[당신만 아는 사실] </span>
-                    {event.privateStories[userId]}
-                  </p>
-                )}
               </div>
             ))}
             {isTextLoading && (
@@ -730,7 +736,6 @@ function App() {
 
   const renderSidebar = () => (
     <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
-        {/* 내 정보 */}
         <div className="mb-2">
             <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
                 <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
@@ -759,26 +764,24 @@ function App() {
             )}
         </div>
 
-        {/* 세계의 역사 */}
         <div className="mb-2">
-            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('worldHistory')}>
-                <h4 className="text-md font-semibold text-gray-200">세계의 역사</h4>
-                <div className="text-xl">{accordion.worldHistory ? '▼' : '▲'}</div>
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}>
+                <h4 className="text-md font-semibold text-gray-200">나의 연대기</h4>
+                <div className="text-xl">{accordion.chronicle ? '▼' : '▲'}</div>
             </div>
-            {accordion.worldHistory && (
+            {accordion.chronicle && (
                 <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
-                    {worldHistory.length > 0 ? (
+                    {knownMajorEvents.length > 0 ? (
                         <ul className="list-disc list-inside">
-                            {worldHistory.map((event, index) => <li key={index}>{event.summary}</li>)}
+                            {knownMajorEvents.map((event) => <li key={event.id}>{event.summary}</li>)}
                         </ul>
                     ) : (
-                        <p>아직 기록된 역사가 없습니다.</p>
+                        <p>아직 알려진 주요 사건이 없습니다. 세상을 탐험해 보세요.</p>
                     )}
                 </div>
             )}
         </div>
         
-        {/* 현재 플레이어들 */}
         <div className="mb-2">
             <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
                 <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
@@ -800,7 +803,6 @@ function App() {
             )}
         </div>
         
-        {/* 공개 채팅 */}
         <div className="mb-2">
             <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
                 <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4>
