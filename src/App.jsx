@@ -254,7 +254,7 @@ function App() {
     ];
 
     getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
-      const historyData = historySnapshot.docs.map(doc => doc.data().summary).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));;
+      const historyData = historySnapshot.docs.map(doc => doc.data().summary).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
       setWorldHistory(historyData);
     });
 
