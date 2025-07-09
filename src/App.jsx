@@ -445,7 +445,7 @@ function App() {
         {gameState.log.map((event, index) => (
             <div key={index} className="mb-4 p-3 rounded bg-gray-900/50">
                 <p className="text-yellow-300 font-semibold italic text-sm">
-                  {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 "{event.action}" 선택
+                  {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 {event.action} 선택
                 </p>
                 <p className="whitespace-pre-wrap mt-2">{event.publicStory}</p>
             </div>
@@ -642,7 +642,7 @@ function App() {
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
               <h3 className="text-xl font-bold text-yellow-400">진행 중인 대화</h3>
-              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 "{cooperativeAction.choiceObject.text}" 행동을 하고 있습니다. 참여하시겠습니까?</p>
+              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 {cooperativeAction.choiceObject.text} 행동을 하고 있습니다. 참여하시겠습니까?</p>
               <div className="flex justify-center gap-4">
                   <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md"
                       onClick={() => handleCooperativeAction(cooperativeAction.scope, cooperativeAction.choiceObject)}>
