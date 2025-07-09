@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types'; // 1. prop-types 임포트
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -121,6 +122,16 @@ const GameLogPanel = ({ log, userId, isTextLoading, logEndRef, characterCreated 
   </div>
 );
 
+// 2. prop-types 유효성 검사 추가
+GameLogPanel.propTypes = {
+    log: PropTypes.arrayOf(PropTypes.object).isRequired,
+    userId: PropTypes.string,
+    isTextLoading: PropTypes.bool.isRequired,
+    logEndRef: PropTypes.object.isRequired,
+    characterCreated: PropTypes.bool.isRequired
+};
+
+
 const ChoicesPanel = ({ choices, characterCreated, handleChoiceClick, isTextLoading, leaderId, userId, handleTakeLead, getDisplayName }) => {
   const isMyTurn = leaderId === userId;
   const isPreparationPhase = !leaderId;
@@ -169,6 +180,19 @@ const ChoicesPanel = ({ choices, characterCreated, handleChoiceClick, isTextLoad
   );
 };
 
+// prop-types 유효성 검사 추가
+ChoicesPanel.propTypes = {
+    choices: PropTypes.arrayOf(PropTypes.object).isRequired,
+    characterCreated: PropTypes.bool.isRequired,
+    handleChoiceClick: PropTypes.func.isRequired,
+    isTextLoading: PropTypes.bool.isRequired,
+    leaderId: PropTypes.string,
+    userId: PropTypes.string,
+    handleTakeLead: PropTypes.func.isRequired,
+    getDisplayName: PropTypes.func.isRequired
+};
+
+
 const Sidebar = ({ playerState, getDisplayName, userId, activeUsers, currentLocation }) => (
     <div className="flex flex-col space-y-4 bg-gray-700 p-4 rounded-lg shadow-inner">
         <div>
@@ -200,6 +224,25 @@ const Sidebar = ({ playerState, getDisplayName, userId, activeUsers, currentLoca
     </div>
 );
 
+// prop-types 유효성 검사 추가
+Sidebar.propTypes = {
+    playerState: PropTypes.shape({
+        profession: PropTypes.string,
+        stats: PropTypes.shape({
+            strength: PropTypes.number,
+            intelligence: PropTypes.number,
+            agility: PropTypes.number,
+            charisma: PropTypes.number
+        }).isRequired,
+        inventory: PropTypes.arrayOf(PropTypes.string),
+        activeQuests: PropTypes.arrayOf(PropTypes.string)
+    }).isRequired,
+    getDisplayName: PropTypes.func.isRequired,
+    userId: PropTypes.string,
+    activeUsers: PropTypes.arrayOf(PropTypes.object).isRequired,
+    currentLocation: PropTypes.string.isRequired
+};
+
 const ChatPanel = ({ messages, chatEndRef, currentMessage, onMessageChange, onSendMessage, isAuthReady, getDisplayName }) => (
     <div className="bg-gray-700 p-4 rounded-lg flex flex-col h-full md:h-[32rem]">
         <h4 className="text-md font-semibold text-gray-200 mb-2">공개 채팅</h4>
@@ -217,6 +260,17 @@ const ChatPanel = ({ messages, chatEndRef, currentMessage, onMessageChange, onSe
         </div>
     </div>
 );
+
+// prop-types 유효성 검사 추가
+ChatPanel.propTypes = {
+    messages: PropTypes.arrayOf(PropTypes.object).isRequired,
+    chatEndRef: PropTypes.object.isRequired,
+    currentMessage: PropTypes.string.isRequired,
+    onMessageChange: PropTypes.func.isRequired,
+    onSendMessage: PropTypes.func.isRequired,
+    isAuthReady: PropTypes.bool.isRequired,
+    getDisplayName: PropTypes.func.isRequired
+};
 
 // ====================================================================
 // 🖥️ Responsive Layouts
