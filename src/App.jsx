@@ -268,7 +268,7 @@ function App() {
     const newDiscoveredEvents = [];
 
     allMajorEvents.forEach(event => {
-        if (event.location === gameState.player.currentLocation && !currentKnownIds.includes(event.id)) {
+        if (event?.location === gameState.player.currentLocation && !currentKnownIds.includes(event.id)) {
             newDiscoveredEvents.push(event.id);
         }
     });
@@ -279,7 +279,7 @@ function App() {
         setDoc(privateStateRef, { knownEventIds: updatedKnownEventIds }, { merge: true });
     }
 
-    const knownEvents = allMajorEvents.filter(event => (privatePlayerState.knownEventIds || []).includes(event.id));
+    const knownEvents = allMajorEvents.filter(event => (privatePlayerState.knownEventIds || []).includes(event?.id));
     setKnownMajorEvents(knownEvents);
 
   }, [gameState.player.currentLocation, allMajorEvents, privatePlayerState.knownEventIds, db, userId]);
@@ -354,13 +354,13 @@ function App() {
   `;
 
   const buildLlmPrompt = (choice) => {
-    const factions = privatePlayerState.groups.join(', ') || '없음';
-    const npcs = Object.entries(privatePlayerState.npcRelations)
+    const factions = (privatePlayerState.groups || []).join(', ') || '없음';
+    const npcs = Object.entries(privatePlayerState.npcRelations || {})
       .map(([name, value]) => `${name} (관계도: ${value})`)
       .join(', ') || '없음';
 
-    const recentHistory = gameState.log.slice(-10).map(event =>
-      `[${event.actor.displayName}]가 ${event.action}을(를) 통해 다음을 겪음: ${event.publicStory}`
+    const recentHistory = (gameState.log || []).slice(-10).map(event =>
+      `[${event?.actor?.displayName ?? '누군가'}]가 ${event?.action ?? '알 수 없는 행동'}을(를) 통해 다음을 겪음: ${event?.publicStory ?? ''}`
     ).join('\n');
 
     const userPrompt = `
@@ -374,9 +374,9 @@ function App() {
 
 [플레이어의 현재 상태 및 위치 (Player's Current State & Location)]
 - 이름: ${getDisplayName(userId)}
-- 직업: ${privatePlayerState.profession}
-- 현재 위치: ${gameState.player.currentLocation}
-- 소지품 및 능력치: ${JSON.stringify({ inventory: privatePlayerState.inventory, stats: privatePlayerState.stats })}
+- 직업: ${privatePlayerState.profession ?? '미정'}
+- 현재 위치: ${gameState.player.currentLocation ?? '알 수 없는 곳'}
+- 소지품 및 능력치: ${JSON.stringify({ inventory: privatePlayerState.inventory || [], stats: privatePlayerState.stats || {} })}
 
 [플레이어의 최근 경험 (Player's Recent Experiences)]
 - 플레이어가 최근 겪은 사건들의 기록입니다.
@@ -384,7 +384,7 @@ ${recentHistory}
 
 [주변 관찰자 (Nearby Observers)]
 - 현재 장소에 함께 있는 다른 플레이어들입니다. 이들은 이번 턴에 행동하지 않습니다.
-- ${activeUsers.map(u => u.nickname || `플레이어 ${u.id.substring(0,4)}`).join(', ') || "주변에 다른 플레이어가 없음"}
+- ${(activeUsers || []).map(u => u.nickname || `플레이어 ${u.id.substring(0,4)}`).join(', ') || "주변에 다른 플레이어가 없음"}
 
 [플레이어의 선택 (Player's Action)]
 - 위 모든 상황 속에서, 플레이어는 다음 행동을 선택했습니다. 이 선택으로 시작될 '장면'을 연출해주십시오.
@@ -539,7 +539,7 @@ ${recentHistory}
     const scope = getActionScope(choice);
 
     setIsTextLoading(true);
-    setLlmRetryPrompt({ playerChoice: choice }); // 재시도를 위해 선택 기록
+    setLlmRetryPrompt({ playerChoice: choice });
 
     try {
         const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
@@ -656,15 +656,15 @@ ${recentHistory}
                   <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
               </div>
             )}
-            {gameState.log.map((event, index) => (
+            {(gameState.log || []).map((event, index) => (
               <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
-                {event.actor?.displayName && event.action && (
+                {event?.actor?.displayName && event?.action && (
                    <p className="text-yellow-300 font-semibold italic text-sm">
                       {event.actor.displayName} 님이 {event.action} 선택
                    </p>
                 )}
-                <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
-                {event.groupStory && privatePlayerState.groups.length > 0 && (
+                <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.publicStory ?? '').replace(/\n/g, '<br />') }}></p>
+                {event?.groupStory && (privatePlayerState.groups || []).length > 0 && (
                     <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-green-900/30 border-l-4 border-green-400 text-green-200">
                         <span className="font-bold">[그룹 이야기] </span>
                         {event.groupStory}
@@ -678,7 +678,7 @@ ${recentHistory}
                 <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
               </div>
             )}
-            {Object.entries(actionLocks).map(([scope, lockedBy]) => {
+            {Object.entries(actionLocks || {}).map(([scope, lockedBy]) => {
               if (lockedBy === userId) return null;
               return (
                   <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
@@ -696,12 +696,13 @@ ${recentHistory}
   const renderChoices = () => (
     <div className="flex flex-col gap-3">
         {privatePlayerState.characterCreated ? (
-            [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => {
+            [...(gameState.choices || []), ...(privatePlayerState.choices || [])].map((choice, index) => {
+                if (!choice) return null;
                 const scope = getActionScope(choice);
                 const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
                 const allPrivateChoices = privatePlayerState.choices || [];
                 const isPersonalChoice = allPrivateChoices.includes(choice);
-                const isPublicChoice = gameState.choices.includes(choice);
+                const isPublicChoice = (gameState.choices || []).includes(choice);
                 
                 let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
                 let prefix = '';
@@ -718,7 +719,7 @@ ${recentHistory}
 
                 return (
                     <button
-                        key={index}
+                        key={`${choice}-${index}`}
                         className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
                         onClick={() => handleChoiceClick(choice)}
                         disabled={isTextLoading || isLockedByOther}
@@ -754,16 +755,16 @@ ${recentHistory}
               <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
                 <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
                 <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
-                <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
-                <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats.strength}) 지능({privatePlayerState.stats.intelligence}) 민첩({privatePlayerState.stats.agility}) 카리스마({privatePlayerState.stats.charisma})</p>
-                <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
-                <p><span className="font-semibold text-blue-300">퀘스트:</span> {privatePlayerState.activeQuests.join(', ') || '없음'}</p>
-                <p><span className="font-semibold text-blue-300">단서:</span> {privatePlayerState.knownClues.join(', ') || '없음'}</p>
-                <p><span className="font-semibold text-green-300">소속 그룹:</span> {privatePlayerState.groups.join(', ') || '없음'}</p>
+                <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation || '알 수 없는 곳'}</p>
+                <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats?.strength ?? 10}) 지능({privatePlayerState.stats?.intelligence ?? 10}) 민첩({privatePlayerState.stats?.agility ?? 10}) 카리스마({privatePlayerState.stats?.charisma ?? 10})</p>
+                <p><span className="font-semibold text-blue-300">인벤토리:</span> {(privatePlayerState.inventory || []).join(', ') || '비어있음'}</p>
+                <p><span className="font-semibold text-blue-300">퀘스트:</span> {(privatePlayerState.activeQuests || []).join(', ') || '없음'}</p>
+                <p><span className="font-semibold text-blue-300">단서:</span> {(privatePlayerState.knownClues || []).join(', ') || '없음'}</p>
+                <p><span className="font-semibold text-green-300">소속 그룹:</span> {(privatePlayerState.groups || []).join(', ') || '없음'}</p>
                 <div>
                     <span className="font-semibold text-yellow-300">NPC 관계:</span>
                     <ul className="list-disc list-inside ml-4">
-                        {Object.entries(privatePlayerState.npcRelations).length > 0 ? 
+                        {Object.entries(privatePlayerState.npcRelations || {}).length > 0 ? 
                             Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name}>{`${name}: ${value}`}</li>) :
                             <li>알려진 관계 없음</li>
                         }
@@ -780,9 +781,9 @@ ${recentHistory}
             </div>
             {accordion.chronicle && (
                 <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
-                    {knownMajorEvents.length > 0 ? (
+                    {(knownMajorEvents || []).length > 0 ? (
                         <ul className="list-disc list-inside">
-                            {knownMajorEvents.map((event) => <li key={event.id}>{event.summary}</li>)}
+                            {(knownMajorEvents || []).map((event) => <li key={event?.id}>{event?.summary ?? '기록이 손상되었습니다.'}</li>)}
                         </ul>
                     ) : (
                         <p>아직 알려진 주요 사건이 없습니다. 세상을 탐험해 보세요.</p>
@@ -798,9 +799,9 @@ ${recentHistory}
             </div>
             {accordion.users && (
                 <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar">
-                    {activeUsers.length > 0 ? (
+                    {(activeUsers || []).length > 0 ? (
                         <ul className="text-sm text-gray-300 space-y-1">
-                            {activeUsers.map(user => (
+                            {(activeUsers || []).map(user => (
                                 <li key={user.id} className="truncate p-1 rounded-md">
                                     <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
                                     <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
@@ -820,7 +821,7 @@ ${recentHistory}
             {accordion.chat && (
                 <div className="bg-gray-600 p-3 rounded-md flex flex-col h-48">
                     <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
-                        {chatMessages.map((msg) => (
+                        {(chatMessages || []).map((msg) => (
                             <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div>
                         ))}
                         <div ref={chatEndRef} />
