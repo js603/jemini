@@ -175,6 +175,7 @@ function App() {
     }
   };
 
+  // [핵심 수정] 1. Firebase 초기화 및 인증 상태 처리 useEffect
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
@@ -197,126 +198,92 @@ function App() {
     }
   }, []);
 
+  // [핵심 수정] 2. 개인 플레이어 상태(Private State) 전용 useEffect
   useEffect(() => {
-    if (!db || !userId || !isAuthReady) return;
+    if (!isAuthReady || !db || !userId) return;
 
-    const setupPlayerState = async () => {
-      setIsLoading(true);
-      const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-      try {
-        const docSnap = await getDoc(privateStateRef);
-
+    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+    
+    // 문서가 없으면 새로 생성
+    getDoc(privateStateRef).then(docSnap => {
         if (!docSnap.exists()) {
-          await setDoc(privateStateRef, getDefaultPrivatePlayerState());
+            setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
-
-        const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
-          if (snapshot.exists()) {
-            setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
-          }
-          if(isLoading) setIsLoading(false);
-        }, (err) => {
-          console.error("실시간 데이터 수신 오류:", err);
-          setLlmError("데이터 수신 중 오류가 발생했습니다.");
-          setIsLoading(false);
-        });
-        return unsubscribe;
-
-      } catch (error) {
-        console.error("플레이어 상태 설정 오류:", error);
-        setLlmError("플레이어 정보를 가져오는 데 실패했습니다.");
-        setIsLoading(false);
-      }
-    };
-
-    let unsubscribePromise = setupPlayerState();
-
-    return () => {
-      unsubscribePromise.then(unsub => {
-        if (unsub) unsub();
-      });
-    };
-  }, [db, userId, isAuthReady]);
-
-
-  useEffect(() => {
-    if (isLoading || !db || !isAuthReady || !userId || !auth) return;
-    if (!privatePlayerState.characterCreated) return;
-
-    const gameStatusRef = getGameStatusRef(db, appId);
-    const unsubscribeGameStatus = onSnapshot(gameStatusRef, (docSnap) => {
-      setActionLocks(docSnap.data()?.actionLocks || {});
     });
 
-    const chatMessagesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
-    const unsubscribeChat = onSnapshot(query(chatMessagesColRef), (snapshot) => {
+    const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
+      }
+      if (isLoading) setIsLoading(false);
+    }, (err) => {
+      console.error("Private state listener error:", err);
+      setLlmError("개인 정보를 불러오는 중 오류가 발생했습니다.");
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [isAuthReady, db, userId]); // 오직 인증 상태와 userID에만 의존
+
+  // [핵심 수정] 3. 공개 상태(Public State) 전용 useEffect
+  useEffect(() => {
+    if (!isAuthReady || !db) return;
+
+    // 여러 개의 리스너를 한 번에 관리
+    const unsubscribes = [
+      onSnapshot(getMainScenarioRef(db, appId), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setGameState(prev => ({
+            ...prev,
+            log: data.storyLog || [],
+            choices: data.choices || [],
+            player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
+            subtleClues: data.subtleClues || []
+          }));
+        }
+      }),
+      onSnapshot(getGameStatusRef(db, appId), (docSnap) => {
+        setActionLocks(docSnap.data()?.actionLocks || {});
+      }),
+      onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages')), (snapshot) => {
         const messages = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
         setChatMessages(messages);
-    });
+      }),
+      onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers')), (snapshot) => {
+        const cutoffTime = Date.now() - 60 * 1000;
+        const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.lastActive && u.lastActive.toMillis() > cutoffTime);
+        setActiveUsers(users);
+      })
+    ];
 
-    const activeUsersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers');
-    const unsubscribeActiveUsers = onSnapshot(query(activeUsersColRef), (snapshot) => {
-      const cutoffTime = Date.now() - 60 * 1000;
-      const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.lastActive && u.lastActive.toMillis() > cutoffTime);
-      setActiveUsers(users);
-    });
-
-    const mainScenarioRef = getMainScenarioRef(db, appId);
-    const unsubscribeMainScenario = onSnapshot(mainScenarioRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setGameState(prev => ({
-          ...prev,
-          log: data.storyLog || [],
-          choices: data.choices || [],
-          player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
-          subtleClues: data.subtleClues || []
-        }));
-      }
-    }, (error) => {
-      console.error("Main scenario snapshot error:", error);
-      setLlmError("시나리오를 불러오는 중 오류가 발생했습니다.");
-    });
-
-    const fetchHistory = async () => {
-      const historySnapshot = await getDocs(getMajorEventsRef(db, appId));
+    // 주요 역사 데이터는 한 번만 불러옴
+    getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
       const historyData = historySnapshot.docs.map(doc => doc.data().summary);
       setWorldHistory(historyData);
-    };
-    fetchHistory();
+    });
 
-    return () => {
-      unsubscribeGameStatus();
-      unsubscribeChat();
-      unsubscribeActiveUsers();
-      unsubscribeMainScenario();
-    };
-  }, [db, isAuthReady, userId, auth, isLoading, privatePlayerState.characterCreated]);
+    return () => unsubscribes.forEach(unsub => unsub());
+  }, [isAuthReady, db]); // 오직 DB와 인증 상태에만 의존
 
+
+  // [핵심 수정] 4. 부가적인 기능들을 위한 독립적인 useEffect
   useEffect(() => {
     if (!db || !userId || !nickname) return;
-
-    const updateUserPresence = async () => {
-      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
-      await setDoc(userDocRef, {
-        lastActive: serverTimestamp(),
-        nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
-        profession: privatePlayerState.profession,
-      }, { merge: true });
-    };
+    const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
+    setDoc(userDocRef, {
+      lastActive: serverTimestamp(),
+      nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
+      profession: privatePlayerState.profession,
+    }, { merge: true });
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        updateUserPresence();
+        setDoc(userDocRef, { lastActive: serverTimestamp() }, { merge: true });
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    updateUserPresence();
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [db, userId, nickname, privatePlayerState.profession]);
 
   useEffect(() => {
@@ -492,7 +459,7 @@ function App() {
   };
 
   const handleChoiceClick = async (choice) => {
-    if (isTextLoading) return;
+    if (isTextLoading || !privatePlayerState.characterCreated && choice.split('.').length === 1) return;
 
     if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
