@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import PropTypes from 'prop-types'; // 1. prop-types 임포트
+import PropTypes from 'prop-types';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -122,7 +122,6 @@ const GameLogPanel = ({ log, userId, isTextLoading, logEndRef, characterCreated 
   </div>
 );
 
-// 2. prop-types 유효성 검사 추가
 GameLogPanel.propTypes = {
     log: PropTypes.arrayOf(PropTypes.object).isRequired,
     userId: PropTypes.string,
@@ -180,7 +179,6 @@ const ChoicesPanel = ({ choices, characterCreated, handleChoiceClick, isTextLoad
   );
 };
 
-// prop-types 유효성 검사 추가
 ChoicesPanel.propTypes = {
     choices: PropTypes.arrayOf(PropTypes.object).isRequired,
     characterCreated: PropTypes.bool.isRequired,
@@ -224,7 +222,6 @@ const Sidebar = ({ playerState, getDisplayName, userId, activeUsers, currentLoca
     </div>
 );
 
-// prop-types 유효성 검사 추가
 Sidebar.propTypes = {
     playerState: PropTypes.shape({
         profession: PropTypes.string,
@@ -261,7 +258,6 @@ const ChatPanel = ({ messages, chatEndRef, currentMessage, onMessageChange, onSe
     </div>
 );
 
-// prop-types 유효성 검사 추가
 ChatPanel.propTypes = {
     messages: PropTypes.arrayOf(PropTypes.object).isRequired,
     chatEndRef: PropTypes.object.isRequired,
@@ -626,7 +622,7 @@ function App() {
                     timestamp: new Date()
                 };
                 const publicUpdateData = {
-                    storyLog: [...(currentData.log || []), newEvent],
+                    log: [...(currentData.log || []), newEvent], //  <-- 여기가 수정된 부분입니다
                     choices: newChoicePool,
                     lastUpdate: serverTimestamp()
                 };
