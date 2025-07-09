@@ -189,27 +189,52 @@ function App() {
     }
   }, []);
 
-  // [FIX] 데이터를 읽어올 때 기본 객체와 병합하여 누락된 필드에 대한 오류 방지
+  // [FIXED] 안정적인 플레이어 상태 초기화를 위한 로직 수정
   useEffect(() => {
     if (!db || !userId || !isAuthReady) return;
-    setIsLoading(true);
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    const unsubscribe = onSnapshot(privateStateRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...data });
-        } else {
-            setDoc(privateStateRef, getDefaultPrivatePlayerState());
-        }
-        setIsLoading(false);
-    }, (error) => {
-        console.error("Private player state snapshot error:", error);
-        setLlmError("개인 정보를 불러오는 데 실패했습니다.");
-        setIsLoading(false);
-    });
 
-    return () => unsubscribe();
+    const setupPlayerState = async () => {
+      setIsLoading(true);
+      const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+      try {
+        // 1. 먼저 파일이 있는지 단 한번만 확인 (getDoc)
+        const docSnap = await getDoc(privateStateRef);
+
+        // 2. 파일이 없다면, 생성이 완료될 때까지 기다림 (await setDoc)
+        if (!docSnap.exists()) {
+          await setDoc(privateStateRef, getDefaultPrivatePlayerState());
+        }
+
+        // 3. 모든 준비가 끝났으니, 실시간 리스너를 붙임
+        const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
+          if (snapshot.exists()) {
+            setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
+            setIsLoading(false); // 가장 안전한 시점에 로딩 종료
+          }
+        }, (err) => {
+          console.error("실시간 데이터 수신 오류:", err);
+          setLlmError("데이터 수신 중 오류가 발생했습니다.");
+          setIsLoading(false);
+        });
+        return unsubscribe; // 나중에 연결을 끊기 위해 반환
+
+      } catch (error) {
+        console.error("플레이어 상태 설정 오류:", error);
+        setLlmError("플레이어 정보를 가져오는 데 실패했습니다.");
+        setIsLoading(false);
+      }
+    };
+
+    let unsubscribePromise = setupPlayerState();
+
+    return () => {
+      // 컴포넌트가 언마운트될 때 promise가 완료되면 구독을 취소
+      unsubscribePromise.then(unsub => {
+        if (unsub) unsub();
+      });
+    };
   }, [db, userId, isAuthReady]);
+
 
   useEffect(() => {
     if (isLoading || !db || !isAuthReady || !userId || !auth) return;
@@ -235,7 +260,7 @@ function App() {
       const users = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.lastActive && u.lastActive.toMillis() > cutoffTime);
       setActiveUsers(users);
     });
-    
+
     const mainScenarioRef = getMainScenarioRef(db, appId);
     const unsubscribeMainScenario = onSnapshot(mainScenarioRef, (snap) => {
       if (snap.exists()) {
@@ -340,7 +365,7 @@ function App() {
   `;
 
   const callGeminiTextLLM = async (promptData) => {
-    setIsTextLoading(true); 
+    setIsTextLoading(true);
     setLlmRetryPrompt(promptData);
     const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
@@ -433,7 +458,7 @@ function App() {
           });
       });
   };
-  
+
   const updatePrivateState = async (llmResponse) => {
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
       const updates = {
@@ -518,8 +543,13 @@ function App() {
             }
             await updatePrivateState(llmResponse);
             setLlmError(null);
+            setLlmRetryPrompt(null);
         } else {
-            throw new Error("LLM으로부터 유효한 응답을 받지 못했습니다.");
+            // llmResponse가 null이면 callGeminiTextLLM 내부에서 이미 setLlmError가 호출됨
+            // 추가적인 오류 메시지를 설정할 수 있음
+            if (!llmError) {
+                setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다.");
+            }
         }
 
     } catch (error) {
@@ -537,6 +567,42 @@ function App() {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // [FIXED] 재사용 가능한 오류 모달 UI
+  const LlmErrorModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+      <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
+        <h3 className="text-xl font-bold text-red-400">오류가 발생했습니다</h3>
+        <p className="text-gray-200">{llmError}</p>
+        <div className="flex justify-center gap-4">
+          {llmRetryPrompt && (
+            <button
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
+              onClick={async () => {
+                setLlmError(null);
+                // llmRetryPrompt에서 playerChoice를 가져와 handleChoiceClick 호출
+                if (llmRetryPrompt.playerChoice) {
+                  await handleChoiceClick(llmRetryPrompt.playerChoice);
+                }
+              }}
+            >
+              재시도
+            </button>
+          )}
+          <button
+            className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md"
+            onClick={() => {
+              setLlmError(null);
+              setLlmRetryPrompt(null);
+            }}
+          >
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+
   if (showNicknameModal) {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -553,12 +619,9 @@ function App() {
     return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">데이터를 불러오는 중...</span></div>;
   }
 
-  if (llmError) {
-     return <div className="min-h-screen bg-gray-900 text-red-400 flex items-center justify-center"><p>{llmError}</p></div>
-  }
-
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
+      {llmError && <LlmErrorModal />}
       {showResetModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
@@ -618,7 +681,6 @@ function App() {
                           {actingPlayer ? `${getDisplayName(actingPlayer.id)}님이 주요 행동을 하고 있습니다...` : "다른 플레이어가 주요 행동을 하고 있습니다..."}
                       </div>
                   )}
-                  {llmError && <div className="text-red-400 p-2 bg-red-900 bg-opacity-50 rounded mt-2">오류: {llmError}</div>}
                   <div ref={logEndRef} />
                 </div>
               </>
@@ -626,39 +688,35 @@ function App() {
           </div>
 
           <div className="flex flex-col gap-3">
-            {privatePlayerState.characterCreated ? (
-              [...gameState.choices, ...(privatePlayerState.choices || [])].length > 0 ? (
-                [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
-                  <button
-                    key={index}
-                    className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed
-                      ${gameState.choices.includes(choice)
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                        : 'bg-purple-600 hover:bg-purple-700 text-white'
-                      }`
-                    }
-                    onClick={() => handleChoiceClick(choice)}
-                    disabled={isTextLoading || (gameState.choices.includes(choice) && isActionInProgress)}
-                  >
-                    {privatePlayerState.choices?.includes(choice) && '[개인] '}{choice}
-                  </button>
-                ))
+              {privatePlayerState.characterCreated ? (
+                  [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
+                      <button
+                          key={index}
+                          className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed
+                            ${gameState.choices.includes(choice)
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                : 'bg-purple-600 hover:bg-purple-700 text-white'
+                            }`
+                          }
+                          onClick={() => handleChoiceClick(choice)}
+                          disabled={isTextLoading || (gameState.choices.includes(choice) && isActionInProgress)}
+                      >
+                          {privatePlayerState.choices?.includes(choice) && '[개인] '}{choice}
+                      </button>
+                  ))
               ) : (
-                <div className="text-center text-gray-400 py-4">선택지가 없습니다. 새로고침하거나 관리자에게 문의하세요.</div>
-              )
-            ) : (
-              Object.keys(professions).map(key => (
-                <button
-                  key={key}
-                  onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
-                  disabled={isTextLoading}
-                  className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
-                >
-                  <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
-                  <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
-                </button>
-              ))
-            )}
+                  Object.keys(professions).map(key => (
+                      <button
+                          key={key}
+                          onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
+                          disabled={isTextLoading}
+                          className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
+                      >
+                          <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
+                          <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
+                      </button>
+                  ))
+              )}
           </div>
         </div>
 
