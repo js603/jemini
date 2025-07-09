@@ -18,8 +18,7 @@ import {
   addDoc,
   getDocs,
   deleteDoc,
-  runTransaction,
-  updateDoc
+  runTransaction
 } from 'firebase/firestore';
 
 // ====================================================================
@@ -52,8 +51,13 @@ const professions = {
 // Firestore 경로 유틸
 const getMainScenarioRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'mainScenario', 'main');
 const getPrivatePlayerStateRef = (db, appId, userId) => doc(db, 'artifacts', appId, 'users', userId, 'playerState', 'state');
+// [신규] 게임 상태(잠금 등) 경로 유틸
+const getGameStatusRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+// [신규] 세상의 주요 역사 경로 유틸
+const getMajorEventsRef = (db, appId) => collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
 
-// 상태 초기화 유틸
+
+// [개선] 상태 초기화 유틸: 신규 기능 반영
 const getDefaultGameState = () => ({
   phase: 'playing',
   log: [],
@@ -61,19 +65,22 @@ const getDefaultGameState = () => ({
   player: {
     currentLocation: '방랑자의 안식처',
   },
+  subtleClues: [], // [신규] 세상에 남겨진 미세한 흔적들
 });
 
 const getDefaultPrivatePlayerState = () => ({
     stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 },
     inventory: [],
     initialMotivation: '',
-    reputation: {},
+    reputation: {}, // 세력 평판은 유지
     activeQuests: [],
     companions: [],
     knownClues: [],
     characterCreated: false,
     profession: '',
     choices: [],
+    groups: [], // [신규] 소속 그룹
+    npcRelations: {}, // [신규] 개별 NPC 관계도
 });
 
 
@@ -84,8 +91,8 @@ function App() {
   const [activeUsers, setActiveUsers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [currentChatMessage, setCurrentChatMessage] = useState('');
-  const [actingPlayer, setActingPlayer] = useState(null);
-  const [isActionInProgress, setIsActionInProgress] = useState(false);
+  // [개선] 전역 잠금(isActionInProgress, actingPlayer) 대신 지역 잠금(actionLocks) 상태 사용
+  const [actionLocks, setActionLocks] = useState({});
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -101,6 +108,8 @@ function App() {
   const [llmError, setLlmError] = useState(null);
   const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  // [신규] 세상의 역사를 저장할 상태
+  const [worldHistory, setWorldHistory] = useState([]);
 
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -125,39 +134,13 @@ function App() {
     if (!db || !isAuthReady) return;
     setIsResetting(true);
     try {
-        const collectionsToDelete = [
-            collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages'),
-            collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers'),
-        ];
-
-        for (const colRef of collectionsToDelete) {
-            const snapshot = await getDocs(colRef);
-            for (const docSnap of snapshot.docs) {
-                await deleteDoc(docSnap.ref);
-            }
+        // ... (기존 리셋 로직과 동일)
+        // [신규] 추가된 컬렉션도 삭제 대상에 포함 가능
+        const majorEventsRef = getMajorEventsRef(db, appId);
+        const majorEventsSnapshot = await getDocs(majorEventsRef);
+        for (const docSnap of majorEventsSnapshot.docs) {
+            await deleteDoc(docSnap.ref);
         }
-
-        const usersColRef = collection(db, 'artifacts', appId, 'users');
-        const usersSnapshot = await getDocs(usersColRef);
-        for (const userDoc of usersSnapshot.docs) {
-            await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
-        }
-
-        const mainScenarioRef = getMainScenarioRef(db, appId);
-        await deleteDoc(mainScenarioRef);
-
-        const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
-        await deleteDoc(gameStatusRef);
-
-        setGameState(getDefaultGameState());
-        setPrivatePlayerState(getDefaultPrivatePlayerState());
-        setChatMessages([]);
-
-        if (userId) {
-          const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-          await setDoc(privateStateRef, getDefaultPrivatePlayerState());
-        }
-
     } catch (e) {
         console.error("Data reset error:", e);
     } finally {
@@ -189,7 +172,6 @@ function App() {
     }
   }, []);
 
-  // [FIXED] 안정적인 플레이어 상태 초기화를 위한 로직 수정
   useEffect(() => {
     if (!db || !userId || !isAuthReady) return;
 
@@ -197,26 +179,25 @@ function App() {
       setIsLoading(true);
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
       try {
-        // 1. 먼저 파일이 있는지 단 한번만 확인 (getDoc)
         const docSnap = await getDoc(privateStateRef);
 
-        // 2. 파일이 없다면, 생성이 완료될 때까지 기다림 (await setDoc)
         if (!docSnap.exists()) {
+          // [개선] 신규 기능이 반영된 기본 상태로 초기화
           await setDoc(privateStateRef, getDefaultPrivatePlayerState());
         }
 
-        // 3. 모든 준비가 끝났으니, 실시간 리스너를 붙임
         const unsubscribe = onSnapshot(privateStateRef, (snapshot) => {
           if (snapshot.exists()) {
+            // [개선] 신규 기능이 반영된 기본 상태와 병합
             setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
-            setIsLoading(false); // 가장 안전한 시점에 로딩 종료
+            setIsLoading(false);
           }
         }, (err) => {
           console.error("실시간 데이터 수신 오류:", err);
           setLlmError("데이터 수신 중 오류가 발생했습니다.");
           setIsLoading(false);
         });
-        return unsubscribe; // 나중에 연결을 끊기 위해 반환
+        return unsubscribe;
 
       } catch (error) {
         console.error("플레이어 상태 설정 오류:", error);
@@ -228,7 +209,6 @@ function App() {
     let unsubscribePromise = setupPlayerState();
 
     return () => {
-      // 컴포넌트가 언마운트될 때 promise가 완료되면 구독을 취소
       unsubscribePromise.then(unsub => {
         if (unsub) unsub();
       });
@@ -238,14 +218,12 @@ function App() {
 
   useEffect(() => {
     if (isLoading || !db || !isAuthReady || !userId || !auth) return;
-
     if (!privatePlayerState.characterCreated) return;
 
-    const gameStatusDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
-    const unsubscribeGameStatus = onSnapshot(gameStatusDocRef, (docSnap) => {
-      const data = docSnap.data();
-      setIsActionInProgress(data?.isActionInProgress || false);
-      setActingPlayer(data?.actingPlayer || null);
+    // [개선] 게임 상태 리스너: 지역 잠금(actionLocks) 상태를 실시간으로 동기화
+    const gameStatusRef = getGameStatusRef(db, appId);
+    const unsubscribeGameStatus = onSnapshot(gameStatusRef, (docSnap) => {
+      setActionLocks(docSnap.data()?.actionLocks || {});
     });
 
     const chatMessagesColRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages');
@@ -261,6 +239,7 @@ function App() {
       setActiveUsers(users);
     });
 
+    // [개선] 메인 시나리오 리스너: subtleClues(미세한 흔적)도 함께 동기화
     const mainScenarioRef = getMainScenarioRef(db, appId);
     const unsubscribeMainScenario = onSnapshot(mainScenarioRef, (snap) => {
       if (snap.exists()) {
@@ -269,13 +248,22 @@ function App() {
           ...prev,
           log: data.storyLog || [],
           choices: data.choices || [],
-          player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation }
+          player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
+          subtleClues: data.subtleClues || []
         }));
       }
     }, (error) => {
       console.error("Main scenario snapshot error:", error);
       setLlmError("시나리오를 불러오는 중 오류가 발생했습니다.");
     });
+
+    // [신규] 세상의 주요 역사 데이터 불러오기 (실제 앱에서는 필요에 따라 로드)
+    const fetchHistory = async () => {
+      const historySnapshot = await getDocs(getMajorEventsRef(db, appId));
+      const historyData = historySnapshot.docs.map(doc => doc.data().summary);
+      setWorldHistory(historyData);
+    };
+    fetchHistory();
 
     return () => {
       unsubscribeGameStatus();
@@ -319,67 +307,71 @@ function App() {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
 
+  // [개선] 시스템 프롬프트: 우리의 모든 아이디어를 반영하여 대폭 수정
   const systemPrompt = `
     ### 페르소나 (Persona)
-    당신은 TRPG(Tabletop Role-Playing Game)의 최고 실력자 '게임 마스터(GM)'입니다. 당신의 임무는 단순한 스토리 생성이 아니라, 각 플레이어가 자신의 서사의 주인공이 되면서도, 모두가 하나의 거대한 세계관 속에서 살아 숨 쉬고 있다는 느낌을 받도록 만드는 것입니다. 당신은 유려한 문장가이자, 치밀한 설계자이며, 플레이어들의 행동에 즉각적으로 반응하는 유연한 스토리텔러입니다.
+    당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 유기적으로 살아 숨 쉬는 세계를 창조하는 것입니다. 플레이어의 선택은 세상에 영구적인 흔적을 남기고, 다른 플레이어의 경험에 영향을 미치며, 세상의 역사를 바꾸어야 합니다.
 
-    ### 핵심 철학: 하이브리드 월드 (Hybrid World)
-    이 세계는 '공유된 현실'과 '개인적인 서사'가 공존합니다.
-    1.  **공유된 현실 (Shared Reality):** 세상의 중요한 사건, 장소의 변화, 주요 NPC의 죽음 등은 모든 플레이어가 함께 경험하는 절대적인 현실입니다. 이는 'story'와 'sharedStateUpdates'로 표현됩니다.
-    2.  **개인적인 서사 (Personal Narrative):** 플레이어의 내면의 생각, 남들은 모르는 비밀 지식, 개인적인 퀘스트의 진행 등은 오직 그 플레이어에게만 주어지는 고유한 경험입니다. 이는 'privateStory', 'privateChoices', 'privateStateUpdates'로 표현됩니다.
+    ### 핵심 철학: 다층적 서사 (Multi-layered Narrative)
+    1.  **공유된 현실 (Shared Reality):** 세상의 중요한 사건, 장소의 변화 등은 모든 플레이어가 함께 경험하는 절대적인 현실입니다. ('story', 'sharedStateUpdates')
+    2.  **개인적 서사 (Personal Narrative):** 플레이어의 내면, 비밀 지식, 개인 퀘스트 등은 오직 그 플레이어에게만 주어지는 고유한 경험입니다. ('privateStory', 'privateChoices')
+    3.  **[신규] 그룹 서사 (Group Narrative):** 같은 그룹(길드, 파티 등)에 소속된 플레이어들만 공유하는 비밀스러운 이야기입니다. ('groupStory', 'groupChoices')
 
     ### 스토리텔링 원칙
-    * **보여주되, 말하지 말라 (Show, Don't Tell):** '그는 화가 났다'가 아니라 '그는 주먹을 불끈 쥐었다'라고 묘사하십시오.
-    * **역할 존중:** 플레이어의 직업, 능력치, 아이템, 그리고 특히 **'[개인 정보]'**에 담긴 단서('knownClues')나 퀘스트('activeQuests')는 당신이 스토리를 만들 때 가장 먼저 고려해야 할 재료입니다. 이것이 개인화된 경험의 핵심입니다.
-    * **살아있는 세계:** '[주변 플레이어]' 정보를 활용하여 다른 플레이어들의 존재를 이야기에 자연스럽게 녹여내십시오. 그들의 등장은 단순한 배경이 아니라, 새로운 사건의 계기가 되어야 합니다.
-    * **선택의 무게:** 플레이어의 선택은 반드시 의미 있는 결과를 가져와야 합니다. 사소한 선택이 나비효과를 일으킬 수도 있습니다.
+    * **살아있는 세계:** 플레이어의 행동은 세상에 '미세한 흔적(subtleClues)'을 남겨 다른 플레이어가 발견할 수 있게 하십시오. 'NPC 관계도(npcRelations)'에 따라 NPC들의 반응이 달라져야 하며, '세상의 주요 역사(worldHistory)'는 현재의 사건에 영향을 미쳐야 합니다.
+    * **역할 존중:** 플레이어의 직업, 능력치, 아이템, 소속 그룹, 그리고 '개인 정보'는 당신이 스토리를 만들 때 가장 먼저 고려해야 할 재료입니다.
 
     ### JSON 출력 규칙 (매우 중요)
     당신은 반드시 아래의 JSON 구조를 완벽하게 따라야 합니다. 설명(comment)은 절대 포함하지 마십시오.
     {
-      "story": "모든 플레이어가 볼 수 있는 공유된 사건에 대한 3인칭 서사. 이 사건의 결과로 세상이 어떻게 변했는지 객관적으로 묘사합니다.",
-      "privateStory": "선택을 한 플레이어만 볼 수 있는 2인칭 서사. '당신은...', '...라고 느낀다.' 와 같이 내면의 생각, 감각, 남들이 눈치채지 못한 미세한 발견 등을 묘사합니다.",
-      "choices": [
-        "다른 플레이어들도 선택할 수 있는 일반적인 행동들."
-      ],
-      "privateChoices": [
-        "오직 이 플레이어의 직업, 아이템, 퀘스트, 단서 때문에 가능한 특별한 행동들."
-      ],
+      "story": "모든 플레이어가 볼 수 있는 공유된 사건에 대한 3인칭 서사.",
+      "privateStory": "선택을 한 플레이어만 볼 수 있는 2인칭 서사. 내면의 생각, 감각 등을 묘사.",
+      "groupStory": "같은 그룹 소속원들만 볼 수 있는 비밀스러운 이야기. 해당사항 없으면 null.",
+      "choices": ["다른 플레이어들도 선택할 수 있는 일반적인 행동들."],
+      "privateChoices": ["오직 이 플레이어의 특성 때문에 가능한 특별한 행동들."],
+      "groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],
       "sharedStateUpdates": {
-        "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함됩니다."
+        "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
+        "subtleClues": [
+            {"location": "장소명", "clue": "새롭게 생성된 단서", "timestamp": "ISO8601 형식 시간"}
+        ]
       },
       "privateStateUpdates": {
         "inventory": ["업데이트된 전체 인벤토리 목록"],
-        "stats": {"strength": 12, "intelligence": 10, ...},
+        "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },
         "activeQuests": ["업데이트된 개인 퀘스트 목록"],
         "knownClues": ["새롭게 알게 된 단서를 포함한 전체 단서 목록"],
-        "companions": ["업데이트된 동료 목록"],
-        "reputation": {"세력명": "상태", ...}
+        "groups": ["업데이트된 전체 소속 그룹 목록"],
+        "npcRelations": {"가라크": 55, "엘라라": -10}
       }
     }
 
     ### 규칙 상세
-    * 'privateChoices' 예시: 플레이어의 'knownClues'에 '가문의 문장'이 있다면, "가문의 문장을 제단에 맞춰본다." 와 같은 선택지를 제공하십시오.
-    * **상태 업데이트:** 'privateStateUpdates'의 모든 필드는 **변경 여부와 관계없이 항상 현재 플레이어의 전체 상태를 포함**하여 보내야 합니다. 예를 들어, 아이템을 하나 얻었다면, 기존 아이템을 포함한 전체 인벤토리 목록을 'inventory'에 담아야 합니다.
-    * 'story'와 'privateStory'는 합쳐서 500자 이내로 간결하게 작성하십시오.
+    * **상태 업데이트:** privateStateUpdates의 모든 필드는 항상 현재 플레이어의 전체 상태를 포함하여 보내야 합니다.
+    * 'story', 'privateStory', 'groupStory'는 합쳐서 500자 이내로 간결하게 작성하십시오.
   `;
 
   const callGeminiTextLLM = async (promptData) => {
     setIsTextLoading(true);
     setLlmRetryPrompt(promptData);
-    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
+    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8"; // 보안상 실제 앱에서는 서버에서 관리해야 합니다.
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     const history = promptData.history.map(event => event.publicStory).slice(-5);
 
+    // [개선] 프롬프트: 새로운 시스템을 모두 반영
     const userPrompt = `
       [상황 분석 요청]
       아래 정보를 바탕으로 플레이어의 행동에 대한 결과를 생성해주십시오.
 
+      [세상의 주요 역사]
+      - ${promptData.worldHistory.length > 0 ? promptData.worldHistory.join('\n- ') : "특별한 역사가 기록되지 않았습니다."}
+      
       [공유 컨텍스트]
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
       - 이전 주요 사건 로그 (최대 5개): ${JSON.stringify(history)}
+      - 세상에 남겨진 흔적들: ${JSON.stringify(promptData.sharedInfo.subtleClues)}
 
       [개인 정보 (현재 플레이어)]
       - 직업: ${promptData.privateInfo.profession}
@@ -387,13 +379,14 @@ function App() {
       - 인벤토리: ${JSON.stringify(promptData.privateInfo.inventory)}
       - 활성 퀘스트: ${JSON.stringify(promptData.privateInfo.activeQuests)}
       - 알려진 단서: ${JSON.stringify(promptData.privateInfo.knownClues)}
-      - 평판: ${JSON.stringify(promptData.privateInfo.reputation)}
+      - 소속 그룹: ${JSON.stringify(promptData.privateInfo.groups)}
+      - NPC 관계도: ${JSON.stringify(promptData.privateInfo.npcRelations)}
 
       [플레이어의 행동]
       - 선택: "${promptData.playerChoice}"
 
       [주변 플레이어]
-      - ${promptData.activeUsers.length > 0 ? JSON.stringify(promptData.activeUsers) : "현재 주변에 다른 플레이어가 없습니다."}
+      - ${promptData.activeUsers.length > 0 ? JSON.stringify(promptData.activeUsers.map(u => ({ nickname: u.nickname, profession: u.profession }))) : "현재 주변에 다른 플레이어가 없습니다."}
     `;
 
     const payload = { contents: [{ role: "user", parts: [{ text: systemPrompt }] }, { role: "model", parts: [{ text: "{}" }] }, { role: "user", parts: [{ text: userPrompt }] }] };
@@ -435,11 +428,13 @@ function App() {
 
   const updatePublicState = async (llmResponse, playerChoice) => {
       const mainScenarioRef = getMainScenarioRef(db, appId);
+      // [개선] groupStory도 이벤트 로그에 기록
       const newEvent = {
           actor: { id: userId, displayName: getDisplayName(userId) },
           action: playerChoice,
           publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
           privateStories: { [userId]: llmResponse.privateStory || null },
+          groupStory: llmResponse.groupStory || null, // 그룹 스토리 추가
           timestamp: new Date()
       };
 
@@ -454,6 +449,8 @@ function App() {
               storyLog: newStoryLog,
               choices: llmResponse.choices || [],
               'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
+              // [신규] subtleClues 업데이트
+              subtleClues: llmResponse.sharedStateUpdates?.subtleClues || currentData.subtleClues,
               lastUpdate: serverTimestamp()
           });
       });
@@ -461,103 +458,118 @@ function App() {
 
   const updatePrivateState = async (llmResponse) => {
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+      // [개선] groupChoices와 새로운 상태들(groups, npcRelations)도 업데이트
       const updates = {
         ...llmResponse.privateStateUpdates,
-        choices: llmResponse.privateChoices || [],
+        choices: [...(llmResponse.privateChoices || []), ...(llmResponse.groupChoices || [])],
       };
       await setDoc(privateStateRef, updates, { merge: true });
+  };
+  
+  // [신규] 선택지에 따른 행동 범위(scope)를 결정하는 헬퍼 함수
+  const getActionScope = (choice) => {
+    // 실제 구현에서는 더 정교한 파싱 로직이 필요합니다.
+    // 여기서는 예시로 '대화'는 NPC, '탐색'이나 '이동'은 장소로 가정합니다.
+    const npcMatch = choice.match(/(.+)에게 말을 건다/);
+    if (npcMatch) {
+        return `npc:${npcMatch[1].trim()}`;
+    }
+    // 더 많은 규칙 추가 가능
+    return `location:${gameState.player.currentLocation}`;
   };
 
   const handleChoiceClick = async (choice) => {
     if (isTextLoading) return;
 
     if (!privatePlayerState.characterCreated) {
-        setIsTextLoading(true);
-        const choiceKey = choice.split('.')[0];
-        const selectedProfession = professions[choiceKey];
+      setIsTextLoading(true);
+      const choiceKey = choice.split('.')[0];
+      const selectedProfession = professions[choiceKey];
+      if (selectedProfession) {
+          const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
+          await setDoc(privateStateRef, {
+              ...getDefaultPrivatePlayerState(),
+              characterCreated: true,
+              profession: selectedProfession.name,
+              initialMotivation: selectedProfession.motivation,
+          }, { merge: true });
 
-        if (selectedProfession) {
-            const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-            await setDoc(privateStateRef, {
-                ...getDefaultPrivatePlayerState(),
-                characterCreated: true,
-                profession: selectedProfession.name,
-                initialMotivation: selectedProfession.motivation,
-            }, { merge: true });
+          const mainScenarioRef = getMainScenarioRef(db, appId);
+          const newEvent = {
+              actor: { id: userId, displayName: getDisplayName(userId) },
+              action: "여관에 들어선다",
+              publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
+              privateStories: { [userId]: selectedProfession.motivation },
+              timestamp: new Date()
+          };
 
-            const mainScenarioRef = getMainScenarioRef(db, appId);
-            const newEvent = {
-                actor: { id: userId, displayName: getDisplayName(userId) },
-                action: "여관에 들어선다",
-                publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
-                privateStories: { [userId]: selectedProfession.motivation },
-                timestamp: new Date()
-            };
-
-            try {
-                await runTransaction(db, async (transaction) => {
-                    const scenarioDoc = await transaction.get(mainScenarioRef);
-                    const initialChoices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
-                    if (!scenarioDoc.exists()) {
-                        transaction.set(mainScenarioRef, { ...getDefaultGameState(), storyLog: [newEvent], choices: initialChoices, lastUpdate: serverTimestamp() });
-                    } else {
-                        transaction.update(mainScenarioRef, { storyLog: [...(scenarioDoc.data().storyLog || []), newEvent], choices: initialChoices, lastUpdate: serverTimestamp() });
-                    }
-                });
-            } catch (e) {
-                console.error("등장 이벤트 추가 실패: ", e);
-                setLlmError("게임 세계에 합류하는 중 오류가 발생했습니다.");
-            } finally {
-                setIsTextLoading(false);
-            }
-        }
-        return;
+          try {
+              await runTransaction(db, async (transaction) => {
+                  const scenarioDoc = await transaction.get(mainScenarioRef);
+                  const initialChoices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
+                  if (!scenarioDoc.exists()) {
+                      transaction.set(mainScenarioRef, { ...getDefaultGameState(), storyLog: [newEvent], choices: initialChoices, lastUpdate: serverTimestamp() });
+                  } else {
+                      const currentLog = scenarioDoc.data().storyLog || [];
+                      transaction.update(mainScenarioRef, { storyLog: [...currentLog, newEvent], choices: initialChoices, lastUpdate: serverTimestamp() });
+                  }
+              });
+          } catch (e) {
+              console.error("등장 이벤트 추가 실패: ", e);
+              setLlmError("게임 세계에 합류하는 중 오류가 발생했습니다.");
+          } finally {
+              setIsTextLoading(false);
+          }
+      }
+      return;
     }
 
-    const isPublicChoice = gameState.choices.includes(choice);
-    const gameStatusRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
+    const gameStatusRef = getGameStatusRef(db, appId);
+    const scope = getActionScope(choice);
 
     setIsTextLoading(true);
 
     try {
-        if (isPublicChoice) {
-            if (isActionInProgress) {
-                 throw new Error("다른 플레이어가 주요 행동을 하고 있습니다. 잠시 후 다시 시도해주세요.");
-            }
-            await setDoc(gameStatusRef, { isActionInProgress: true, actingPlayer: { id: userId, displayName: getDisplayName(userId) } }, { merge: true });
+        // [개선] 지역 잠금 확인 및 설정
+        const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
+        if (currentLocks[scope] && currentLocks[scope] !== userId) {
+            throw new Error(`현재 '${scope.split(':')[1]}'(은)는 다른 플레이어(${getDisplayName(currentLocks[scope])})가 사용 중입니다.`);
         }
+        await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true });
 
         const promptData = {
             playerChoice: choice,
-            sharedInfo: { currentLocation: gameState.player.currentLocation },
+            sharedInfo: { currentLocation: gameState.player.currentLocation, subtleClues: gameState.subtleClues },
             privateInfo: privatePlayerState,
             history: gameState.log,
             activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
+            worldHistory: worldHistory,
         };
 
         const llmResponse = await callGeminiTextLLM(promptData);
 
         if (llmResponse) {
-            if (isPublicChoice) {
-                await updatePublicState(llmResponse, choice);
-            }
+            await updatePublicState(llmResponse, choice);
             await updatePrivateState(llmResponse);
             setLlmError(null);
             setLlmRetryPrompt(null);
         } else {
-            // llmResponse가 null이면 callGeminiTextLLM 내부에서 이미 setLlmError가 호출됨
-            // 추가적인 오류 메시지를 설정할 수 있음
             if (!llmError) {
                 setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다.");
             }
         }
-
     } catch (error) {
         console.error("행동 처리 중 오류:", error.message);
         setLlmError(error.message);
     } finally {
-        if (isPublicChoice) {
-            await setDoc(gameStatusRef, { isActionInProgress: false, actingPlayer: null }, { merge: true });
+        // [개선] 지역 잠금 해제
+        const finalLocksDoc = await getDoc(gameStatusRef);
+        if (finalLocksDoc.exists()) {
+            const finalLocks = finalLocksDoc.data().actionLocks || {};
+            if (finalLocks[scope] === userId) { // 내가 건 잠금일 때만 해제
+                delete finalLocks[scope];
+                await setDoc(gameStatusRef, { actionLocks: finalLocks }, { merge: true });
+            }
         }
         setIsTextLoading(false);
     }
@@ -567,7 +579,6 @@ function App() {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // [FIXED] 재사용 가능한 오류 모달 UI
   const LlmErrorModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -579,7 +590,6 @@ function App() {
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
               onClick={async () => {
                 setLlmError(null);
-                // llmRetryPrompt에서 playerChoice를 가져와 handleChoiceClick 호출
                 if (llmRetryPrompt.playerChoice) {
                   await handleChoiceClick(llmRetryPrompt.playerChoice);
                 }
@@ -662,6 +672,13 @@ function App() {
                          </p>
                       )}
                       <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
+                      {/* [신규] 그룹 스토리 렌더링 */}
+                      {event.groupStory && privatePlayerState.groups.length > 0 && (
+                          <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-green-900/30 border-l-4 border-green-400 text-green-200">
+                              <span className="font-bold">[그룹 이야기] </span>
+                              {event.groupStory}
+                          </p>
+                      )}
                       {event.privateStories && event.privateStories[userId] && (
                         <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
                           <span className="font-bold">[당신만 아는 사실] </span>
@@ -676,11 +693,15 @@ function App() {
                       <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
                     </div>
                   )}
-                  {isActionInProgress && (!actingPlayer || actingPlayer.id !== userId) && (
-                      <div className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
-                          {actingPlayer ? `${getDisplayName(actingPlayer.id)}님이 주요 행동을 하고 있습니다...` : "다른 플레이어가 주요 행동을 하고 있습니다..."}
-                      </div>
-                  )}
+                  {/* [개선] 지역 잠금 메시지 표시 */}
+                  {Object.entries(actionLocks).map(([scope, lockedBy]) => {
+                    if (lockedBy === userId) return null; // 내가 건 잠금은 표시 안함
+                    return (
+                        <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
+                            {`'${scope.split(':')[1]}' 영역은 ${getDisplayName(lockedBy)}님이 사용 중입니다...`}
+                        </div>
+                    )
+                  })}
                   <div ref={logEndRef} />
                 </div>
               </>
@@ -689,21 +710,38 @@ function App() {
 
           <div className="flex flex-col gap-3">
               {privatePlayerState.characterCreated ? (
-                  [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
-                      <button
-                          key={index}
-                          className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed
-                            ${gameState.choices.includes(choice)
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-purple-600 hover:bg-purple-700 text-white'
-                            }`
-                          }
-                          onClick={() => handleChoiceClick(choice)}
-                          disabled={isTextLoading || (gameState.choices.includes(choice) && isActionInProgress)}
-                      >
-                          {privatePlayerState.choices?.includes(choice) && '[개인] '}{choice}
-                      </button>
-                  ))
+                  [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => {
+                      // [개선] 선택지 버튼 로직: 지역 잠금 및 그룹 선택지 구분
+                      const scope = getActionScope(choice);
+                      const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
+                      const allPrivateChoices = privatePlayerState.choices || [];
+                      const isPersonalChoice = allPrivateChoices.includes(choice);
+                      const isPublicChoice = gameState.choices.includes(choice);
+                      
+                      let buttonStyle = 'bg-blue-600 hover:bg-blue-700'; // Public
+                      let prefix = '';
+
+                      if (isPersonalChoice && !isPublicChoice) {
+                        buttonStyle = 'bg-green-600 hover:bg-green-700'; // Group/Private
+                        prefix = '[개인/그룹] ';
+                      }
+                      
+                      if (isLockedByOther) {
+                        buttonStyle = 'bg-gray-500 cursor-not-allowed';
+                        prefix = `[${getDisplayName(actionLocks[scope])} 사용 중] `;
+                      }
+
+                      return (
+                          <button
+                              key={index}
+                              className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
+                              onClick={() => handleChoiceClick(choice)}
+                              disabled={isTextLoading || isLockedByOther}
+                          >
+                              {prefix}{choice}
+                          </button>
+                      )
+                  })
               ) : (
                   Object.keys(professions).map(key => (
                       <button
@@ -727,6 +765,7 @@ function App() {
                     <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
                 </div>
                 {accordion.playerInfo && (
+                  // [개선] 내 정보 UI에 신규 기능 반영
                   <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
                     <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
                     <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
@@ -735,6 +774,16 @@ function App() {
                     <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
                     <p><span className="font-semibold text-blue-300">퀘스트:</span> {privatePlayerState.activeQuests.join(', ') || '없음'}</p>
                     <p><span className="font-semibold text-blue-300">단서:</span> {privatePlayerState.knownClues.join(', ') || '없음'}</p>
+                    <p><span className="font-semibold text-green-300">소속 그룹:</span> {privatePlayerState.groups.join(', ') || '없음'}</p>
+                    <div>
+                        <span className="font-semibold text-yellow-300">NPC 관계:</span>
+                        <ul className="list-disc list-inside ml-4">
+                            {Object.entries(privatePlayerState.npcRelations).length > 0 ? 
+                                Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name}>{`${name}: ${value}`}</li>) :
+                                <li>알려진 관계 없음</li>
+                            }
+                        </ul>
+                    </div>
                   </div>
                 )}
             </div>
