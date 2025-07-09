@@ -626,9 +626,10 @@ function App() {
           </div>
 
           <div className="flex flex-col gap-3">
-             {/* [FIX] 렌더링 시 privatePlayerState.choices가 undefined일 경우를 대비하여 || [] 추가 */}
-            {[...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
-                <button
+            {privatePlayerState.characterCreated ? (
+              [...gameState.choices, ...(privatePlayerState.choices || [])].length > 0 ? (
+                [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => (
+                  <button
                     key={index}
                     className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed
                       ${gameState.choices.includes(choice)
@@ -638,10 +639,26 @@ function App() {
                     }
                     onClick={() => handleChoiceClick(choice)}
                     disabled={isTextLoading || (gameState.choices.includes(choice) && isActionInProgress)}
-                >
+                  >
                     {privatePlayerState.choices?.includes(choice) && '[개인] '}{choice}
+                  </button>
+                ))
+              ) : (
+                <div className="text-center text-gray-400 py-4">선택지가 없습니다. 새로고침하거나 관리자에게 문의하세요.</div>
+              )
+            ) : (
+              Object.keys(professions).map(key => (
+                <button
+                  key={key}
+                  onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
+                  disabled={isTextLoading}
+                  className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
+                >
+                  <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
+                  <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
                 </button>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
