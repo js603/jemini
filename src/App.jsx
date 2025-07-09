@@ -99,7 +99,7 @@ function App() {
   const [nickname, setNickname] = useState(() => localStorage.getItem('nickname') || '');
   const [showNicknameModal, setShowNicknameModal] = useState(!localStorage.getItem('nickname'));
   const [nicknameInput, setNicknameInput] = useState('');
-  const [accordion, setAccordion] = useState({ gameLog: true, chat: true, users: true, playerInfo: true });
+  const [accordion, setAccordion] = useState({ gameLog: true, chat: true, users: true, playerInfo: true, worldHistory: true });
   const [showResetModal, setShowResetModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [llmError, setLlmError] = useState(null);
@@ -174,8 +174,8 @@ function App() {
       window.location.reload();
     }
   };
-
-  // [핵심 수정] 1. Firebase 초기화 및 인증 상태 처리 useEffect
+  
+  // [1] useEffects: Firebase 초기화, 데이터 리스닝, 부가 기능
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
@@ -198,13 +198,11 @@ function App() {
     }
   }, []);
 
-  // [핵심 수정] 2. 개인 플레이어 상태(Private State) 전용 useEffect
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
 
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     
-    // 문서가 없으면 새로 생성
     getDoc(privateStateRef).then(docSnap => {
         if (!docSnap.exists()) {
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
@@ -223,13 +221,11 @@ function App() {
     });
 
     return () => unsubscribe();
-  }, [isAuthReady, db, userId]); // 오직 인증 상태와 userID에만 의존
+  }, [isAuthReady, db, userId]);
 
-  // [핵심 수정] 3. 공개 상태(Public State) 전용 useEffect
   useEffect(() => {
     if (!isAuthReady || !db) return;
 
-    // 여러 개의 리스너를 한 번에 관리
     const unsubscribes = [
       onSnapshot(getMainScenarioRef(db, appId), (snap) => {
         if (snap.exists()) {
@@ -257,17 +253,15 @@ function App() {
       })
     ];
 
-    // 주요 역사 데이터는 한 번만 불러옴
     getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
-      const historyData = historySnapshot.docs.map(doc => doc.data().summary);
+      const historyData = historySnapshot.docs.map(doc => doc.data().summary).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));;
       setWorldHistory(historyData);
     });
 
     return () => unsubscribes.forEach(unsub => unsub());
-  }, [isAuthReady, db]); // 오직 DB와 인증 상태에만 의존
+  }, [isAuthReady, db]);
 
 
-  // [핵심 수정] 4. 부가적인 기능들을 위한 독립적인 useEffect
   useEffect(() => {
     if (!db || !userId || !nickname) return;
     const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
@@ -294,6 +288,7 @@ function App() {
     if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, accordion.chat]);
 
+  // [2] Helper Functions: 로직 분리 (가독성 향상)
   const systemPrompt = `
     ### 페르소나 (Persona)
     당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 유기적으로 살아 숨 쉬는 세계를 창조하는 것입니다. 플레이어의 선택은 세상에 영구적인 흔적을 남기고, 다른 플레이어의 경험에 영향을 미치며, 세상의 역사를 바꾸어야 합니다.
@@ -458,11 +453,29 @@ function App() {
     return `location:${gameState.player.currentLocation}`;
   };
 
-  const handleChoiceClick = async (choice) => {
-    if (isTextLoading || !privatePlayerState.characterCreated && choice.split('.').length === 1) return;
+  const buildLlmPrompt = (choice) => {
+    const personalizedHistory = gameState.log.slice(-10).map(event => {
+        let historyEntry = `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
+        if (event.privateStories && event.privateStories[userId]) {
+            historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
+        }
+        return historyEntry;
+    }).join('\n');
 
-    if (!privatePlayerState.characterCreated) {
-        setIsTextLoading(true);
+    return {
+        actorDisplayName: getDisplayName(userId),
+        playerChoice: choice,
+        sharedInfo: { currentLocation: gameState.player.currentLocation, subtleClues: gameState.subtleClues },
+        privateInfo: privatePlayerState,
+        personalizedHistory: personalizedHistory,
+        activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
+        worldHistory: worldHistory.map(h => h.summary),
+    };
+  };
+
+  const createCharacter = async (choice) => {
+    setIsTextLoading(true);
+    try {
         const choiceKey = choice.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
@@ -475,25 +488,22 @@ function App() {
             }, { merge: true });
 
             const newEvent = {
-                actor: { id: userId, displayName: getDisplayName(userId) },
-                action: "여관에 들어선다",
-                publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
-                privateStories: { [userId]: selectedProfession.motivation },
-                timestamp: new Date()
+                story: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
+                privateStory: selectedProfession.motivation,
+                choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."]
             };
 
-            try {
-                await updatePublicState({ story: newEvent.publicStory, privateStory: newEvent.privateStories[userId], choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."] }, newEvent.action);
-            } catch (e) {
-                console.error("등장 이벤트 추가 실패: ", e);
-                setLlmError("게임 세계에 합류하는 중 오류가 발생했습니다.");
-            } finally {
-                setIsTextLoading(false);
-            }
+            await updatePublicState(newEvent, "여관에 들어선다");
         }
-        return;
+    } catch (e) {
+        console.error("등장 이벤트 추가 실패: ", e);
+        setLlmError("게임 세계에 합류하는 중 오류가 발생했습니다.");
+    } finally {
+        setIsTextLoading(false);
     }
+  };
 
+  const performPlayerAction = async (choice) => {
     const gameStatusRef = getGameStatusRef(db, appId);
     const scope = getActionScope(choice);
 
@@ -506,24 +516,7 @@ function App() {
         }
         await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true });
 
-        const personalizedHistory = gameState.log.slice(-10).map(event => {
-            let historyEntry = `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
-            if(event.privateStories && event.privateStories[userId]) {
-                historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
-            }
-            return historyEntry;
-        }).join('\n');
-
-        const promptData = {
-            actorDisplayName: getDisplayName(userId),
-            playerChoice: choice,
-            sharedInfo: { currentLocation: gameState.player.currentLocation, subtleClues: gameState.subtleClues },
-            privateInfo: privatePlayerState,
-            personalizedHistory: personalizedHistory,
-            activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
-            worldHistory: worldHistory,
-        };
-
+        const promptData = buildLlmPrompt(choice);
         const llmResponse = await callGeminiTextLLM(promptData);
 
         if (llmResponse) {
@@ -531,10 +524,8 @@ function App() {
             await updatePrivateState(llmResponse);
             setLlmError(null);
             setLlmRetryPrompt(null);
-        } else {
-            if (!llmError) {
-                setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다.");
-            }
+        } else if (!llmError) {
+            setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다.");
         }
     } catch (error) {
         console.error("행동 처리 중 오류:", error.message);
@@ -552,10 +543,21 @@ function App() {
     }
   };
 
+  const handleChoiceClick = async (choice) => {
+    if (isTextLoading) return;
+
+    if (!privatePlayerState.characterCreated) {
+        await createCharacter(choice);
+    } else {
+        await performPlayerAction(choice);
+    }
+  };
+  
   const toggleAccordion = (key) => {
     setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // [3] Render Functions: UI 분리 (가독성 향상)
   const LlmErrorModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -589,7 +591,6 @@ function App() {
     </div>
   );
 
-
   if (showNicknameModal) {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -605,6 +606,213 @@ function App() {
   if (isLoading) {
     return <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div><span className="ml-4 text-xl">데이터를 불러오는 중...</span></div>;
   }
+  
+  const renderGameLog = () => (
+    <div className="mb-2">
+      <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('gameLog')}>
+        <h2 className="text-lg font-bold text-gray-100">게임 로그</h2>
+        <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
+      </div>
+      {accordion.gameLog && (
+        <>
+          <div className="flex justify-end mb-2">
+            <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
+          </div>
+          <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
+            {!privatePlayerState.characterCreated && (
+              <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
+                  <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
+                  <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
+              </div>
+            )}
+            {gameState.log.map((event, index) => (
+              <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
+                {event.actor?.displayName && event.action && (
+                   <p className="text-yellow-300 font-semibold italic text-sm">
+                      {event.actor.displayName} 님이 {event.action} 선택
+                   </p>
+                )}
+                <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
+                {event.groupStory && privatePlayerState.groups.length > 0 && (
+                    <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-green-900/30 border-l-4 border-green-400 text-green-200">
+                        <span className="font-bold">[그룹 이야기] </span>
+                        {event.groupStory}
+                    </p>
+                )}
+                {event.privateStories && event.privateStories[userId] && (
+                  <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
+                    <span className="font-bold">[당신만 아는 사실] </span>
+                    {event.privateStories[userId]}
+                  </p>
+                )}
+              </div>
+            ))}
+            {isTextLoading && (
+              <div className="flex justify-center items-center mt-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
+                <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
+              </div>
+            )}
+            {Object.entries(actionLocks).map(([scope, lockedBy]) => {
+              if (lockedBy === userId) return null;
+              return (
+                  <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
+                      {`'${scope.split(':')[1]}' 영역은 ${getDisplayName(lockedBy)}님이 사용 중입니다...`}
+                  </div>
+              )
+            })}
+            <div ref={logEndRef} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const renderChoices = () => (
+    <div className="flex flex-col gap-3">
+        {privatePlayerState.characterCreated ? (
+            [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => {
+                const scope = getActionScope(choice);
+                const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
+                const allPrivateChoices = privatePlayerState.choices || [];
+                const isPersonalChoice = allPrivateChoices.includes(choice);
+                const isPublicChoice = gameState.choices.includes(choice);
+                
+                let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
+                let prefix = '';
+
+                if (isPersonalChoice && !isPublicChoice) {
+                  buttonStyle = 'bg-green-600 hover:bg-green-700';
+                  prefix = '[개인/그룹] ';
+                }
+                
+                if (isLockedByOther) {
+                  buttonStyle = 'bg-gray-500 cursor-not-allowed';
+                  prefix = `[${getDisplayName(actionLocks[scope])} 사용 중] `;
+                }
+
+                return (
+                    <button
+                        key={index}
+                        className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
+                        onClick={() => handleChoiceClick(choice)}
+                        disabled={isTextLoading || isLockedByOther}
+                    >
+                        {prefix}{choice}
+                    </button>
+                )
+            })
+        ) : (
+            Object.keys(professions).map(key => (
+                <button
+                    key={key}
+                    onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
+                    disabled={isTextLoading}
+                    className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
+                >
+                    <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
+                    <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
+                </button>
+            ))
+        )}
+    </div>
+  );
+
+  const renderSidebar = () => (
+    <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
+        {/* 내 정보 */}
+        <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
+                <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
+                <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
+            </div>
+            {accordion.playerInfo && (
+              <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
+                <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
+                <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
+                <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
+                <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats.strength}) 지능({privatePlayerState.stats.intelligence}) 민첩({privatePlayerState.stats.agility}) 카리스마({privatePlayerState.stats.charisma})</p>
+                <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
+                <p><span className="font-semibold text-blue-300">퀘스트:</span> {privatePlayerState.activeQuests.join(', ') || '없음'}</p>
+                <p><span className="font-semibold text-blue-300">단서:</span> {privatePlayerState.knownClues.join(', ') || '없음'}</p>
+                <p><span className="font-semibold text-green-300">소속 그룹:</span> {privatePlayerState.groups.join(', ') || '없음'}</p>
+                <div>
+                    <span className="font-semibold text-yellow-300">NPC 관계:</span>
+                    <ul className="list-disc list-inside ml-4">
+                        {Object.entries(privatePlayerState.npcRelations).length > 0 ? 
+                            Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name}>{`${name}: ${value}`}</li>) :
+                            <li>알려진 관계 없음</li>
+                        }
+                    </ul>
+                </div>
+              </div>
+            )}
+        </div>
+
+        {/* 세계의 역사 (신규) */}
+        <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('worldHistory')}>
+                <h4 className="text-md font-semibold text-gray-200">세계의 역사</h4>
+                <div className="text-xl">{accordion.worldHistory ? '▼' : '▲'}</div>
+            </div>
+            {accordion.worldHistory && (
+                <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
+                    {worldHistory.length > 0 ? (
+                        <ul className="list-disc list-inside">
+                            {worldHistory.map((event, index) => <li key={index}>{event.summary}</li>)}
+                        </ul>
+                    ) : (
+                        <p>아직 기록된 역사가 없습니다.</p>
+                    )}
+                </div>
+            )}
+        </div>
+        
+        {/* 현재 플레이어들 */}
+        <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
+                <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
+                <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
+            </div>
+            {accordion.users && (
+                <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar">
+                    {activeUsers.length > 0 ? (
+                        <ul className="text-sm text-gray-300 space-y-1">
+                            {activeUsers.map(user => (
+                                <li key={user.id} className="truncate p-1 rounded-md">
+                                    <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
+                                    <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>}
+                </div>
+            )}
+        </div>
+        
+        {/* 공개 채팅 */}
+        <div className="mb-2">
+            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
+                <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4>
+                <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
+            </div>
+            {accordion.chat && (
+                <div className="bg-gray-600 p-3 rounded-md flex flex-col h-48">
+                    <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
+                        {chatMessages.map((msg) => (
+                            <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div>
+                        ))}
+                        <div ref={chatEndRef} />
+                    </div>
+                    <div className="flex">
+                        <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600" value={currentChatMessage} onChange={(e) => setCurrentChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()} disabled={!isAuthReady} />
+                        <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md" onClick={sendChatMessage} disabled={!isAuthReady || !currentChatMessage.trim()}>보내기</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
@@ -624,183 +832,10 @@ function App() {
 
       <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
         <div className="flex flex-col w-full lg:w-2/3 space-y-6">
-          <div className="mb-2">
-            <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('gameLog')}>
-              <h2 className="text-lg font-bold text-gray-100">게임 로그</h2>
-              <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
-            </div>
-            {accordion.gameLog && (
-              <>
-                <div className="flex justify-end mb-2">
-                  <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
-                </div>
-                <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-                  {!privatePlayerState.characterCreated && (
-                    <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
-                        <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
-                        <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
-                    </div>
-                  )}
-                  {gameState.log.map((event, index) => (
-                    <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
-                      {event.actor?.displayName && event.action && (
-                         <p className="text-yellow-300 font-semibold italic text-sm">
-                            {event.actor.displayName} 님이 {event.action} 선택
-                         </p>
-                      )}
-                      <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
-                      {event.groupStory && privatePlayerState.groups.length > 0 && (
-                          <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-green-900/30 border-l-4 border-green-400 text-green-200">
-                              <span className="font-bold">[그룹 이야기] </span>
-                              {event.groupStory}
-                          </p>
-                      )}
-                      {event.privateStories && event.privateStories[userId] && (
-                        <p className="whitespace-pre-wrap mt-2 p-2 rounded bg-blue-900/30 border-l-4 border-blue-400 text-blue-200">
-                          <span className="font-bold">[당신만 아는 사실] </span>
-                          {event.privateStories[userId]}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {isTextLoading && (
-                    <div className="flex justify-center items-center mt-4">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                      <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
-                    </div>
-                  )}
-                  {Object.entries(actionLocks).map(([scope, lockedBy]) => {
-                    if (lockedBy === userId) return null;
-                    return (
-                        <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
-                            {`'${scope.split(':')[1]}' 영역은 ${getDisplayName(lockedBy)}님이 사용 중입니다...`}
-                        </div>
-                    )
-                  })}
-                  <div ref={logEndRef} />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3">
-              {privatePlayerState.characterCreated ? (
-                  [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => {
-                      const scope = getActionScope(choice);
-                      const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
-                      const allPrivateChoices = privatePlayerState.choices || [];
-                      const isPersonalChoice = allPrivateChoices.includes(choice);
-                      const isPublicChoice = gameState.choices.includes(choice);
-                      
-                      let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
-                      let prefix = '';
-
-                      if (isPersonalChoice && !isPublicChoice) {
-                        buttonStyle = 'bg-green-600 hover:bg-green-700';
-                        prefix = '[개인/그룹] ';
-                      }
-                      
-                      if (isLockedByOther) {
-                        buttonStyle = 'bg-gray-500 cursor-not-allowed';
-                        prefix = `[${getDisplayName(actionLocks[scope])} 사용 중] `;
-                      }
-
-                      return (
-                          <button
-                              key={index}
-                              className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
-                              onClick={() => handleChoiceClick(choice)}
-                              disabled={isTextLoading || isLockedByOther}
-                          >
-                              {prefix}{choice}
-                          </button>
-                      )
-                  })
-              ) : (
-                  Object.keys(professions).map(key => (
-                      <button
-                          key={key}
-                          onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
-                          disabled={isTextLoading}
-                          className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
-                      >
-                          <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p>
-                          <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p>
-                      </button>
-                  ))
-              )}
-          </div>
+            {renderGameLog()}
+            {renderChoices()}
         </div>
-
-        <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
-                    <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
-                    <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
-                </div>
-                {accordion.playerInfo && (
-                  <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-48 overflow-y-auto custom-scrollbar">
-                    <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p>
-                    <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p>
-                    <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation}</p>
-                    <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats.strength}) 지능({privatePlayerState.stats.intelligence}) 민첩({privatePlayerState.stats.agility}) 카리스마({privatePlayerState.stats.charisma})</p>
-                    <p><span className="font-semibold text-blue-300">인벤토리:</span> {privatePlayerState.inventory.join(', ') || '비어있음'}</p>
-                    <p><span className="font-semibold text-blue-300">퀘스트:</span> {privatePlayerState.activeQuests.join(', ') || '없음'}</p>
-                    <p><span className="font-semibold text-blue-300">단서:</span> {privatePlayerState.knownClues.join(', ') || '없음'}</p>
-                    <p><span className="font-semibold text-green-300">소속 그룹:</span> {privatePlayerState.groups.join(', ') || '없음'}</p>
-                    <div>
-                        <span className="font-semibold text-yellow-300">NPC 관계:</span>
-                        <ul className="list-disc list-inside ml-4">
-                            {Object.entries(privatePlayerState.npcRelations).length > 0 ? 
-                                Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name}>{`${name}: ${value}`}</li>) :
-                                <li>알려진 관계 없음</li>
-                            }
-                        </ul>
-                    </div>
-                  </div>
-                )}
-            </div>
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
-                    <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
-                    <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
-                </div>
-                {accordion.users && (
-                    <div className="bg-gray-600 p-3 rounded-md h-48 overflow-y-auto custom-scrollbar">
-                        {activeUsers.length > 0 ? (
-                            <ul className="text-sm text-gray-300 space-y-1">
-                                {activeUsers.map(user => (
-                                    <li key={user.id} className="truncate p-1 rounded-md">
-                                        <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
-                                        <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        ) : <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>}
-                    </div>
-                )}
-            </div>
-            <div className="mb-2">
-                <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
-                    <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4>
-                    <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
-                </div>
-                {accordion.chat && (
-                    <div className="bg-gray-600 p-3 rounded-md flex flex-col h-64">
-                        <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
-                            {chatMessages.map((msg) => (
-                                <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div>
-                            ))}
-                            <div ref={chatEndRef} />
-                        </div>
-                        <div className="flex">
-                            <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600" value={currentChatMessage} onChange={(e) => setCurrentChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()} disabled={!isAuthReady} />
-                            <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md" onClick={sendChatMessage} disabled={!isAuthReady || !currentChatMessage.trim()}>보내기</button>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
+        {renderSidebar()}
       </div>
 
       <style>
