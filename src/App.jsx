@@ -55,13 +55,13 @@ const getGameStatusRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'd
 const getMajorEventsRef = (db, appId) => collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
 
 
-// [구조 개선] 상태 초기화 유틸: 선택지 풀 시스템 반영
+// 상태 초기화 유틸
 const getDefaultGameState = () => ({
   phase: 'playing',
   log: [],
   choices: [
     { id: 'inn_look_around', text: "여관을 둘러본다", type: 'location_default', location: '방랑자의 안식처' },
-    { id: 'inn_talk_to_owner', text: "여관 주인에게 정보를 묻는다", type: 'location_default', location: '방랑자의 안식처' },
+    { id: 'inn_talk_to_owner', text: "여관 주인에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
     { id: 'inn_talk_to_adventurer', text: "다른 모험가에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
   ],
   player: {
@@ -80,7 +80,7 @@ const getDefaultPrivatePlayerState = () => ({
     knownClues: [],
     characterCreated: false,
     profession: '',
-    choices: [], // 개인 선택지 풀
+    choices: [],
     groups: [],
     npcRelations: {},
 });
@@ -110,6 +110,7 @@ function App() {
   const [llmRetryPrompt, setLlmRetryPrompt] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [worldHistory, setWorldHistory] = useState([]);
+  const [cooperativeAction, setCooperativeAction] = useState(null);
 
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -240,7 +241,6 @@ function App() {
             subtleClues: data.subtleClues || []
           }));
         } else {
-          // 문서가 없으면 기본 상태로 설정
           setGameState(getDefaultGameState());
         }
       }),
@@ -297,7 +297,7 @@ function App() {
     당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 살아 숨 쉬는 세계를 창조하고, 플레이어의 선택에 따라 '선택지 풀'을 유기적으로 관리하는 것입니다.
 
     ### 핵심 규칙 (매우 중요)
-    1.  **행동 주체 절대 원칙**: 모든 서사는 반드시 '[행동 주체]'의 시점에서, 그가 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다.
+    1.  **행동 주체 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어(들)의 시점에서, 그(들)이 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다. 여러 명이 참여하는 행동의 경우, 모두를 조명해야 합니다.
     2.  **선택지 풀 관리**: 당신은 선택지 목록 전체를 교체하는 것이 아니라, 특정 선택지를 '추가(add)'하거나 '제거(remove)'하는 명령을 내려야 합니다.
         -   **제거**: 특정 조건이 만족되지 않아 더 이상 유효하지 않은 선택지는 \`choices_to_remove\` 또는 \`privateChoices_to_remove\`에 \`id\`를 담아 제거하십시오. (예: NPC가 죽으면, 그와 대화하는 선택지 \`id\`를 제거)
         -   **추가**: 새로운 사건이나 상황으로 인해 생긴 선택지는 \`choices_to_add\` 또는 \`privateChoices_to_add\`에 새로운 선택지 객체를 담아 추가하십시오.
@@ -342,8 +342,8 @@ function App() {
       아래 정보를 바탕으로, '[행동 주체]'가 '[선택]'을 한 결과에 대한 이야기를 생성하고 '선택지 풀'을 관리해주십시오.
 
       ### [행동 주체 (Actor)]
-      - 이름: ${promptData.actorDisplayName}
-      - 정보: ${JSON.stringify(promptData.privateInfo)}
+      - 이름(들): ${promptData.actorDisplayNames.join(', ')}
+      - 정보: ${JSON.stringify(promptData.privateInfos)}
 
       ### [선택 (Action)]
       - "${promptData.playerChoice}"
@@ -393,13 +393,13 @@ function App() {
     }
   };
 
-  const updatePublicState = async (llmResponse, playerChoice) => {
+  const updatePublicState = async (llmResponse, playerChoice, actors) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
     const newEvent = {
-        actor: { id: userId, displayName: getDisplayName(userId) },
+        actor: actors,
         action: playerChoice,
         publicStory: llmResponse.story || "특별한 일은 일어나지 않았다.",
-        privateStories: { [userId]: llmResponse.privateStory || null },
+        privateStories: llmResponse.privateStory ? { [actors[0].id]: llmResponse.privateStory } : {},
         groupStory: llmResponse.groupStory || null,
         timestamp: new Date()
     };
@@ -415,7 +415,8 @@ function App() {
           newChoicePool = newChoicePool.filter(choice => !idsToRemove.has(choice.id));
         }
         if (llmResponse.choices_to_add && llmResponse.choices_to_add.length > 0) {
-          newChoicePool.push(...llmResponse.choices_to_add);
+          const newChoices = llmResponse.choices_to_add.filter(c => c.id && c.text); // 유효성 검사
+          newChoicePool.push(...newChoices);
         }
 
         const updateData = {
@@ -431,11 +432,8 @@ function App() {
           updateData.subtleClues = llmResponse.sharedStateUpdates.subtleClues;
         }
         
-        if (scenarioDoc.exists()) {
-            transaction.update(mainScenarioRef, updateData);
-        } else {
-            transaction.set(mainScenarioRef, { ...getDefaultGameState(), ...updateData });
-        }
+        if (scenarioDoc.exists()) { transaction.update(mainScenarioRef, updateData); } 
+        else { transaction.set(mainScenarioRef, { ...getDefaultGameState(), ...updateData }); }
     });
   };
   
@@ -453,7 +451,8 @@ function App() {
         newPrivateChoicePool = newPrivateChoicePool.filter(choice => !idsToRemove.has(choice.id));
     }
     if (llmResponse.privateChoices_to_add && llmResponse.privateChoices_to_add.length > 0) {
-        newPrivateChoicePool.push(...llmResponse.privateChoices_to_add);
+      const newChoices = llmResponse.privateChoices_to_add.filter(c => c.id && c.text); // 유효성 검사
+      newPrivateChoicePool.push(...newChoices);
     }
 
     updates.choices = newPrivateChoicePool;
@@ -464,8 +463,12 @@ function App() {
   };
 
   const getActionScope = (choiceText) => {
-    const npcMatch = choiceText.match(/(.+)에게 말을 건다/);
-    if (npcMatch) { return `npc:${npcMatch[1].trim()}`; }
+    const talkMatch = choiceText.match(/(.+)에게 말을 건다/);
+    if (talkMatch) return `interaction:talk_to:${talkMatch[1].trim()}`;
+    
+    const lookMatch = choiceText.match(/(.+)을[를]? 살펴본다/);
+    if (lookMatch) return `action:examine:${lookMatch[1].trim()}`;
+
     return `location:${gameState.player.currentLocation}`;
   };
 
@@ -474,30 +477,156 @@ function App() {
     const privateChoicePool = privatePlayerState.choices || [];
 
     const visiblePublicChoices = masterChoicePool.filter(choice => {
-      if (choice.location && choice.location !== gameState.player.currentLocation) {
-        return false;
-      }
+      if (choice.location && choice.location !== gameState.player.currentLocation) return false;
       return true;
     });
+    
+    let allVisibleChoices = [...visiblePublicChoices, ...privateChoicePool];
 
-    const allVisibleChoices = [...visiblePublicChoices, ...privateChoicePool];
+    // 현재 참여중인 협력 행동이 있다면, '대화 떠나기' 선택지 추가
+    const myLocks = Object.entries(actionLocks).filter(([, p]) => Array.isArray(p) && p.includes(userId));
+    myLocks.forEach(([scope]) => {
+      allVisibleChoices.push({
+        id: `action:leave_conversation:${scope}`,
+        text: `'${scope.split(':')[2] || '현재 활동'}'에서 벗어나기`,
+        type: 'action_leave'
+      });
+    });
     
     return allVisibleChoices.filter((choice, index, self) =>
         index === self.findIndex((c) => c.id === choice.id)
     );
   };
 
+  const handleLeaveConversation = async (scope) => {
+    const gameStatusRef = getGameStatusRef(db, appId);
+    setIsTextLoading(true);
+    try {
+        await runTransaction(db, async (transaction) => {
+            const statusDoc = await transaction.get(gameStatusRef);
+            if (!statusDoc.exists()) return;
+
+            const currentLocks = statusDoc.data().actionLocks || {};
+            let participants = currentLocks[scope] || [];
+            
+            if (Array.isArray(participants)) {
+                const newParticipants = participants.filter(pId => pId !== userId);
+                if (newParticipants.length > 0) {
+                    transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: newParticipants });
+                } else {
+                    const newLocks = { ...currentLocks };
+                    delete newLocks[scope];
+                    transaction.set(gameStatusRef, { actionLocks: newLocks });
+                }
+            }
+        });
+    } catch (error) {
+        console.error("Error leaving conversation:", error);
+        setLlmError("대화에서 벗어나는 중 오류가 발생했습니다.");
+    } finally {
+        setIsTextLoading(false);
+    }
+  };
+  
+  const handleCooperativeAction = async (scope, choiceObject) => {
+    const gameStatusRef = getGameStatusRef(db, appId);
+    setCooperativeAction(null);
+
+    try {
+        await runTransaction(db, async (transaction) => {
+            const statusDoc = await transaction.get(gameStatusRef);
+            const currentLocks = statusDoc.exists() ? statusDoc.data().actionLocks : {};
+            const participants = currentLocks[scope] || [];
+            if(Array.isArray(participants) && !participants.includes(userId)) {
+                transaction.update(gameStatusRef, { [`actionLocks.${scope}`]: [...participants, userId] });
+            }
+        });
+        
+        // 참여 후 바로 이어서 행동 수행
+        await performAction(choiceObject, true);
+
+    } catch(error) {
+        console.error("Cooperative action failed", error);
+        setLlmError("대화 참여에 실패했습니다.");
+    }
+  };
+
+  const performAction = async (choiceObject, isCooperative = false) => {
+      const choiceText = choiceObject.text;
+      const gameStatusRef = getGameStatusRef(db, appId);
+      const scope = getActionScope(choiceText);
+
+      setIsTextLoading(true);
+      try {
+          const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
+          let participants = [userId];
+
+          if (isCooperative) {
+              participants = currentLocks[scope] || [userId];
+              if(!participants.includes(userId)) participants.push(userId);
+          } else {
+              await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: [userId] } }, { merge: true });
+          }
+
+          const actorDisplayNames = participants.map(pid => getDisplayName(pid));
+          const privateInfos = { [userId]: privatePlayerState };
+
+          const personalizedHistory = gameState.log.slice(-10).map(event => {
+            let historyEntry = `[${Array.isArray(event.actor) ? event.actor.map(a => a.displayName).join(',') : event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
+            if(event.privateStories && event.privateStories[userId]) {
+                historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
+            }
+            return historyEntry;
+          }).join('\n');
+
+          const promptData = {
+              actorDisplayNames,
+              playerChoice: choiceText,
+              sharedInfo: { 
+                  currentLocation: gameState.player.currentLocation, 
+                  subtleClues: gameState.subtleClues,
+                  currentChoices: gameState.choices 
+              },
+              privateInfos: privateInfos,
+              personalizedHistory: personalizedHistory,
+              activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => !participants.includes(u.id)),
+              worldHistory: worldHistory,
+          };
+
+          const llmResponse = await callGeminiTextLLM(promptData);
+
+          if (llmResponse) {
+              await updatePublicState(llmResponse, choiceText, participants.map(pid => ({ id: pid, displayName: getDisplayName(pid) })));
+              await updatePrivateState(llmResponse);
+          }
+      } catch (error) {
+          setLlmError(error.message);
+      } finally {
+          // 잠금 해제는 이제 '대화 떠나기' 등으로 개별적으로 처리되므로, 여기서 바로 해제하지 않음.
+          // 단, 단독 행동이었다면 해제할 수 있음. 지금은 단순화를 위해 유지.
+          setIsTextLoading(false);
+      }
+  };
+
   const handleChoiceClick = async (choiceObject) => {
-    const choiceText = choiceObject.text;
+    if (isTextLoading) return;
+    setCooperativeAction(null);
+
+    // [신규] '대화 떠나기'와 같은 특수 액션 처리
+    if (choiceObject.type === 'action_leave') {
+        const scope = choiceObject.id.replace('action:leave_conversation:', '');
+        await handleLeaveConversation(scope);
+        return;
+    }
 
     if (!privatePlayerState.characterCreated) {
+        const choiceText = choiceObject.text;
         setIsTextLoading(true);
         const choiceKey = choiceText.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
             await setDoc(getPrivatePlayerStateRef(db, appId, userId), {
-                ...getDefaultPrivatePlayerState(),
-                characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation,
+                ...getDefaultPrivatePlayerState(), characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation,
             }, { merge: true });
             
             const mainScenarioRef = getMainScenarioRef(db, appId);
@@ -512,62 +641,16 @@ function App() {
         return;
     }
 
-    const gameStatusRef = getGameStatusRef(db, appId);
-    const scope = getActionScope(choiceText);
+    const scope = getActionScope(choiceObject.text);
+    const lockedBy = actionLocks[scope];
 
-    setIsTextLoading(true);
-
-    try {
-        const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
-        if (currentLocks[scope] && currentLocks[scope] !== userId) {
-            throw new Error(`현재 '${scope.split(':')[1]}'(은)는 다른 플레이어(${getDisplayName(currentLocks[scope])})가 사용 중입니다.`);
-        }
-        await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true });
-
-        const personalizedHistory = gameState.log.slice(-10).map(event => {
-            let historyEntry = `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
-            if(event.privateStories && event.privateStories[userId]) {
-                historyEntry += ` (개인적으로 당신은 다음을 경험했다: ${event.privateStories[userId]})`;
-            }
-            return historyEntry;
-        }).join('\n');
-
-        const promptData = {
-            actorDisplayName: getDisplayName(userId),
-            playerChoice: choiceText,
-            sharedInfo: { 
-                currentLocation: gameState.player.currentLocation, 
-                subtleClues: gameState.subtleClues,
-                currentChoices: gameState.choices 
-            },
-            privateInfo: privatePlayerState,
-            personalizedHistory: personalizedHistory,
-            activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
-            worldHistory: worldHistory,
-        };
-
-        const llmResponse = await callGeminiTextLLM(promptData);
-
-        if (llmResponse) {
-            await updatePublicState(llmResponse, choiceText);
-            await updatePrivateState(llmResponse);
-            setLlmError(null);
-            setLlmRetryPrompt(null);
-        }
-    } catch (error) {
-        console.error("행동 처리 중 오류:", error.message);
-        setLlmError(error.message);
-    } finally {
-        const finalLocksDoc = await getDoc(gameStatusRef);
-        if (finalLocksDoc.exists()) {
-            const finalLocks = finalLocksDoc.data().actionLocks || {};
-            if (finalLocks[scope] === userId) {
-                delete finalLocks[scope];
-                await setDoc(gameStatusRef, { actionLocks: finalLocks }, { merge: true });
-            }
-        }
-        setIsTextLoading(false);
+    // 잠겨있고, 내가 참여자가 아닐 때 협력 제안
+    if (lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId)) {
+      setCooperativeAction({ scope, choiceObject, lockedBy });
+      return;
     }
+    
+    performAction(choiceObject, Array.isArray(lockedBy));
   };
 
   const toggleAccordion = (key) => { setAccordion(prev => ({ ...prev, [key]: !prev[key] })); };
@@ -584,20 +667,14 @@ function App() {
               onClick={async () => {
                 setLlmError(null);
                 if (llmRetryPrompt.playerChoice) {
-                  await handleChoiceClick({ text: llmRetryPrompt.playerChoice, id: 'retry' });
+                  await handleChoiceClick({ id: 'retry', text: llmRetryPrompt.playerChoice });
                 }
               }}
             >
               재시도
             </button>
           )}
-          <button
-            className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md"
-            onClick={() => {
-              setLlmError(null);
-              setLlmRetryPrompt(null);
-            }}
-          >
+          <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => { setLlmError(null); setLlmRetryPrompt(null); }}>
             닫기
           </button>
         </div>
@@ -625,6 +702,24 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
       {llmError && <LlmErrorModal />}
+      {cooperativeAction && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
+              <h3 className="text-xl font-bold text-yellow-400">진행 중인 대화</h3>
+              <p className="text-gray-200">{getDisplayName(cooperativeAction.lockedBy[0])}님이 이미 '{cooperativeAction.choiceObject.text}' 행동을 하고 있습니다. 참여하시겠습니까?</p>
+              <div className="flex justify-center gap-4">
+                  <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md"
+                      onClick={() => handleCooperativeAction(cooperativeAction.scope, cooperativeAction.choiceObject)}>
+                      대화 참여하기
+                  </button>
+                  <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md"
+                      onClick={() => setCooperativeAction(null)}>
+                      나중에 하기
+                  </button>
+              </div>
+          </div>
+          </div>
+      )}
       {showResetModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
@@ -659,9 +754,9 @@ function App() {
                   )}
                   {gameState.log.map((event, index) => (
                     <div key={index} className="mb-4 p-2 rounded bg-gray-900/50">
-                      {event.actor?.displayName && event.action && (
+                      {event.actor && (
                          <p className="text-yellow-300 font-semibold italic text-sm">
-                            {event.actor.displayName} 님이 {event.action} 선택
+                            {Array.isArray(event.actor) ? event.actor.map(a=>a.displayName).join(', ') : event.actor.displayName} 님이 {event.action} 선택
                          </p>
                       )}
                       <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event.publicStory || '').replace(/\n/g, '<br />') }}></p>
@@ -685,14 +780,6 @@ function App() {
                       <span className="ml-3 text-gray-400">이야기를 생성 중...</span>
                     </div>
                   )}
-                  {Object.entries(actionLocks).map(([scope, lockedBy]) => {
-                    if (lockedBy === userId) return null;
-                    return (
-                        <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">
-                            {`'${scope.split(':')[1]}' 영역은 ${getDisplayName(lockedBy)}님이 사용 중입니다...`}
-                        </div>
-                    )
-                  })}
                   <div ref={logEndRef} />
                 </div>
               </>
@@ -703,7 +790,8 @@ function App() {
               {privatePlayerState.characterCreated ? (
                   getVisibleChoices().map((choice) => {
                       const scope = getActionScope(choice.text);
-                      const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
+                      const lockedBy = actionLocks[scope];
+                      const isLocked = lockedBy && Array.isArray(lockedBy) && !lockedBy.includes(userId);
                       
                       let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
                       let prefix = '';
@@ -711,11 +799,14 @@ function App() {
                       if (choice.type === 'private' || choice.type === 'group') {
                         buttonStyle = 'bg-green-600 hover:bg-green-700';
                         prefix = '[개인/그룹] ';
+                      } else if (choice.type === 'action_leave') {
+                        buttonStyle = 'bg-red-600 hover:bg-red-700';
+                        prefix = '[행동 종료] '
                       }
                       
-                      if (isLockedByOther) {
-                        buttonStyle = 'bg-gray-500 cursor-not-allowed';
-                        prefix = `[${getDisplayName(actionLocks[scope])} 사용 중] `;
+                      if (isLocked) {
+                        buttonStyle = 'bg-yellow-600 hover:bg-yellow-700';
+                        prefix = `[${getDisplayName(lockedBy[0])}와 함께하기] `;
                       }
 
                       return (
@@ -723,7 +814,7 @@ function App() {
                               key={choice.id}
                               className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
                               onClick={() => handleChoiceClick(choice)}
-                              disabled={isTextLoading || isLockedByOther}
+                              disabled={isTextLoading}
                           >
                               {prefix}{choice.text}
                           </button>
