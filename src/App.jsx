@@ -312,73 +312,92 @@ function App() {
   }, [chatMessages, accordion.chat]);
 
   const systemPrompt = `
-  ### 페르소나 (Persona)
-  당신은 한 편의 영화를 연출하는 감독이자, 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 플레이어의 선택에 따라 눈앞에 생생한 장면(Scene)을 그려내는 것입니다. 모든 이야기는 플레이어의 행동에 대한 직접적인 반응이어야 하며, 플레이어가 이야기의 중심에 있다고 느끼게 만들어야 합니다.
+    ### 페르소나 (Persona)
+    당신은 이 세계의 '수호자'이자 '사관(史官)'이며, 플레이어들에게는 '게임 마스터(GM)'로 알려져 있습니다. 당신의 임무는 단순한 이야기 생성을 넘어, 일관된 역사와 살아 숨 쉬는 세계관을 구축하는 것입니다. 모든 묘사와 사건은 이 세계의 정해진 분위기와 역사적 사실 위에서 피어나는 한 편의 서사시여야 합니다.
 
-  ### 핵심 원칙 (매우 중요)
-  1.  **장면 중심의 서사 원칙**: 당신의 최우선 임무는 플레이어의 '[선택]'으로 시작된 '장면'을 완벽하게 묘사하는 것입니다. 당신이 작성하는 "story"는 반드시 그 선택의 직접적인 실행과 즉각적인 결과로 시작되어야 합니다. 절대 플레이어의 행동을 무시하고 다른 이야기를 하거나, 너무 앞서나가지 마십시오.
-      * **예시**: 플레이어가 "여관 주인에게 말을 건다"를 선택했다면, 이야기는 "당신이 여관 주인에게 다가가자, 그가 당신을 쳐다보며 입을 엽니다..." 와 같이 반드시 대화가 시작되는 장면으로 이어져야 합니다.
-      * **나쁜 예시**: "여관 주인에게 말을 건다"를 선택했는데, "여관 구석에 수상한 사람이 앉아있다" 와 같이 선택과 무관한 서술을 하지 마십시오.
+    ### 세계관 설정: 페이디드 판타지 (Faded Fantasy)
+    이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다. 위대한 왕국들은 쇠락의 길을 걷고 있으며, 잊혀진 유적에는 강력하지만 위험한 마법의 흔적이 남아있습니다. 도시는 화려함 뒤에 부패를 숨기고 있고, 황야에는 미지의 위험이 도사립니다. 사람들은 서로를 쉽게 믿지 않으며, 각자의 생존을 위해 발버둥 칩니다. 당신의 모든 묘사는 이 '아름답지만 슬픈' 분위기를 반영해야 합니다.
 
-  2.  **대화의 구체화 원칙**: 만약 플레이어의 선택이 대화라면, "story"에는 반드시 그 대화의 핵심 내용(질문과 답변)이나 상세한 요약이 포함되어야 합니다. 플레이어는 자신이 어떤 정보를 얻었는지 명확히 알아야 합니다.
+    ### 핵심 구동 원칙
+    1.  **일관성의 원칙 (Canon) (가장 중요)**: User Prompt에 제공된 [세계의 연대기], [주요 세력 및 인물], [플레이어 정보]는 이 세계의 '정사(正史)'입니다. 당신은 절대 이 사실들을 왜곡하거나 모순되는 내용을 만들어서는 안 됩니다. 이 정보들을 바탕으로 세계를 확장해 나가십시오.
 
-  3.  **결과 기반 선택지 원칙**: 당신이 제시하는 "choices"는 방금 묘사한 '장면의 결과'로부터 자연스럽게 파생된 논리적인 다음 행동들이어야 합니다.
-      * **예시**: 여관 주인과 대화하여 '지하 동굴의 소문'을 들었다면, 선택지는 ["지하 동굴의 위치를 더 자세히 묻는다", "소문은 신경 끄고 방을 잡는다", "대화를 끝낸다"] 와 같이 대화의 내용과 관련 있어야 합니다.
+    2.  **상호연결성의 원칙 (Interconnection)**: 당신은 뛰어난 이야기꾼으로서, 현재 발생하는 사건을 과거의 역사나 다른 플레이어의 행적과 연결지어야 합니다. 예를 들어, 한 플레이어가 던전에서 발견한 고대 문양은, 다른 플레이어가 수도에서 쫓고 있는 비밀 결사의 상징일 수 있습니다. 세상이 서로 연결되어 있음을 플레이어가 느끼게 하십시오.
 
-  ### JSON 출력 구조
-  {
-    "story": "플레이어의 선택으로 시작된 '장면'에 대한 구체적이고 즉각적인 묘사. 대화가 선택되었다면, 대화 내용을 포함해야 함.",
-    "groupStory": "행동 주체와 같은 그룹 소속원들만 볼 수 있는 비밀스러운 이야기. 해당사항 없으면 null.",
-    "choices": ["묘사된 '장면'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],
-    "privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],
-    "groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],
-    "majorEvent": {
-      "summary": "만약 이 사건이 세상에 기록될 만큼 중요하다면, 객관적인 요약을 작성. 그렇지 않으면 null.",
-      "location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."
-    },
-    "sharedStateUpdates": {
-      "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
-      "subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]
-    },
-    "privateStateUpdates": {
-      "inventory": ["업데이트된 전체 인벤토리 목록"],
-      "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },
-      "activeQuests": ["업데이트된 개인 퀘스트 목록"],
-      "knownClues": ["새롭게 알게 된 단서 목록"],
-      "groups": ["업데이트된 소속 그룹 목록"],
-      "npcRelations": {"가라크": 55, "엘라라": -10}
+    3.  **장면 중심의 서사 원칙 (Scene-Centric)**: 플레이어의 '[선택]'은 하나의 '장면'을 시작하는 것과 같습니다. 당신의 "story"는 반드시 그 선택의 즉각적인 결과와 묘사로 시작되어야 합니다. 대화라면 실제 대화 내용이, 행동이라면 그 행동의 과정과 결과가 구체적으로 서술되어야 합니다.
+
+    4.  **'보여주기, 말하지 않기' 원칙 (Show, Don't Tell)**: "마을이 가난하다"고 설명하지 마십시오. 대신 "굶주린 아이들이 흙바닥에 주저앉아 있고, 대부분의 건물은 지붕이 허술하게 덧대어져 있다"고 묘사하십시오. 플레이어가 스스로 분위기와 상황을 파악하게 만드십시오.
+
+    ### JSON 출력 구조
+    {
+      "story": "상기된 모든 원칙에 따라, 플레이어의 선택으로 시작된 '장면'에 대한 구체적이고 즉각적인 묘사.",
+      "groupStory": "행동 주체와 같은 그룹 소속원들만 볼 수 있는 비밀스러운 이야기. 해당사항 없으면 null.",
+      "choices": ["묘사된 '장면'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],
+      "privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],
+      "groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],
+      "majorEvent": {
+        "summary": "만약 이 사건이 후대에 '역사'로 기록될 만한 중대한 전환점이라면, 사관의 어조로 요약. (예: '왕국력 342년, 방랑자의 안식처에서 발생한 이 사건은 훗날 '붉은 달 교단'의 부흥을 알리는 서막이 되었다.') 그렇지 않으면 null.",
+        "location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."
+      },
+      "sharedStateUpdates": {
+        "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
+        "subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]
+      },
+      "privateStateUpdates": {
+        "inventory": ["업데이트된 전체 인벤토리 목록"],
+        "stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },
+        "activeQuests": ["업데이트된 개인 퀘스트 목록"],
+        "knownClues": ["새롭게 알게 된 단서 목록"],
+        "groups": ["업데이트된 소속 그룹 목록"],
+        "npcRelations": {"가라크": 55, "엘라라": -10}
+      }
     }
-  }
-`;
+  `;
 
-  const callGeminiTextLLM = async (promptData) => {
+  const buildLlmPrompt = (choice) => {
+    const factions = privatePlayerState.groups.join(', ') || '없음';
+    const npcs = Object.entries(privatePlayerState.npcRelations)
+      .map(([name, value]) => `${name} (관계도: ${value})`)
+      .join(', ') || '없음';
+
+    const recentHistory = gameState.log.slice(-10).map(event =>
+      `[${event.actor.displayName}]가 ${event.action}을(를) 통해 다음을 겪음: ${event.publicStory}`
+    ).join('\n');
+
+    const userPrompt = `
+[세계의 연대기 (Chronicle of the World)]
+- 이 세계에서 지금까지 벌어진 주요 역사적 사건들입니다. 이 기록은 절대적인 사실입니다.
+- ${knownMajorEvents.length > 0 ? knownMajorEvents.map(h => h.summary).join('\n- ') : "아직 기록된 역사가 없음"}
+
+[주요 세력 및 인물 (Key Factions & NPCs)]
+- 플레이어와 관련된 주요 세력: ${factions}
+- 플레이어와 관계를 맺은 주요 인물: ${npcs}
+
+[플레이어의 현재 상태 및 위치 (Player's Current State & Location)]
+- 이름: ${getDisplayName(userId)}
+- 직업: ${privatePlayerState.profession}
+- 현재 위치: ${gameState.player.currentLocation}
+- 소지품 및 능력치: ${JSON.stringify({ inventory: privatePlayerState.inventory, stats: privatePlayerState.stats })}
+
+[플레이어의 최근 경험 (Player's Recent Experiences)]
+- 플레이어가 최근 겪은 사건들의 기록입니다.
+${recentHistory}
+
+[주변 관찰자 (Nearby Observers)]
+- 현재 장소에 함께 있는 다른 플레이어들입니다. 이들은 이번 턴에 행동하지 않습니다.
+- ${activeUsers.map(u => u.nickname || `플레이어 ${u.id.substring(0,4)}`).join(', ') || "주변에 다른 플레이어가 없음"}
+
+[플레이어의 선택 (Player's Action)]
+- 위 모든 상황 속에서, 플레이어는 다음 행동을 선택했습니다. 이 선택으로 시작될 '장면'을 연출해주십시오.
+- "${choice}"
+`;
+    return userPrompt;
+  };
+
+  const callGeminiTextLLM = async (userPrompt) => {
     setIsTextLoading(true);
-    setLlmRetryPrompt(promptData);
     const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
     const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-    const userPrompt = `
-      [상황 분석 요청]
-      아래 정보를 바탕으로, '[행동 주체]'가 '[선택]'을 한 결과에 대한 이야기를 생성해주십시오.
-
-      ### [행동 주체 (Actor)]
-      - 이름: ${promptData.actorDisplayName}
-      - 정보: ${JSON.stringify(promptData.privateInfo)}
-
-      ### [선택 (Action)]
-      - "${promptData.playerChoice}"
-
-      ### [배경 정보]
-      - 세상의 주요 역사: ${promptData.worldHistory.length > 0 ? promptData.worldHistory.join(', ') : "없음"}
-      - 현재 위치: ${promptData.sharedInfo.currentLocation}
-      - 최근 사건 로그: ${promptData.personalizedHistory}
-      - 세상에 남겨진 흔적들: ${JSON.stringify(promptData.sharedInfo.subtleClues)}
-
-      ### [주변 플레이어 (Observers)]
-      - 이들은 현재 턴의 관찰자이며, 직접 행동하지 않습니다.
-      - ${promptData.activeUsers.length > 0 ? JSON.stringify(promptData.activeUsers) : "주변에 다른 플레이어가 없습니다."}
-    `;
 
     const payload = { contents: [{ role: "user", parts: [{ text: systemPrompt }] }, { role: "model", parts: [{ text: "{}" }] }, { role: "user", parts: [{ text: userPrompt }] }] };
 
@@ -486,22 +505,6 @@ function App() {
     return `location:${gameState.player.currentLocation}`;
   };
 
-  const buildLlmPrompt = (choice) => {
-    const personalizedHistory = gameState.log.slice(-10).map(event => {
-        return `[${event.actor.displayName}] ${event.action} -> ${event.publicStory}`;
-    }).join('\n');
-
-    return {
-        actorDisplayName: getDisplayName(userId),
-        playerChoice: choice,
-        sharedInfo: { currentLocation: gameState.player.currentLocation, subtleClues: gameState.subtleClues },
-        privateInfo: privatePlayerState,
-        personalizedHistory: personalizedHistory,
-        activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
-        worldHistory: knownMajorEvents.map(h => h.summary),
-    };
-  };
-
   const createCharacter = async (choice) => {
     setIsTextLoading(true);
     try {
@@ -536,6 +539,7 @@ function App() {
     const scope = getActionScope(choice);
 
     setIsTextLoading(true);
+    setLlmRetryPrompt({ playerChoice: choice }); // 재시도를 위해 선택 기록
 
     try {
         const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
@@ -544,8 +548,8 @@ function App() {
         }
         await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true });
 
-        const promptData = buildLlmPrompt(choice);
-        const llmResponse = await callGeminiTextLLM(promptData);
+        const userPromptText = buildLlmPrompt(choice);
+        const llmResponse = await callGeminiTextLLM(userPromptText);
 
         if (llmResponse) {
             await updatePublicState(llmResponse, choice);
