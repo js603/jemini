@@ -55,11 +55,15 @@ const getGameStatusRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'd
 const getMajorEventsRef = (db, appId) => collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
 
 
-// 상태 초기화 유틸
+// [구조 개선] 상태 초기화 유틸: 선택지 풀 시스템 반영
 const getDefaultGameState = () => ({
   phase: 'playing',
   log: [],
-  choices: [],
+  choices: [
+    { id: 'inn_look_around', text: "여관을 둘러본다", type: 'location_default', location: '방랑자의 안식처' },
+    { id: 'inn_talk_to_owner', text: "여관 주인에게 정보를 묻는다", type: 'location_default', location: '방랑자의 안식처' },
+    { id: 'inn_talk_to_adventurer', text: "다른 모험가에게 말을 건다", type: 'location_default', location: '방랑자의 안식처' },
+  ],
   player: {
     currentLocation: '방랑자의 안식처',
   },
@@ -76,7 +80,7 @@ const getDefaultPrivatePlayerState = () => ({
     knownClues: [],
     characterCreated: false,
     profession: '',
-    choices: [],
+    choices: [], // 개인 선택지 풀
     groups: [],
     npcRelations: {},
 });
@@ -175,7 +179,6 @@ function App() {
     }
   };
 
-  // [핵심 수정] 1. Firebase 초기화 및 인증 상태 처리 useEffect
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
@@ -198,13 +201,11 @@ function App() {
     }
   }, []);
 
-  // [핵심 수정] 2. 개인 플레이어 상태(Private State) 전용 useEffect
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
 
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     
-    // 문서가 없으면 새로 생성
     getDoc(privateStateRef).then(docSnap => {
         if (!docSnap.exists()) {
             setDoc(privateStateRef, getDefaultPrivatePlayerState());
@@ -218,18 +219,15 @@ function App() {
       if (isLoading) setIsLoading(false);
     }, (err) => {
       console.error("Private state listener error:", err);
-      setLlmError("개인 정보를 불러오는 중 오류가 발생했습니다.");
       setIsLoading(false);
     });
 
     return () => unsubscribe();
-  }, [isAuthReady, db, userId]); // 오직 인증 상태와 userID에만 의존
+  }, [isAuthReady, db, userId]);
 
-  // [핵심 수정] 3. 공개 상태(Public State) 전용 useEffect
   useEffect(() => {
     if (!isAuthReady || !db) return;
 
-    // 여러 개의 리스너를 한 번에 관리
     const unsubscribes = [
       onSnapshot(getMainScenarioRef(db, appId), (snap) => {
         if (snap.exists()) {
@@ -241,6 +239,9 @@ function App() {
             player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
             subtleClues: data.subtleClues || []
           }));
+        } else {
+          // 문서가 없으면 기본 상태로 설정
+          setGameState(getDefaultGameState());
         }
       }),
       onSnapshot(getGameStatusRef(db, appId), (docSnap) => {
@@ -257,17 +258,14 @@ function App() {
       })
     ];
 
-    // 주요 역사 데이터는 한 번만 불러옴
     getDocs(getMajorEventsRef(db, appId)).then(historySnapshot => {
       const historyData = historySnapshot.docs.map(doc => doc.data().summary);
       setWorldHistory(historyData);
     });
 
     return () => unsubscribes.forEach(unsub => unsub());
-  }, [isAuthReady, db]); // 오직 DB와 인증 상태에만 의존
+  }, [isAuthReady, db]);
 
-
-  // [핵심 수정] 4. 부가적인 기능들을 위한 독립적인 useEffect
   useEffect(() => {
     if (!db || !userId || !nickname) return;
     const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
@@ -296,21 +294,27 @@ function App() {
 
   const systemPrompt = `
     ### 페르소나 (Persona)
-    당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 유기적으로 살아 숨 쉬는 세계를 창조하는 것입니다. 플레이어의 선택은 세상에 영구적인 흔적을 남기고, 다른 플레이어의 경험에 영향을 미치며, 세상의 역사를 바꾸어야 합니다.
+    당신은 세계 최고의 TRPG '게임 마스터(GM)'입니다. 당신의 임무는 살아 숨 쉬는 세계를 창조하고, 플레이어의 선택에 따라 '선택지 풀'을 유기적으로 관리하는 것입니다.
 
     ### 핵심 규칙 (매우 중요)
-    1.  **행동 주체 절대 원칙**: 모든 서사는 반드시 '[행동 주체]'로 명시된 플레이어의 시점에서, 그가 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다.
-    2.  **관찰자 원칙**: '[주변 플레이어]' 목록에 있는 인물들은 현재 턴의 관찰자일 뿐, 절대 행동하지 않습니다. 그들의 존재를 묘사할 수는 있지만, 그들이 행동의 주체가 되어서는 안 됩니다.
-    3.  **다층적 서사**: 이 원칙들 위에서 '공유된 현실(story)', '개인적 서사(privateStory)', '그룹 서사(groupStory)'를 구분하여 이야기를 전개하십시오.
+    1.  **행동 주체 절대 원칙**: 모든 서사는 반드시 '[행동 주체]'의 시점에서, 그가 한 '[선택]'의 직접적인 결과로만 서술되어야 합니다.
+    2.  **선택지 풀 관리**: 당신은 선택지 목록 전체를 교체하는 것이 아니라, 특정 선택지를 '추가(add)'하거나 '제거(remove)'하는 명령을 내려야 합니다.
+        -   **제거**: 특정 조건이 만족되지 않아 더 이상 유효하지 않은 선택지는 \`choices_to_remove\` 또는 \`privateChoices_to_remove\`에 \`id\`를 담아 제거하십시오. (예: NPC가 죽으면, 그와 대화하는 선택지 \`id\`를 제거)
+        -   **추가**: 새로운 사건이나 상황으로 인해 생긴 선택지는 \`choices_to_add\` 또는 \`privateChoices_to_add\`에 새로운 선택지 객체를 담아 추가하십시오.
 
     ### JSON 출력 구조
     {
-      "story": "모든 플레이어가 볼 수 있는 공유된 사건에 대한 3인칭 서사.",
-      "privateStory": "오직 행동 주체만 볼 수 있는 2인칭 서사. ('당신은...')",
-      "groupStory": "행동 주체와 같은 그룹 소속원들만 볼 수 있는 비밀스러운 이야기. 해당사항 없으면 null.",
-      "choices": ["다른 플레이어들도 선택할 수 있는 일반적인 행동들."],
-      "privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],
-      "groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],
+      "story": "공유된 사건에 대한 3인칭 서사.",
+      "privateStory": "행동 주체만 볼 수 있는 2인칭 서사.",
+      "groupStory": "같은 그룹 소속원들만 볼 수 있는 이야기. (없으면 null)",
+      "choices_to_add": [
+        { "id": "unique_id_for_new_choice", "text": "새로운 사건에 대한 선택지", "type": "event_driven", "location": "현재 장소" }
+      ],
+      "choices_to_remove": ["obsolete_choice_id_1"],
+      "privateChoices_to_add": [
+        { "id": "private_choice_id", "text": "오직 행동 주체만 가능한 선택지", "type": "private" }
+      ],
+      "privateChoices_to_remove": ["obsolete_private_choice_id"],
       "sharedStateUpdates": {
         "location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.",
         "subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]
@@ -335,7 +339,7 @@ function App() {
 
     const userPrompt = `
       [상황 분석 요청]
-      아래 정보를 바탕으로, '[행동 주체]'가 '[선택]'을 한 결과에 대한 이야기를 생성해주십시오.
+      아래 정보를 바탕으로, '[행동 주체]'가 '[선택]'을 한 결과에 대한 이야기를 생성하고 '선택지 풀'을 관리해주십시오.
 
       ### [행동 주체 (Actor)]
       - 이름: ${promptData.actorDisplayName}
@@ -348,6 +352,7 @@ function App() {
       - 세상의 주요 역사: ${promptData.worldHistory.length > 0 ? promptData.worldHistory.join(', ') : "없음"}
       - 현재 위치: ${promptData.sharedInfo.currentLocation}
       - 개인화된 최근 사건 로그: ${promptData.personalizedHistory}
+      - 현재 공개 선택지 풀: ${JSON.stringify(promptData.sharedInfo.currentChoices)}
       - 세상에 남겨진 흔적들: ${JSON.stringify(promptData.sharedInfo.subtleClues)}
 
       ### [주변 플레이어 (Observers)]
@@ -361,12 +366,8 @@ function App() {
 
     try {
       let response = await tryGeminiCall(mainApiKey);
-      if (!response.ok) {
-        response = await tryGeminiCall(backupApiKey);
-      }
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      if (!response.ok) { response = await tryGeminiCall(backupApiKey); }
+      if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); }
       const result = await response.json();
       const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text;
       const jsonMatch = llmOutputText?.match(/\{[\s\S]*\}/);
@@ -406,22 +407,26 @@ function App() {
     await runTransaction(db, async (transaction) => {
         const scenarioDoc = await transaction.get(mainScenarioRef);
         const currentData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-        
         const newStoryLog = [...(currentData.storyLog || []), newEvent];
-        
+        let newChoicePool = [...(currentData.choices || [])];
+  
+        if (llmResponse.choices_to_remove && llmResponse.choices_to_remove.length > 0) {
+          const idsToRemove = new Set(llmResponse.choices_to_remove);
+          newChoicePool = newChoicePool.filter(choice => !idsToRemove.has(choice.id));
+        }
+        if (llmResponse.choices_to_add && llmResponse.choices_to_add.length > 0) {
+          newChoicePool.push(...llmResponse.choices_to_add);
+        }
+
         const updateData = {
           storyLog: newStoryLog,
+          choices: newChoicePool,
           lastUpdate: serverTimestamp()
         };
-  
-        if (llmResponse.choices && llmResponse.choices.length > 0) {
-          updateData.choices = llmResponse.choices;
-        }
   
         if (llmResponse.sharedStateUpdates?.location) {
           updateData['player.currentLocation'] = llmResponse.sharedStateUpdates.location;
         }
-  
         if (llmResponse.sharedStateUpdates?.subtleClues) {
           updateData.subtleClues = llmResponse.sharedStateUpdates.subtleClues;
         }
@@ -429,73 +434,86 @@ function App() {
         if (scenarioDoc.exists()) {
             transaction.update(mainScenarioRef, updateData);
         } else {
-            transaction.set(mainScenarioRef, { ...currentData, ...updateData });
+            transaction.set(mainScenarioRef, { ...getDefaultGameState(), ...updateData });
         }
     });
   };
   
   const updatePrivateState = async (llmResponse) => {
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-  
+    const docSnap = await getDoc(privateStateRef);
+    const currentPrivateData = docSnap.exists() ? docSnap.data() : getDefaultPrivatePlayerState();
+    
     const updates = llmResponse.privateStateUpdates ? { ...llmResponse.privateStateUpdates } : {};
-  
-    const newPrivateChoices = llmResponse.privateChoices || [];
-    const newGroupChoices = llmResponse.groupChoices || [];
-    if (newPrivateChoices.length > 0 || newGroupChoices.length > 0) {
-      updates.choices = [...newPrivateChoices, ...newGroupChoices];
+
+    let newPrivateChoicePool = [...(currentPrivateData.choices || [])];
+
+    if (llmResponse.privateChoices_to_remove && llmResponse.privateChoices_to_remove.length > 0) {
+        const idsToRemove = new Set(llmResponse.privateChoices_to_remove);
+        newPrivateChoicePool = newPrivateChoicePool.filter(choice => !idsToRemove.has(choice.id));
     }
-  
+    if (llmResponse.privateChoices_to_add && llmResponse.privateChoices_to_add.length > 0) {
+        newPrivateChoicePool.push(...llmResponse.privateChoices_to_add);
+    }
+
+    updates.choices = newPrivateChoicePool;
+
     if (Object.keys(updates).length > 0) {
       await setDoc(privateStateRef, updates, { merge: true });
     }
   };
 
-  const getActionScope = (choice) => {
-    const npcMatch = choice.match(/(.+)에게 말을 건다/);
-    if (npcMatch) {
-        return `npc:${npcMatch[1].trim()}`;
-    }
+  const getActionScope = (choiceText) => {
+    const npcMatch = choiceText.match(/(.+)에게 말을 건다/);
+    if (npcMatch) { return `npc:${npcMatch[1].trim()}`; }
     return `location:${gameState.player.currentLocation}`;
   };
 
-  const handleChoiceClick = async (choice) => {
-    if (isTextLoading || !privatePlayerState.characterCreated && choice.split('.').length === 1) return;
+  const getVisibleChoices = () => {
+    const masterChoicePool = gameState.choices || [];
+    const privateChoicePool = privatePlayerState.choices || [];
+
+    const visiblePublicChoices = masterChoicePool.filter(choice => {
+      if (choice.location && choice.location !== gameState.player.currentLocation) {
+        return false;
+      }
+      return true;
+    });
+
+    const allVisibleChoices = [...visiblePublicChoices, ...privateChoicePool];
+    
+    return allVisibleChoices.filter((choice, index, self) =>
+        index === self.findIndex((c) => c.id === choice.id)
+    );
+  };
+
+  const handleChoiceClick = async (choiceObject) => {
+    const choiceText = choiceObject.text;
 
     if (!privatePlayerState.characterCreated) {
         setIsTextLoading(true);
-        const choiceKey = choice.split('.')[0];
+        const choiceKey = choiceText.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
-            const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-            await setDoc(privateStateRef, {
+            await setDoc(getPrivatePlayerStateRef(db, appId, userId), {
                 ...getDefaultPrivatePlayerState(),
-                characterCreated: true,
-                profession: selectedProfession.name,
-                initialMotivation: selectedProfession.motivation,
+                characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation,
             }, { merge: true });
-
+            
+            const mainScenarioRef = getMainScenarioRef(db, appId);
             const newEvent = {
-                actor: { id: userId, displayName: getDisplayName(userId) },
-                action: "여관에 들어선다",
+                actor: { id: userId, displayName: getDisplayName(userId) }, action: "여관에 들어선다",
                 publicStory: `어둠침침한 여관 문이 삐걱거리며 열리더니, 새로운 모험가가 모습을 드러냅니다. 바로 '${getDisplayName(userId)}'라는 이름의 ${selectedProfession.name}입니다.`,
-                privateStories: { [userId]: selectedProfession.motivation },
-                timestamp: new Date()
+                privateStories: { [userId]: selectedProfession.motivation }, timestamp: new Date()
             };
-
-            try {
-                await updatePublicState({ story: newEvent.publicStory, privateStory: newEvent.privateStories[userId], choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."] }, newEvent.action);
-            } catch (e) {
-                console.error("등장 이벤트 추가 실패: ", e);
-                setLlmError("게임 세계에 합류하는 중 오류가 발생했습니다.");
-            } finally {
-                setIsTextLoading(false);
-            }
+            await setDoc(mainScenarioRef, { ...getDefaultGameState(), log: [newEvent] }, { merge: true });
         }
+        setIsTextLoading(false);
         return;
     }
 
     const gameStatusRef = getGameStatusRef(db, appId);
-    const scope = getActionScope(choice);
+    const scope = getActionScope(choiceText);
 
     setIsTextLoading(true);
 
@@ -516,8 +534,12 @@ function App() {
 
         const promptData = {
             actorDisplayName: getDisplayName(userId),
-            playerChoice: choice,
-            sharedInfo: { currentLocation: gameState.player.currentLocation, subtleClues: gameState.subtleClues },
+            playerChoice: choiceText,
+            sharedInfo: { 
+                currentLocation: gameState.player.currentLocation, 
+                subtleClues: gameState.subtleClues,
+                currentChoices: gameState.choices 
+            },
             privateInfo: privatePlayerState,
             personalizedHistory: personalizedHistory,
             activeUsers: activeUsers.map(u => ({ nickname: getDisplayName(u.id), profession: u.profession })).filter(u => u.id !== userId),
@@ -527,14 +549,10 @@ function App() {
         const llmResponse = await callGeminiTextLLM(promptData);
 
         if (llmResponse) {
-            await updatePublicState(llmResponse, choice);
+            await updatePublicState(llmResponse, choiceText);
             await updatePrivateState(llmResponse);
             setLlmError(null);
             setLlmRetryPrompt(null);
-        } else {
-            if (!llmError) {
-                setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다.");
-            }
         }
     } catch (error) {
         console.error("행동 처리 중 오류:", error.message);
@@ -552,9 +570,7 @@ function App() {
     }
   };
 
-  const toggleAccordion = (key) => {
-    setAccordion(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+  const toggleAccordion = (key) => { setAccordion(prev => ({ ...prev, [key]: !prev[key] })); };
 
   const LlmErrorModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -568,7 +584,7 @@ function App() {
               onClick={async () => {
                 setLlmError(null);
                 if (llmRetryPrompt.playerChoice) {
-                  await handleChoiceClick(llmRetryPrompt.playerChoice);
+                  await handleChoiceClick({ text: llmRetryPrompt.playerChoice, id: 'retry' });
                 }
               }}
             >
@@ -685,17 +701,14 @@ function App() {
 
           <div className="flex flex-col gap-3">
               {privatePlayerState.characterCreated ? (
-                  [...gameState.choices, ...(privatePlayerState.choices || [])].map((choice, index) => {
-                      const scope = getActionScope(choice);
+                  getVisibleChoices().map((choice) => {
+                      const scope = getActionScope(choice.text);
                       const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
-                      const allPrivateChoices = privatePlayerState.choices || [];
-                      const isPersonalChoice = allPrivateChoices.includes(choice);
-                      const isPublicChoice = gameState.choices.includes(choice);
                       
                       let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
                       let prefix = '';
 
-                      if (isPersonalChoice && !isPublicChoice) {
+                      if (choice.type === 'private' || choice.type === 'group') {
                         buttonStyle = 'bg-green-600 hover:bg-green-700';
                         prefix = '[개인/그룹] ';
                       }
@@ -707,12 +720,12 @@ function App() {
 
                       return (
                           <button
-                              key={index}
+                              key={choice.id}
                               className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`}
                               onClick={() => handleChoiceClick(choice)}
                               disabled={isTextLoading || isLockedByOther}
                           >
-                              {prefix}{choice}
+                              {prefix}{choice.text}
                           </button>
                       )
                   })
@@ -720,7 +733,7 @@ function App() {
                   Object.keys(professions).map(key => (
                       <button
                           key={key}
-                          onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)}
+                          onClick={() => handleChoiceClick({ id: key, text: `${key}. ${professions[key].name}`})}
                           disabled={isTextLoading}
                           className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left"
                       >
