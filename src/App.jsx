@@ -463,30 +463,23 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
   const updateNarratives = async (llmResponse, playerChoice) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
 
-    await runTransaction(db, async (transaction) => {
-        const scenarioDoc = await transaction.get(mainScenarioRef);
-        if (!scenarioDoc.exists()) {
-            console.error("updateNarratives: mainScenario document does not exist!");
-            return;
-        }
-        const currentData = scenarioDoc.data();
-        
-        const updates = {
-            choices: llmResponse.choices || [],
-            'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
-            subtleClues: llmResponse.sharedStateUpdates?.subtleClues || currentData.subtleClues,
-        };
-
-        if (llmResponse.publicLogEntry) {
+    if (llmResponse.publicLogEntry) {
+        await runTransaction(db, async (transaction) => {
+            const scenarioDoc = await transaction.get(mainScenarioRef);
             const newPublicLog = {
                 actor: { id: userId, displayName: getDisplayName(userId) },
                 log: llmResponse.publicLogEntry,
-                timestamp: serverTimestamp()
+                timestamp: new Date() // [오류 수정] serverTimestamp() 대신 new Date() 사용
             };
-            updates.publicLog = [...(currentData.publicLog || []), newPublicLog];
-        }
-        transaction.update(mainScenarioRef, updates);
-    });
+            if (scenarioDoc.exists()) {
+                const currentData = scenarioDoc.data();
+                const updatedPublicLog = [...(currentData.publicLog || []), newPublicLog];
+                transaction.update(mainScenarioRef, { publicLog: updatedPublicLog });
+            } else {
+                transaction.set(mainScenarioRef, { publicLog: [newPublicLog] });
+            }
+        });
+    }
 
     const personalLogRef = getPersonalStoryLogRef(db, appId, userId);
     await addDoc(personalLogRef, {
@@ -502,6 +495,13 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
             actor: { id: userId, displayName: getDisplayName(userId) }
         });
     }
+
+    await setDoc(mainScenarioRef, { 
+      choices: llmResponse.choices || [],
+      'player.currentLocation': llmResponse.sharedStateUpdates?.location || gameState.player.currentLocation,
+      subtleClues: llmResponse.sharedStateUpdates?.subtleClues || gameState.subtleClues,
+      lastUpdate: serverTimestamp()
+    }, { merge: true });
 
     await updatePrivateState(llmResponse);
   };
@@ -555,7 +555,7 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
             const newPublicLogEntry = {
                 actor: { id: userId, displayName: getDisplayName(userId) },
                 log: `새로운 모험가, '${getDisplayName(userId)}'님이 여관에 모습을 드러냈습니다.`,
-                timestamp: serverTimestamp()
+                timestamp: new Date() // [오류 수정] serverTimestamp() 대신 new Date() 사용
             };
             
             await runTransaction(db, async (transaction) => {
