@@ -463,11 +463,11 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
   const updateNarratives = async (llmResponse, playerChoice) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
 
-    // 1. 공유 상태(publicLog, choices 등)를 원자적으로 업데이트
     await runTransaction(db, async (transaction) => {
         const scenarioDoc = await transaction.get(mainScenarioRef);
         if (!scenarioDoc.exists()) {
-            throw new Error("치명적 오류: 게임의 기본 시나리오 데이터가 없습니다.");
+            console.error("updateNarratives: mainScenario document does not exist!");
+            return;
         }
         const currentData = scenarioDoc.data();
         
@@ -488,7 +488,6 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
         transaction.update(mainScenarioRef, updates);
     });
 
-    // 2. 개인 서사 및 기타 독립적인 데이터 기록
     const personalLogRef = getPersonalStoryLogRef(db, appId, userId);
     await addDoc(personalLogRef, {
         action: playerChoice,
@@ -504,7 +503,6 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
         });
     }
 
-    // 3. 개인 상태 업데이트
     await updatePrivateState(llmResponse);
   };
   
@@ -538,7 +536,6 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
         const choiceKey = choice.split('.')[0];
         const selectedProfession = professions[choiceKey];
         if (selectedProfession) {
-            // 개인 상태와 개인 로그는 트랜잭션 없이 먼저 처리
             const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
             await setDoc(privateStateRef, {
                 ...getDefaultPrivatePlayerState(),
@@ -554,7 +551,6 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
                 timestamp: serverTimestamp()
             });
 
-            // 공유 상태를 원자적으로 업데이트 (Read-Modify-Set)
             const mainScenarioRef = getMainScenarioRef(db, appId);
             const newPublicLogEntry = {
                 actor: { id: userId, displayName: getDisplayName(userId) },
@@ -564,13 +560,16 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
             
             await runTransaction(db, async (transaction) => {
                 const scenarioDoc = await transaction.get(mainScenarioRef);
-                const currentData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-                const updatedPublicLog = [...(currentData.publicLog || []), newPublicLogEntry];
+                const baseData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
+                
+                const updatedPublicLog = [...(baseData.publicLog || []), newPublicLogEntry];
 
                 const payload = {
-                    ...currentData,
                     publicLog: updatedPublicLog,
-                    choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."]
+                    choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."],
+                    player: baseData.player,
+                    subtleClues: baseData.subtleClues || [],
+                    lastUpdate: serverTimestamp()
                 };
                 
                 transaction.set(mainScenarioRef, payload);
