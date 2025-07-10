@@ -66,6 +66,7 @@ const getDefaultGameState = () => ({
     currentLocation: '방랑자의 안식처',
   },
   subtleClues: [],
+  lastUpdate: null,
 });
 
 const getDefaultPrivatePlayerState = () => ({
@@ -89,6 +90,8 @@ function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [personalStoryLog, setPersonalStoryLog] = useState([]);
   const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
+  const [displayedChoices, setDisplayedChoices] = useState([]);
+  const [choicesTimestamp, setChoicesTimestamp] = useState(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
   const [activeUsers, setActiveUsers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
@@ -252,7 +255,8 @@ function App() {
             publicLog: data.publicLog || [],
             choices: data.choices || [],
             player: { ...prev.player, currentLocation: data.player?.currentLocation || prev.player.currentLocation },
-            subtleClues: data.subtleClues || []
+            subtleClues: data.subtleClues || [],
+            lastUpdate: data.lastUpdate
           }));
         }
       }),
@@ -463,23 +467,30 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
   const updateNarratives = async (llmResponse, playerChoice) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
 
-    if (llmResponse.publicLogEntry) {
-        await runTransaction(db, async (transaction) => {
-            const scenarioDoc = await transaction.get(mainScenarioRef);
+    await runTransaction(db, async (transaction) => {
+        const scenarioDoc = await transaction.get(mainScenarioRef);
+        if (!scenarioDoc.exists()) {
+            throw new Error("치명적 오류: 게임의 기본 시나리오 데이터가 없습니다.");
+        }
+        const currentData = scenarioDoc.data();
+        
+        const updates = {
+            choices: llmResponse.choices || [],
+            'player.currentLocation': llmResponse.sharedStateUpdates?.location || currentData.player.currentLocation,
+            subtleClues: llmResponse.sharedStateUpdates?.subtleClues || currentData.subtleClues,
+            lastUpdate: serverTimestamp()
+        };
+
+        if (llmResponse.publicLogEntry) {
             const newPublicLog = {
                 actor: { id: userId, displayName: getDisplayName(userId) },
                 log: llmResponse.publicLogEntry,
-                timestamp: new Date() // [오류 수정] serverTimestamp() 대신 new Date() 사용
+                timestamp: new Date()
             };
-            if (scenarioDoc.exists()) {
-                const currentData = scenarioDoc.data();
-                const updatedPublicLog = [...(currentData.publicLog || []), newPublicLog];
-                transaction.update(mainScenarioRef, { publicLog: updatedPublicLog });
-            } else {
-                transaction.set(mainScenarioRef, { publicLog: [newPublicLog] });
-            }
-        });
-    }
+            updates.publicLog = [...(currentData.publicLog || []), newPublicLog];
+        }
+        transaction.update(mainScenarioRef, updates);
+    });
 
     const personalLogRef = getPersonalStoryLogRef(db, appId, userId);
     await addDoc(personalLogRef, {
@@ -496,26 +507,20 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
         });
     }
 
-    await setDoc(mainScenarioRef, { 
-      choices: llmResponse.choices || [],
-      'player.currentLocation': llmResponse.sharedStateUpdates?.location || gameState.player.currentLocation,
-      subtleClues: llmResponse.sharedStateUpdates?.subtleClues || gameState.subtleClues,
-      lastUpdate: serverTimestamp()
-    }, { merge: true });
-
     await updatePrivateState(llmResponse);
+
+    const newPublicChoices = llmResponse.choices || [];
+    setDisplayedChoices(newPublicChoices);
+    const updatedScenarioDoc = await getDoc(mainScenarioRef);
+    setChoicesTimestamp(updatedScenarioDoc.data()?.lastUpdate || null);
   };
   
   const updatePrivateState = async (llmResponse) => {
     const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-  
     const updates = llmResponse.privateStateUpdates ? { ...llmResponse.privateStateUpdates } : {};
-  
     const newPrivateChoices = llmResponse.privateChoices || [];
     const newGroupChoices = llmResponse.groupChoices || [];
-    if (newPrivateChoices.length > 0 || newGroupChoices.length > 0) {
-      updates.choices = [...newPrivateChoices, ...newGroupChoices];
-    }
+    updates.choices = [...newPrivateChoices, ...newGroupChoices];
   
     if (Object.keys(updates).length > 0) {
       await setDoc(privateStateRef, updates, { merge: true });
@@ -555,7 +560,7 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
             const newPublicLogEntry = {
                 actor: { id: userId, displayName: getDisplayName(userId) },
                 log: `새로운 모험가, '${getDisplayName(userId)}'님이 여관에 모습을 드러냈습니다.`,
-                timestamp: new Date() // [오류 수정] serverTimestamp() 대신 new Date() 사용
+                timestamp: new Date()
             };
             
             await runTransaction(db, async (transaction) => {
@@ -563,10 +568,11 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
                 const baseData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
                 
                 const updatedPublicLog = [...(baseData.publicLog || []), newPublicLogEntry];
+                const newChoices = ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."];
 
                 const payload = {
                     publicLog: updatedPublicLog,
-                    choices: ["여관을 둘러본다.", "다른 모험가에게 말을 건다.", "여관 주인에게 정보를 묻는다."],
+                    choices: newChoices,
                     player: baseData.player,
                     subtleClues: baseData.subtleClues || [],
                     lastUpdate: serverTimestamp()
@@ -574,6 +580,12 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
                 
                 transaction.set(mainScenarioRef, payload);
             });
+
+            const updatedDoc = await getDoc(mainScenarioRef);
+            if(updatedDoc.exists()) {
+                setDisplayedChoices(updatedDoc.data().choices);
+                setChoicesTimestamp(updatedDoc.data().lastUpdate);
+            }
         }
     } catch (e) {
         console.error("등장 이벤트 추가 실패: ", e);
@@ -584,13 +596,35 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
   };
 
   const performPlayerAction = async (choice) => {
-    const gameStatusRef = getGameStatusRef(db, appId);
-    const scope = getActionScope(choice);
-
     setIsTextLoading(true);
     setLlmRetryPrompt({ playerChoice: choice });
 
+    const mainScenarioRef = getMainScenarioRef(db, appId);
+    const gameStatusRef = getGameStatusRef(db, appId);
+    const scope = getActionScope(choice);
+
     try {
+        const freshScenarioDoc = await getDoc(mainScenarioRef);
+        const serverTimestampValue = freshScenarioDoc.exists() ? freshScenarioDoc.data().lastUpdate : null;
+
+        if (choicesTimestamp && serverTimestampValue && choicesTimestamp.toMillis() < serverTimestampValue.toMillis()) {
+            const conflictStory = `당신이 '${choice}'(을)를 하려던 찰나, 세상은 이미 당신의 예상과 달라져 있었습니다. 주변을 다시 둘러보니 상황이 바뀌어 있습니다.`;
+            
+            const personalLogRef = getPersonalStoryLogRef(db, appId, userId);
+            await addDoc(personalLogRef, {
+                action: choice,
+                story: conflictStory,
+                timestamp: serverTimestamp()
+            });
+
+            const newChoices = freshScenarioDoc.data().choices || [];
+            setDisplayedChoices(newChoices);
+            setChoicesTimestamp(serverTimestampValue);
+            
+            setIsTextLoading(false);
+            return; 
+        }
+
         const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {};
         if (currentLocks[scope] && currentLocks[scope] !== userId) {
             throw new Error(`현재 '${scope.split(':')[1]}'(은)는 다른 플레이어(${getDisplayName(currentLocks[scope])})가 사용 중입니다.`);
@@ -738,20 +772,19 @@ ${publicLogEntries || "최근에 주변에서 별다른 일은 없었음"}
   const renderChoices = () => (
     <div className="flex flex-col gap-3">
         {privatePlayerState.characterCreated ? (
-            [...(gameState.choices || []), ...(privatePlayerState.choices || [])].map((choice, index) => {
+            [...(displayedChoices || []), ...(privatePlayerState.choices || [])].map((choice, index) => {
                 if (!choice) return null;
                 const scope = getActionScope(choice);
                 const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId;
                 const allPrivateChoices = privatePlayerState.choices || [];
                 const isPersonalChoice = allPrivateChoices.includes(choice);
-                const isPublicChoice = (gameState.choices || []).includes(choice);
                 
                 let buttonStyle = 'bg-blue-600 hover:bg-blue-700';
                 let prefix = '';
 
-                if (isPersonalChoice && !isPublicChoice) {
+                if (isPersonalChoice) {
                   buttonStyle = 'bg-green-600 hover:bg-green-700';
-                  prefix = '[개인/그룹] ';
+                  prefix = '[개인] ';
                 }
                 
                 if (isLockedByOther) {
