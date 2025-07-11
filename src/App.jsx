@@ -197,7 +197,7 @@ function App() {
         }
         await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
       }
-      
+
       await deleteDoc(getWorldviewRef(db, appId));
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
@@ -356,8 +356,10 @@ function App() {
     const worldSetting = worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewData.title}\n${worldviewData.atmosphere}\n배경: ${worldviewData.background_story}` : `### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다... (기본값)`;
     return `### 페르소나 (Persona) 당신은 이 세계의 '수호자'이자 '사관(史官)'이며, 플레이어들에게는 '게임 마스터(GM)'로 알려져 있습니다. 당신의 임무는 단순한 이야기 생성을 넘어, 일관된 역사와 살아 숨 쉬는 세계관을 구축하는 것입니다. 모든 묘사와 사건은 이 세계의 정해진 분위기와 역사적 사실 위에서 피어나는 한 편의 서사시여야 합니다. ${worldSetting} ### 핵심 구동 원칙 1. **일관성의 원칙 (Canon) (가장 중요)**: User Prompt에 제공된 [세계의 연대기], [주요 세력 및 인물], [플레이어 정보]는 이 세계의 '정사(正史)'입니다. 당신은 절대 이 사실들을 왜곡하거나 모순되는 내용을 만들어서는 안 됩니다. 이 정보들을 바탕으로 세계를 확장해 나가십시오. 2. **상호연결성의 원칙 (Interconnection)**: 당신은 뛰어난 이야기꾼으로서, 현재 발생하는 사건을 과거의 역사나 다른 플레이어의 행적과 연결지어야 합니다. 예를 들어, 한 플레이어가 던전에서 발견한 고대 문양은, 다른 플레이어가 수도에서 쫓고 있는 비밀 결사의 상징일 수 있습니다. 세상이 서로 연결되어 있음을 플레이어가 느끼게 하십시오. 3. **장면 중심의 서사 원칙 (Scene-Centric)**: 플레이어의 '[선택]'은 하나의 '장면'을 시작하는 것과 같습니다. 당신의 "personalStory"는 반드시 그 선택의 즉각적인 결과와 묘사로 시작되어야 합니다. 대화라면 실제 대화 내용이, 행동이라면 그 행동의 과정과 결과가 구체적으로 서술되어야 합니다. 4. **'보여주기, 말하지 않기' 원칙 (Show, Don't Tell)**: "마을이 가난하다"고 설명하지 마십시오. 대신 "굶주린 아이들이 흙바닥에 주저앉아 있고, 대부분의 건물은 지붕이 허술하게 덧대어져 있다"고 묘사하십시오. 플레이어가 스스로 분위기와 상황을 파악하게 만드십시오. ### [추가] NPC 상호작용 규칙 - 플레이어가 NPC와 상호작용할 때, 해당 NPC의 [페르소나 카드]가 제공될 수 있습니다. - 당신은 반드시 이 [페르소나 카드]에 명시된 '핵심 정체성'과 '기억 로그'를 바탕으로 NPC의 대사와 행동을 일관성 있게 생성해야 합니다. - 상호작용의 결과로 NPC가 새로운 사실을 알게 되거나 감정이 변했다면, 이를 반영할 '기억 로그 업데이트'를 JSON 출력의 'npcMemoryUpdate' 필드에 요약하여 포함시키십시오. ### JSON 출력 구조 {"publicLogEntry": "만약 이 행동이 주변의 다른 플레이어나 NPC가 명백히 인지할 수 있는 '공개적인 사건'이라면, 3인칭 시점의 객관적인 기록을 한 문장으로 작성. (예: '플레이어 A가 경비병을 공격했다.') 그렇지 않으면 null.","personalStory": "플레이어의 선택으로 시작된 '장면'에 대한 상세하고 감정적인 1인칭 또는 2인칭 서사. 플레이어의 내면 묘사, 감각, 대화 내용 등을 포함.","choices": ["'personalStory'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],"privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],"groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],"majorEvent": {"summary": "만약 이 사건이 후대에 '역사'로 기록될 만한 중대한 전환점이라면, 사관의 어조로 요약. (예: '왕국력 342년, 방랑자의 안식처에서 발생한 이 사건은 훗날 '붉은 달 교단'의 부흥을 알리는 서막이 되었다.') 그렇지 않으면 null.","location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."},"sharedStateUpdates": {"subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]},"privateStateUpdates": {"location": "플레이어의 새로운 현재 위치. 변경되었을 경우에만 포함.","inventory": ["업데이트된 전체 인벤토리 목록"],"stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },"activeQuests": ["업데이트된 개인 퀘스트 목록"],"knownClues": ["새롭게 알게 된 단서 목록"],"groups": ["업데이트된 소속 그룹 목록"],"npcRelations": {"가라크": "55 (나에 대한 경계심이 약간 누그러졌다.)"}},"npcMemoryUpdate": {"npcName": "상호작용 한 NPC의 이름","newMemory": "NPC의 기억에 추가될 새로운 로그 (예: '플레이어 B가 음식값을 빚지고 도망갔다.')"},"turningPointUpdate": {"objectiveId": "플레이어의 행동이 기여한 목표의 ID","progressIncrement": 10}}`;
   
-  const turningPointCreationPrompt = `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다. 전통적인 판타지에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오. 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다. 아래 JSON 구조에 맞춰 응답해주십시오. ### JSON 출력 구조 {"title": "세계관의 이름 (예: '네온 비가 내리는 도시, 2242')","genre": "세계관의 장르 (예: '사이버펑크 느와르')","atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글","background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사"}`;
+  const worldCreationPrompt = `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다. 전통적인 판타지에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오. 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다. 아래 JSON 구조에 맞춰 응답해주십시오. ### JSON 출력 구조 {"title": "세계관의 이름 (예: '네온 비가 내리는 도시, 2242')","genre": "세계관의 장르 (예: '사이버펑크 느와르')","atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글","background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사"}`;
   
+  const turningPointCreationPrompt = `당신은 역사의 흐름을 읽는 '운명' 그 자체입니다. 최근 세상에서 벌어진 다음 사건들을 보고, 이 흐름이 하나의 거대한 '전환점(Turning Point)'으로 수렴될 수 있는지 판단하십시오. 현재 활성화된 전환점은 없습니다. 만약 중대한 갈등의 씨앗이나, 거대한 위협, 혹은 새로운 시대의 서막이 보인다면, 그에 맞는 전환점을 아래 JSON 형식으로 생성해주십시오. 아직 시기가 아니라면 'create' 값을 false로 설정하십시오. ### 최근 사건들 {event_summary} ### JSON 출력 구조 {"create": true,"turningPoint": {"title": "전환점의 제목 (예: '수도에 창궐한 역병')","description": "전환점에 대한 흥미로운 설명","status": "active","objectives": [{ "id": "objective_1", "description": "첫 번째 목표 (예: 역병의 근원 찾기)", "progress": 0, "goal": 100 },{ "id": "objective_2", "description": "두 번째 목표 (예: 치료제 개발 지원)", "progress": 0, "goal": 100 }]}}`;
+
   const checkAndCreateTurningPoint = async () => {
     if (activeTurningPoint || !db) return;
     console.log("Checking for new Turning Point...");
@@ -406,134 +408,12 @@ function App() {
 
   const callGeminiTextLLM = async (userPrompt, systemPromptToUse) => { setIsTextLoading(true); const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8'; const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84'; const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const payload = { contents: [{ role: 'user', parts: [{ text: systemPromptToUse }] }, { role: 'model', parts: [{ text: '{}' }] }, { role: 'user', parts: [{ text: userPrompt }] }] }; const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); try { let response = await tryGeminiCall(mainApiKey); if (!response.ok) { response = await tryGeminiCall(backupApiKey); } if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); } const result = await response.json(); const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text; const jsonMatch = llmOutputText?.match(/\{[\s\S]*\}/); if (jsonMatch) return JSON.parse(jsonMatch[0]); throw new Error('Valid JSON object not found in LLM response.'); } catch (error) { console.error('LLM API call error:', error); setLlmError(error.message || 'LLM 호출 실패'); return null; } finally { setIsTextLoading(false); } };
   const sendChatMessage = async () => { if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) return; const messageText = currentChatMessage.trim(); setCurrentChatMessage(''); const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages'); if (messageText.startsWith('!')) { const actionText = messageText.substring(1).trim(); if (actionText) { await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message: `*${actionText} (선언)*`, isAction: true, timestamp: serverTimestamp() }); await handleDeclarativeAction(actionText); } } else { await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message: messageText, isAction: false, timestamp: serverTimestamp() }); } };
-
-  const updateNarratives = async (llmResponse, playerChoice, isDeclarative = false) => {
-    const mainScenarioRef = getMainScenarioRef(db, appId);
-
-    await runTransaction(db, async (transaction) => {
-      const scenarioDoc = await transaction.get(mainScenarioRef);
-      if (!scenarioDoc.exists()) { throw new Error('치명적 오류: 게임의 기본 시나리오 데이터가 없습니다.'); }
-      let currentData = scenarioDoc.data();
-      let currentPublicLog = currentData.publicLog || [];
-
-      if (isDeclarative) {
-        currentPublicLog = [...currentPublicLog, { actor: { id: userId, displayName: getDisplayName(userId) }, log: "❗ 세계 흐름의 변동이 일어납니다!", isDeclaration: true, timestamp: new Date(new Date().getTime() - 1) }];
-      }
-
-      const updates = { subtleClues: llmResponse.sharedStateUpdates?.subtleClues || currentData.subtleClues, lastUpdate: serverTimestamp(), };
-      if (llmResponse.publicLogEntry) { updates.publicLog = [...currentPublicLog, { actor: { id: userId, displayName: getDisplayName(userId) }, log: llmResponse.publicLogEntry, timestamp: new Date(), }]; } else if(isDeclarative) { updates.publicLog = currentPublicLog; }
-      transaction.update(mainScenarioRef, updates);
-    });
-
-    await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: playerChoice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: serverTimestamp() });
-
-    if (llmResponse.majorEvent?.summary && llmResponse.majorEvent?.location) {
-      await addDoc(getMajorEventsRef(db, appId), { ...llmResponse.majorEvent, timestamp: serverTimestamp(), actor: { id: userId, displayName: getDisplayName(userId) }, });
-      checkAndCreateTurningPoint();
-    }
-    if (llmResponse.npcMemoryUpdate && db) {
-      const { npcName, newMemory } = llmResponse.npcMemoryUpdate;
-      if (npcName && newMemory) {
-        const npcId = npcName.replace(/\s+/g, '_');
-        await setDoc(getNpcRef(db, appId, npcId), { name: npcName, memory_log: arrayUnion(newMemory) }, { merge: true });
-      }
-    }
-    if (llmResponse.turningPointUpdate && activeTurningPoint) {
-      const { objectiveId, progressIncrement } = llmResponse.turningPointUpdate;
-      if (objectiveId && typeof progressIncrement === 'number') {
-        const turningPointRef = getActiveTurningPointRef(db, appId);
-        await runTransaction(db, async (transaction) => {
-          const tpDoc = await transaction.get(turningPointRef);
-          if (!tpDoc.exists()) return;
-          const tpData = tpDoc.data();
-          const newObjectives = (tpData.objectives || []).map((obj) => {
-            if (obj.id === objectiveId) {
-              const newProgress = (obj.progress || 0) + progressIncrement;
-              return { ...obj, progress: Math.min(Math.max(newProgress, 0), obj.goal) };
-            }
-            return obj;
-          });
-          transaction.update(turningPointRef, { objectives: newObjectives });
-        });
-      }
-    }
-
-    await updatePrivateState(llmResponse);
-
-    const newPublicChoices = llmResponse.choices || [];
-    setDisplayedChoices(newPublicChoices);
-    const updatedScenarioDoc = await getDoc(mainScenarioRef);
-    setChoicesTimestamp(updatedScenarioDoc.data()?.lastUpdate || null);
-  };
-
-  const updatePrivateState = async (llmResponse) => {
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    const updates = llmResponse.privateStateUpdates ? { ...llmResponse.privateStateUpdates } : {};
-    if (updates.npcRelations && typeof updates.npcRelations === 'object') {
-      const existingRelations = privatePlayerState.npcRelations || {};
-      updates.npcRelations = { ...existingRelations, ...updates.npcRelations };
-    } else if (updates.hasOwnProperty('npcRelations')) {
-      delete updates.npcRelations;
-      console.warn(`[Data Warning] LLM이 보낸 npcRelations 포맷이 유효하지 않아 무시합니다.`);
-    }
-    const newPrivateChoices = llmResponse.privateChoices || [];
-    const newGroupChoices = llmResponse.groupChoices || [];
-    updates.choices = [...newPrivateChoices, ...newGroupChoices];
-    if (Object.keys(updates).length > 0) {
-      await setDoc(privateStateRef, updates, { merge: true });
-    }
-  };
-
+  const updateNarratives = async (llmResponse, playerChoice, isDeclarative = false) => { const mainScenarioRef = getMainScenarioRef(db, appId); await runTransaction(db, async (transaction) => { const scenarioDoc = await transaction.get(mainScenarioRef); if (!scenarioDoc.exists()) { throw new Error('치명적 오류: 게임의 기본 시나리오 데이터가 없습니다.'); } let currentData = scenarioDoc.data(); let currentPublicLog = currentData.publicLog || []; if (isDeclarative) { currentPublicLog = [...currentPublicLog, { actor: { id: userId, displayName: getDisplayName(userId) }, log: "❗ 세계 흐름의 변동이 일어납니다!", isDeclaration: true, timestamp: new Date(new Date().getTime() - 1) }]; } const updates = { subtleClues: llmResponse.sharedStateUpdates?.subtleClues || currentData.subtleClues, lastUpdate: serverTimestamp(), }; if (llmResponse.publicLogEntry) { updates.publicLog = [...currentPublicLog, { actor: { id: userId, displayName: getDisplayName(userId) }, log: llmResponse.publicLogEntry, timestamp: new Date(), }]; } else if(isDeclarative) { updates.publicLog = currentPublicLog; } transaction.update(mainScenarioRef, updates); }); await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: playerChoice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: serverTimestamp() }); if (llmResponse.majorEvent?.summary && llmResponse.majorEvent?.location) { await addDoc(getMajorEventsRef(db, appId), { ...llmResponse.majorEvent, timestamp: serverTimestamp(), actor: { id: userId, displayName: getDisplayName(userId) }, }); checkAndCreateTurningPoint(); } if (llmResponse.npcMemoryUpdate && db) { const { npcName, newMemory } = llmResponse.npcMemoryUpdate; if (npcName && newMemory) { const npcId = npcName.replace(/\s+/g, '_'); await setDoc(getNpcRef(db, appId, npcId), { name: npcName, memory_log: arrayUnion(newMemory) }, { merge: true }); } } if (llmResponse.turningPointUpdate && activeTurningPoint) { const { objectiveId, progressIncrement } = llmResponse.turningPointUpdate; if (objectiveId && typeof progressIncrement === 'number') { const turningPointRef = getActiveTurningPointRef(db, appId); await runTransaction(db, async (transaction) => { const tpDoc = await transaction.get(turningPointRef); if (!tpDoc.exists()) return; const tpData = tpDoc.data(); const newObjectives = (tpData.objectives || []).map((obj) => { if (obj.id === objectiveId) { const newProgress = (obj.progress || 0) + progressIncrement; return { ...obj, progress: Math.min(Math.max(newProgress, 0), obj.goal) }; } return obj; }); transaction.update(turningPointRef, { objectives: newObjectives }); }); } } await updatePrivateState(llmResponse); const newPublicChoices = llmResponse.choices || []; setDisplayedChoices(newPublicChoices); const updatedScenarioDoc = await getDoc(mainScenarioRef); setChoicesTimestamp(updatedScenarioDoc.data()?.lastUpdate || null); };
+  const updatePrivateState = async (llmResponse) => { const privateStateRef = getPrivatePlayerStateRef(db, appId, userId); const updates = llmResponse.privateStateUpdates ? { ...llmResponse.privateStateUpdates } : {}; if (updates.npcRelations && typeof updates.npcRelations === 'object') { const existingRelations = privatePlayerState.npcRelations || {}; updates.npcRelations = { ...existingRelations, ...updates.npcRelations }; } else if (updates.hasOwnProperty('npcRelations')) { delete updates.npcRelations; console.warn(`[Data Warning] LLM이 보낸 npcRelations 포맷이 유효하지 않아 무시합니다.`); } const newPrivateChoices = llmResponse.privateChoices || []; const newGroupChoices = llmResponse.groupChoices || []; updates.choices = [...newPrivateChoices, ...newGroupChoices]; if (Object.keys(updates).length > 0) { await setDoc(privateStateRef, updates, { merge: true }); } };
   const getActionScope = (choice) => { const npcMatch = choice.match(/(.+)에게 말을 건다/); if (npcMatch) { return `npc:${npcMatch[1].trim()}`; } return `location:${privatePlayerState.currentLocation}`; };
   const toggleActiveMemory = async (clue, activate) => { if (!db || !userId) return; const privateStateRef = getPrivatePlayerStateRef(db, appId, userId); let currentMemories = privatePlayerState.activeMemories || []; if (activate) { if (!currentMemories.includes(clue)) { currentMemories = [...currentMemories, clue]; } } else { currentMemories = currentMemories.filter((memory) => memory !== clue); } await setDoc(privateStateRef, { activeMemories: currentMemories }, { merge: true }); };
   const summarizeAndArchiveEvents = async () => { alert("시대 요약 기능은 다음 업데이트에서 구현될 예정입니다. 이 버튼을 누르면, '세계의 연대기'에 기록된 주요 사건들이 하나의 '역사 요약문'으로 압축되어, 게임의 장기적인 맥락을 유지하면서도 데이터 부담을 줄이게 됩니다."); };
-  
-  const createCharacter = async (choice) => {
-    setIsTextLoading(true);
-    try {
-      const worldviewRef = getWorldviewRef(db, appId);
-      let currentWorldview = worldview;
-      if (!currentWorldview) {
-        console.log("No worldview found. Creating a new one...");
-        const llmResponse = await callGeminiTextLLM(worldCreationPrompt, worldCreationPrompt);
-        if (llmResponse) {
-          await setDoc(worldviewRef, llmResponse);
-          currentWorldview = llmResponse;
-          setWorldview(llmResponse);
-        } else {
-          throw new Error("Failed to create a new worldview.");
-        }
-      }
-      const choiceKey = choice.split('.')[0];
-      const selectedProfession = professions[choiceKey];
-      if (selectedProfession) {
-        await setDoc( getPrivatePlayerStateRef(db, appId, userId), { ...getDefaultPrivatePlayerState(), characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation, currentLocation: '방랑자의 안식처' }, { merge: true });
-        await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: '여정에 나서다', story: `나는 '${selectedProfession.name}'으로서, '${selectedProfession.motivation}'라는 동기를 품고 이 세상에 첫 발을 내디뎠다.`, timestamp: serverTimestamp(), });
-        const mainScenarioRef = getMainScenarioRef(db, appId);
-        await runTransaction(db, async (transaction) => {
-          const scenarioDoc = await transaction.get(mainScenarioRef);
-          const baseData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
-          const cleanedPublicLog = (baseData.publicLog || []).map((log) => { if (log.timestamp && typeof log.timestamp.toDate === 'function') { return { ...log }; } return { ...log, timestamp: new Date() }; });
-          const newPublicLogEntry = { actor: { id: userId, displayName: getDisplayName(userId) }, log: `새로운 모험가, '${getDisplayName(userId)}'님이 여관에 모습을 드러냈습니다.`, timestamp: new Date(), };
-          const updatedPublicLog = [...cleanedPublicLog, newPublicLogEntry];
-          const payload = { ...baseData, publicLog: updatedPublicLog, lastUpdate: serverTimestamp() };
-          transaction.set(mainScenarioRef, payload);
-        });
-        const startingChoices = ['여관을 둘러본다.', '다른 모험가에게 말을 건다.', '여관 주인에게 정보를 묻는다.'];
-        setDisplayedChoices(startingChoices);
-        const updatedDoc = await getDoc(mainScenarioRef);
-        if (updatedDoc.exists()) {
-          setChoicesTimestamp(updatedDoc.data().lastUpdate);
-        }
-      }
-    } catch (e) {
-      console.error('등장 이벤트 추가 실패: ', e);
-      setLlmError('게임 세계에 합류하는 중 오류가 발생했습니다. 문제가 지속되면 \'전체 데이터 초기화\'를 시도해 주세요.');
-    } finally {
-      setIsTextLoading(false);
-    }
-  };
-
+  const createCharacter = async (choice) => { setIsTextLoading(true); try { const worldviewRef = getWorldviewRef(db, appId); let currentWorldview = worldview; if (!currentWorldview) { console.log("No worldview found. Creating a new one..."); const llmResponse = await callGeminiTextLLM(worldCreationPrompt, worldCreationPrompt); if (llmResponse) { await setDoc(worldviewRef, llmResponse); currentWorldview = llmResponse; setWorldview(llmResponse); } else { throw new Error("Failed to create a new worldview."); } } const choiceKey = choice.split('.')[0]; const selectedProfession = professions[choiceKey]; if (selectedProfession) { await setDoc( getPrivatePlayerStateRef(db, appId, userId), { ...getDefaultPrivatePlayerState(), characterCreated: true, profession: selectedProfession.name, initialMotivation: selectedProfession.motivation, currentLocation: '방랑자의 안식처' }, { merge: true }); await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: '여정에 나서다', story: `나는 '${selectedProfession.name}'으로서, '${selectedProfession.motivation}'라는 동기를 품고 이 세상에 첫 발을 내디뎠다.`, timestamp: serverTimestamp(), }); const mainScenarioRef = getMainScenarioRef(db, appId); await runTransaction(db, async (transaction) => { const scenarioDoc = await transaction.get(mainScenarioRef); const baseData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState(); const cleanedPublicLog = (baseData.publicLog || []).map((log) => { if (log.timestamp && typeof log.timestamp.toDate === 'function') { return { ...log }; } return { ...log, timestamp: new Date() }; }); const newPublicLogEntry = { actor: { id: userId, displayName: getDisplayName(userId) }, log: `새로운 모험가, '${getDisplayName(userId)}'님이 여관에 모습을 드러냈습니다.`, timestamp: new Date(), }; const updatedPublicLog = [...cleanedPublicLog, newPublicLogEntry]; const payload = { ...baseData, publicLog: updatedPublicLog, lastUpdate: serverTimestamp() }; transaction.set(mainScenarioRef, payload); }); const startingChoices = ['여관을 둘러본다.', '다른 모험가에게 말을 건다.', '여관 주인에게 정보를 묻는다.']; setDisplayedChoices(startingChoices); const updatedDoc = await getDoc(mainScenarioRef); if (updatedDoc.exists()) { setChoicesTimestamp(updatedDoc.data().lastUpdate); } } } catch (e) { console.error('등장 이벤트 추가 실패: ', e); setLlmError('게임 세계에 합류하는 중 오류가 발생했습니다. 문제가 지속되면 \'전체 데이터 초기화\'를 시도해 주세요.'); } finally { setIsTextLoading(false); } };
   const handleDeclarativeAction = async (actionText) => { setIsTextLoading(true); setLlmRetryPrompt({ playerChoice: actionText, isDeclarative: true }); const gameStatusRef = getGameStatusRef(db, appId); const scope = `declarative:${privatePlayerState.currentLocation}`; try { const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {}; if (currentLocks[scope] && currentLocks[scope] !== userId) { throw new Error(`현재 다른 플레이어(${getDisplayName(currentLocks[scope])})의 중대한 행동으로 인해 추가 행동을 할 수 없습니다.`); } await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true }); const systemPromptToUse = buildSystemPrompt(worldview); const userPromptText = await buildLlmPrompt(actionText); const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse); if (llmResponse) { await updateNarratives(llmResponse, actionText, true); setLlmError(null); setLlmRetryPrompt(null); } else if (!llmError) { setLlmError("LLM으로부터 유효한 응답을 받지 못했습니다."); } } catch (error) { console.error("선언적 행동 처리 중 오류:", error.message); setLlmError(error.message); } finally { const finalLocksDoc = await getDoc(gameStatusRef); if (finalLocksDoc.exists()) { const finalLocks = finalLocksDoc.data().actionLocks || {}; if (finalLocks[scope] === userId) { delete finalLocks[scope]; await setDoc(gameStatusRef, { actionLocks: finalLocks }, { merge: true }); } } setIsTextLoading(false); } };
   const performPlayerAction = async (choice) => { setIsTextLoading(true); setLlmRetryPrompt({ playerChoice: choice }); const mainScenarioRef = getMainScenarioRef(db, appId); const gameStatusRef = getGameStatusRef(db, appId); const scope = getActionScope(choice); try { const freshScenarioDoc = await getDoc(mainScenarioRef); const serverTimestampValue = freshScenarioDoc.exists() ? freshScenarioDoc.data().lastUpdate : null; if (choicesTimestamp && serverTimestampValue && choicesTimestamp.toMillis() < serverTimestampValue.toMillis()) { const oldLogCount = gameState.publicLog?.length || 0; const newPublicLog = freshScenarioDoc.data().publicLog || []; const interveningEvents = newPublicLog.slice(oldLogCount).map(log => `[${log.actor.displayName}] ${log.log}`).join(', '); const conflictResolutionUserPrompt = `[상황]\n- 나의 원래 행동: "${choice}"\n- 내가 행동하기 직전에 벌어진 실제 사건: "${interveningEvents || '알 수 없는 변화'}"\n\n[지시]\n위 상황을 바탕으로, 나의 행동이 실패하고 실제 사건을 목격하는 장면을 1인칭 또는 2인칭 시점에서 극적으로 묘사해주십시오. 예시: 내가 '경비병에게 말을 걸려고' 했으나, 실제로는 '다른 플레이어가 경비병을 암살했다'면, "당신이 경비병에게 다가가려던 찰나, 어둠 속에서 날아온 화살이 경비병의 목에 박히는 것을 목격합니다." 와 같이 서술합니다. 반드시 'personalStory'와 현재 상황에 맞는 새로운 'choices'를 포함한 JSON 형식으로만 응답해주십시오.`; const systemPromptToUse = buildSystemPrompt(worldview); const llmResponse = await callGeminiTextLLM(conflictResolutionUserPrompt, systemPromptToUse); if (llmResponse) { await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: choice, story: llmResponse.personalStory, timestamp: serverTimestamp() }); await updatePrivateState(llmResponse); setDisplayedChoices(llmResponse.choices || []); setChoicesTimestamp(serverTimestampValue); } else { const conflictStory = `당신이 '${choice}'(을)를 하려던 찰나, 세상은 이미 당신의 예상과 달라져 있었습니다. 주변을 다시 둘러보니 상황이 바뀌어 있습니다.`; await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: choice, story: conflictStory, timestamp: serverTimestamp() }); setDisplayedChoices(["주변을 다시 살핀다."]); setPrivatePlayerState(prev => ({ ...prev, choices: [] })); setChoicesTimestamp(serverTimestampValue); } setIsTextLoading(false); return; } const currentLocks = (await getDoc(gameStatusRef)).data()?.actionLocks || {}; if (currentLocks[scope] && currentLocks[scope] !== userId) { throw new Error(`현재 '${scope.split(':')[1]}'(은)는 다른 플레이어(${getDisplayName(currentLocks[scope])})가 사용 중입니다.`); } await setDoc(gameStatusRef, { actionLocks: { ...currentLocks, [scope]: userId } }, { merge: true }); const systemPromptToUse = buildSystemPrompt(worldview); const userPromptText = await buildLlmPrompt(choice); const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse); if (llmResponse) { await updateNarratives(llmResponse, choice, false); setLlmError(null); setLlmRetryPrompt(null); } else if (!llmError) { setLlmError('LLM으로부터 유효한 응답을 받지 못했습니다.'); } } catch (error) { console.error('행동 처리 중 오류:', error.message); setLlmError(error.message); } finally { const finalLocksDoc = await getDoc(gameStatusRef); if (finalLocksDoc.exists()) { const finalLocks = finalLocksDoc.data().actionLocks || {}; if (finalLocks[scope] === userId) { delete finalLocks[scope]; await setDoc(gameStatusRef, { actionLocks: finalLocks }, { merge: true }); } } setIsTextLoading(false); } };
   const handleChoiceClick = async (choice) => { if (isTextLoading) return; if (!privatePlayerState.characterCreated) { await createCharacter(choice); } else { await performPlayerAction(choice); } };
@@ -560,5 +440,5 @@ function App() {
     </div>
   );
 }
-}
+
 export default App;
