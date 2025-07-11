@@ -471,7 +471,7 @@ function App() {
     if (updates.npcRelations && typeof updates.npcRelations === 'object') {
       const existingRelations = privatePlayerState.npcRelations || {};
       updates.npcRelations = { ...existingRelations, ...updates.npcRelations };
-    } else if (updates.hasOwnProperty('npcRelations')) {
+    } else if (Object.prototype.hasOwnProperty.call(updates, 'npcRelations')) {
       delete updates.npcRelations;
       console.warn(`[Data Warning] LLM이 보낸 npcRelations 포맷이 유효하지 않아 무시합니다.`);
     }
