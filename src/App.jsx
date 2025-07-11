@@ -163,7 +163,7 @@ function App() {
     const user = activeUsers.find((u) => u.id === uid);
     return user?.nickname || `플레이어 ${safeUid.substring(0, 4)}`;
   };
-
+  
   const resetAllGameData = async () => {
     if (!db || !isAuthReady) return;
     setIsResetting(true);
@@ -201,8 +201,7 @@ function App() {
 
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
-      await deleteDoc(getActiveTurningPointRef(db, appId));
-
+      
       localStorage.clear();
       window.location.reload();
     } catch (e) {
