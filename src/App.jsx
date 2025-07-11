@@ -66,7 +66,7 @@ const getDefaultGameState = () => ({ publicLog: [], subtleClues: [], lastUpdate:
 const getDefaultPrivatePlayerState = () => ({ stats: { strength: 10, intelligence: 10, agility: 10, charisma: 10 }, inventory: [], initialMotivation: '', reputation: {}, activeQuests: [], companions: [], knownClues: [], activeMemories: [], characterCreated: false, profession: '', choices: [], groups: [], npcRelations: {}, knownEventIds: [], currentLocation: '방랑자의 안식처' });
 
 function App() {
-  // ... existing code ...
+// ... (생략: 사용자가 제공한 전체 코드가 여기에 들어갑니다) ...
 }
 
 export default App;
