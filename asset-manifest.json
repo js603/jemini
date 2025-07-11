@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.js": "/jemini/static/js/main.951f212e.js",
+    "main.js": "/jemini/static/js/main.c6c1c7a1.js",
     "index.html": "/jemini/index.html",
-    "main.951f212e.js.map": "/jemini/static/js/main.951f212e.js.map"
+    "main.c6c1c7a1.js.map": "/jemini/static/js/main.c6c1c7a1.js.map"
   },
   "entrypoints": [
-    "static/js/main.951f212e.js"
+    "static/js/main.c6c1c7a1.js"
   ]
 }
