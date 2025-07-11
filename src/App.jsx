@@ -57,7 +57,8 @@ const getPrivatePlayerStateRef = (db, appId, userId) => doc(db, 'artifacts', app
 const getGameStatusRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'gameStatus', 'status');
 const getMajorEventsRef = (db, appId) => collection(db, 'artifacts', appId, 'public', 'data', 'majorEvents');
 const getPersonalStoryLogRef = (db, appId, userId) => collection(db, 'artifacts', appId, 'users', userId, 'personalStoryLog');
-const getNpcRef = (db, appId, npcName) => doc(db, 'artifacts', appId, 'public', 'npcs', npcName);
+const getNpcRef = (db, appId, npcId) => doc(db, 'artifacts', appId, 'public', 'data', 'npcs', npcId);
+const getActiveTurningPointRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'turningPoints', 'active');
 
 // 상태 초기화 유틸
 const getDefaultGameState = () => ({
@@ -113,6 +114,7 @@ function App() {
     users: true,
     playerInfo: true,
     chronicle: true,
+    turningPoint: true,
   });
   const [showResetModal, setShowResetModal] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -121,6 +123,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [allMajorEvents, setAllMajorEvents] = useState([]);
   const [knownMajorEvents, setKnownMajorEvents] = useState([]);
+  const [activeTurningPoint, setActiveTurningPoint] = useState(null);
 
   const handleNicknameSubmit = () => {
     if (nicknameInput.trim()) {
@@ -152,7 +155,7 @@ function App() {
         collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages'),
         collection(db, 'artifacts', appId, 'public', 'data', 'activeUsers'),
         getMajorEventsRef(db, appId),
-        collection(db, 'artifacts', appId, 'public', 'npcs'),
+        collection(db, 'artifacts', appId, 'public', 'data', 'npcs'),
       ];
 
       for (const colRef of collectionsToDelete) {
@@ -180,6 +183,7 @@ function App() {
 
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
+      await deleteDoc(getActiveTurningPointRef(db, appId));
 
       localStorage.clear();
 
@@ -281,6 +285,13 @@ function App() {
         const events = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })).sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
         setAllMajorEvents(events);
       }),
+      onSnapshot(getActiveTurningPointRef(db, appId), (docSnap) => {
+        if (docSnap.exists()) {
+          setActiveTurningPoint({ id: docSnap.id, ...docSnap.data() });
+        } else {
+          setActiveTurningPoint(null);
+        }
+      }),
     ];
     return () => unsubscribes.forEach((unsub) => unsub());
   }, [isAuthReady, db]);
@@ -341,7 +352,52 @@ function App() {
     }
   }, [chatMessages, accordion.chat]);
 
-  const systemPrompt = `### 페르소나 (Persona) 당신은 이 세계의 '수호자'이자 '사관(史官)'이며, 플레이어들에게는 '게임 마스터(GM)'로 알려져 있습니다. 당신의 임무는 단순한 이야기 생성을 넘어, 일관된 역사와 살아 숨 쉬는 세계관을 구축하는 것입니다. 모든 묘사와 사건은 이 세계의 정해진 분위기와 역사적 사실 위에서 피어나는 한 편의 서사시여야 합니다. ### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다. 위대한 왕국들은 쇠락의 길을 걷고 있으며, 잊혀진 유적에는 강력하지만 위험한 마법의 흔적이 남아있습니다. 도시는 화려함 뒤에 부패를 숨기고 있고, 황야에는 미지의 위험이 도사립니다. 사람들은 서로를 쉽게 믿지 않으며, 각자의 생존을 위해 발버둥 칩니다. 당신의 모든 묘사는 이 '아름답지만 슬픈' 분위기를 반영해야 합니다. ### 핵심 구동 원칙 1. **일관성의 원칙 (Canon) (가장 중요)**: User Prompt에 제공된 [세계의 연대기], [주요 세력 및 인물], [플레이어 정보]는 이 세계의 '정사(正史)'입니다. 당신은 절대 이 사실들을 왜곡하거나 모순되는 내용을 만들어서는 안 됩니다. 이 정보들을 바탕으로 세계를 확장해 나가십시오. 2. **상호연결성의 원칙 (Interconnection)**: 당신은 뛰어난 이야기꾼으로서, 현재 발생하는 사건을 과거의 역사나 다른 플레이어의 행적과 연결지어야 합니다. 예를 들어, 한 플레이어가 던전에서 발견한 고대 문양은, 다른 플레이어가 수도에서 쫓고 있는 비밀 결사의 상징일 수 있습니다. 세상이 서로 연결되어 있음을 플레이어가 느끼게 하십시오. 3. **장면 중심의 서사 원칙 (Scene-Centric)**: 플레이어의 '[선택]'은 하나의 '장면'을 시작하는 것과 같습니다. 당신의 "personalStory"는 반드시 그 선택의 즉각적인 결과와 묘사로 시작되어야 합니다. 대화라면 실제 대화 내용이, 행동이라면 그 행동의 과정과 결과가 구체적으로 서술되어야 합니다. 4. **'보여주기, 말하지 않기' 원칙 (Show, Don't Tell)**: "마을이 가난하다"고 설명하지 마십시오. 대신 "굶주린 아이들이 흙바닥에 주저앉아 있고, 대부분의 건물은 지붕이 허술하게 덧대어져 있다"고 묘사하십시오. 플레이어가 스스로 분위기와 상황을 파악하게 만드십시오. ### [추가] NPC 상호작용 규칙 - 플레이어가 NPC와 상호작용할 때, 해당 NPC의 [페르소나 카드]가 제공될 수 있습니다. - 당신은 반드시 이 [페르소나 카드]에 명시된 '핵심 정체성'과 '기억 로그'를 바탕으로 NPC의 대사와 행동을 일관성 있게 생성해야 합니다. - 상호작용의 결과로 NPC가 새로운 사실을 알게 되거나 감정이 변했다면, 이를 반영할 '기억 로그 업데이트'를 JSON 출력의 'npcMemoryUpdate' 필드에 요약하여 포함시키십시오. ### JSON 출력 구조 {"publicLogEntry": "만약 이 행동이 주변의 다른 플레이어나 NPC가 명백히 인지할 수 있는 '공개적인 사건'이라면, 3인칭 시점의 객관적인 기록을 한 문장으로 작성. (예: '플레이어 A가 경비병을 공격했다.') 그렇지 않으면 null.","personalStory": "플레이어의 선택으로 시작된 '장면'에 대한 상세하고 감정적인 1인칭 또는 2인칭 서사. 플레이어의 내면 묘사, 감각, 대화 내용 등을 포함.","choices": ["'personalStory'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],"privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],"groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],"majorEvent": {"summary": "만약 이 사건이 후대에 '역사'로 기록될 만한 중대한 전환점이라면, 사관의 어조로 요약. (예: '왕국력 342년, 방랑자의 안식처에서 발생한 이 사건은 훗날 '붉은 달 교단'의 부흥을 알리는 서막이 되었다.') 그렇지 않으면 null.","location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."},"sharedStateUpdates": {"location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.","subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]},"privateStateUpdates": {"inventory": ["업데이트된 전체 인벤토리 목록"],"stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },"activeQuests": ["업데이트된 개인 퀘스트 목록"],"knownClues": ["새롭게 알게 된 단서 목록"],"groups": ["업데이트된 소속 그룹 목록"],"npcRelations": {"가라크": "55 (나에 대한 경계심이 약간 누그러졌다.)"}},"npcMemoryUpdate": {"npcName": "상호작용 한 NPC의 이름","newMemory": "NPC의 기억에 추가될 새로운 로그 (예: '플레이어 B가 음식값을 빚지고 도망갔다.')"}}`;
+  const systemPrompt = `### 페르소나 (Persona) 당신은 이 세계의 '수호자'이자 '사관(史官)'이며, 플레이어들에게는 '게임 마스터(GM)'로 알려져 있습니다. 당신의 임무는 단순한 이야기 생성을 넘어, 일관된 역사와 살아 숨 쉬는 세계관을 구축하는 것입니다. 모든 묘사와 사건은 이 세계의 정해진 분위기와 역사적 사실 위에서 피어나는 한 편의 서사시여야 합니다. ### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다. 위대한 왕국들은 쇠락의 길을 걷고 있으며, 잊혀진 유적에는 강력하지만 위험한 마법의 흔적이 남아있습니다. 도시는 화려함 뒤에 부패를 숨기고 있고, 황야에는 미지의 위험이 도사립니다. 사람들은 서로를 쉽게 믿지 않으며, 각자의 생존을 위해 발버둥 칩니다. 당신의 모든 묘사는 이 '아름답지만 슬픈' 분위기를 반영해야 합니다. ### 핵심 구동 원칙 1. **일관성의 원칙 (Canon) (가장 중요)**: User Prompt에 제공된 [세계의 연대기], [주요 세력 및 인물], [플레이어 정보]는 이 세계의 '정사(正史)'입니다. 당신은 절대 이 사실들을 왜곡하거나 모순되는 내용을 만들어서는 안 됩니다. 이 정보들을 바탕으로 세계를 확장해 나가십시오. 2. **상호연결성의 원칙 (Interconnection)**: 당신은 뛰어난 이야기꾼으로서, 현재 발생하는 사건을 과거의 역사나 다른 플레이어의 행적과 연결지어야 합니다. 예를 들어, 한 플레이어가 던전에서 발견한 고대 문양은, 다른 플레이어가 수도에서 쫓고 있는 비밀 결사의 상징일 수 있습니다. 세상이 서로 연결되어 있음을 플레이어가 느끼게 하십시오. 3. **장면 중심의 서사 원칙 (Scene-Centric)**: 플레이어의 '[선택]'은 하나의 '장면'을 시작하는 것과 같습니다. 당신의 "personalStory"는 반드시 그 선택의 즉각적인 결과와 묘사로 시작되어야 합니다. 대화라면 실제 대화 내용이, 행동이라면 그 행동의 과정과 결과가 구체적으로 서술되어야 합니다. 4. **'보여주기, 말하지 않기' 원칙 (Show, Don't Tell)**: "마을이 가난하다"고 설명하지 마십시오. 대신 "굶주린 아이들이 흙바닥에 주저앉아 있고, 대부분의 건물은 지붕이 허술하게 덧대어져 있다"고 묘사하십시오. 플레이어가 스스로 분위기와 상황을 파악하게 만드십시오. ### [추가] NPC 상호작용 규칙 - 플레이어가 NPC와 상호작용할 때, 해당 NPC의 [페르소나 카드]가 제공될 수 있습니다. - 당신은 반드시 이 [페르소나 카드]에 명시된 '핵심 정체성'과 '기억 로그'를 바탕으로 NPC의 대사와 행동을 일관성 있게 생성해야 합니다. - 상호작용의 결과로 NPC가 새로운 사실을 알게 되거나 감정이 변했다면, 이를 반영할 '기억 로그 업데이트'를 JSON 출력의 'npcMemoryUpdate' 필드에 요약하여 포함시키십시오. ### JSON 출력 구조 {"publicLogEntry": "만약 이 행동이 주변의 다른 플레이어나 NPC가 명백히 인지할 수 있는 '공개적인 사건'이라면, 3인칭 시점의 객관적인 기록을 한 문장으로 작성. (예: '플레이어 A가 경비병을 공격했다.') 그렇지 않으면 null.","personalStory": "플레이어의 선택으로 시작된 '장면'에 대한 상세하고 감정적인 1인칭 또는 2인칭 서사. 플레이어의 내면 묘사, 감각, 대화 내용 등을 포함.","choices": ["'personalStory'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],"privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],"groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],"majorEvent": {"summary": "만약 이 사건이 후대에 '역사'로 기록될 만한 중대한 전환점이라면, 사관의 어조로 요약. (예: '왕국력 342년, 방랑자의 안식처에서 발생한 이 사건은 훗날 '붉은 달 교단'의 부흥을 알리는 서막이 되었다.') 그렇지 않으면 null.","location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."},"sharedStateUpdates": {"location": "플레이어 그룹의 현재 위치. 변경되었을 경우에만 포함.","subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]},"privateStateUpdates": {"inventory": ["업데이트된 전체 인벤토리 목록"],"stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },"activeQuests": ["업데이트된 개인 퀘스트 목록"],"knownClues": ["새롭게 알게 된 단서 목록"],"groups": ["업데이트된 소속 그룹 목록"],"npcRelations": {"가라크": "55 (나에 대한 경계심이 약간 누그러졌다.)"}},"npcMemoryUpdate": {"npcName": "상호작용 한 NPC의 이름","newMemory": "NPC의 기억에 추가될 새로운 로그 (예: '플레이어 B가 음식값을 빚지고 도망갔다.')"},"turningPointUpdate": {"objectiveId": "플레이어의 행동이 기여한 목표의 ID","progressIncrement": 10}}`;
+  
+  const turningPointCreationPrompt = `당신은 역사의 흐름을 읽는 '운명' 그 자체입니다. 최근 세상에서 벌어진 다음 사건들을 보고, 이 흐름이 하나의 거대한 '전환점(Turning Point)'으로 수렴될 수 있는지 판단하십시오. 현재 활성화된 전환점은 없습니다. 만약 중대한 갈등의 씨앗이나, 거대한 위협, 혹은 새로운 시대의 서막이 보인다면, 그에 맞는 전환점을 아래 JSON 형식으로 생성해주십시오. 아직 시기가 아니라면 'create' 값을 false로 설정하십시오.
+
+### 최근 사건들
+{event_summary}
+
+### JSON 출력 구조
+{
+  "create": true,
+  "turningPoint": {
+    "title": "전환점의 제목 (예: '수도에 창궐한 역병')",
+    "description": "전환점에 대한 흥미로운 설명",
+    "status": "active",
+    "objectives": [
+      { "id": "objective_1", "description": "첫 번째 목표 (예: 역병의 근원 찾기)", "progress": 0, "goal": 100 },
+      { "id": "objective_2", "description": "두 번째 목표 (예: 치료제 개발 지원)", "progress": 0, "goal": 100 }
+    ]
+  }
+}
+`;
+
+  const checkAndCreateTurningPoint = async () => {
+    if (activeTurningPoint) return;
+
+    console.log("Checking for new Turning Point...");
+
+    const publicLogSummary = (gameState.publicLog || []).slice(-20).map(e => e.log).join('\n');
+    const majorEventsSummary = (allMajorEvents || []).slice(-10).map(e => e.summary).join('\n');
+    const eventSummary = `[최근 공개 사건들]\n${publicLogSummary}\n\n[최근 주요 역사]\n${majorEventsSummary}`;
+
+    const prompt = turningPointCreationPrompt.replace('{event_summary}', eventSummary);
+
+    const llmResponse = await callGeminiTextLLM(prompt);
+    
+    if (llmResponse && llmResponse.create && llmResponse.turningPoint) {
+      console.log("New Turning Point detected! Creating...", llmResponse.turningPoint);
+      const turningPointRef = getActiveTurningPointRef(db, appId);
+      await setDoc(turningPointRef, {
+        ...llmResponse.turningPoint,
+        startTimestamp: serverTimestamp(),
+      });
+    } else {
+      console.log("No new Turning Point detected at this time.");
+    }
+  };
 
   const buildLlmPrompt = async (choice) => {
     const factions = (privatePlayerState.groups || []).join(', ') || '없음';
@@ -349,11 +405,13 @@ function App() {
     const personalLogEntries = (personalStoryLog || []).slice(-10).map((entry) => `[나의 행동: ${entry?.action ?? '알 수 없는 행동'}] -> ${entry?.story ?? ''}`).join('\n');
     const publicLogEntries = (gameState.publicLog || []).slice(-10).map((entry) => `[${entry?.actor?.displayName ?? '누군가'}] ${entry?.log ?? ''}`).join('\n');
     const activeMemorySection = privatePlayerState.activeMemories && privatePlayerState.activeMemories.length > 0 ? `[나의 활성 기억 (My Active Memories)]\n- 이것은 내가 이 세계에서 가장 중요하다고 생각하는 핵심 정보들입니다. 당신은 이 정보를 반드시 최우선으로 고려하여 이야기를 진행해야 합니다.\n- ${privatePlayerState.activeMemories.join('\n- ')}\n` : '';
+    
     let npcPersonaCardSection = '';
     const npcMatch = choice.match(/(.+)에게 말을 건다/);
     if (npcMatch && db) {
       const npcName = npcMatch[1].trim();
-      const npcRef = getNpcRef(db, appId, npcName);
+      const npcId = npcName.replace(/\s+/g, '_');
+      const npcRef = getNpcRef(db, appId, npcId);
       const npcSnap = await getDoc(npcRef);
       if (npcSnap.exists()) {
         const npcData = npcSnap.data();
@@ -362,7 +420,13 @@ function App() {
         npcPersonaCardSection = `\n[NPC 페르소나 카드: ${npcName}]\n- 핵심 정체성: 당신이 이번 상호작용을 통해 이 NPC의 성격을 처음으로 설정합니다.\n- 기억 로그: - 특별한 기억 없음\n`;
       }
     }
-    const userPrompt = `${activeMemorySection}${npcPersonaCardSection}[세계의 연대기 (World Chronicle)]\n- 내가 발견한, 세상에 일어난 주요 역사적 사건들입니다. 이 기록은 절대적인 사실입니다.\n- ${knownMajorEvents.length > 0 ? knownMajorEvents.map((h) => h.summary).join('\n- ') : '아직 기록된 역사가 없음'}\n\n[나의 여정록 (My Journey Log) - 최근 기록]\n- 이것은 나의 개인적인 경험과 생각의 기록입니다.\n${personalLogEntries || '아직 여정을 시작하지 않음'}\n\n[주변의 최근 사건들 (Recent Public Events)]\n- 내가 있는 장소 주변에서 최근 일어난 공개적인 사건들입니다.\n${publicLogEntries || '최근에 주변에서 별다른 일은 없었음'}\n\n[주요 세력 및 인물 (Key Factions & NPCs)]\n- 나와 관련된 주요 세력: ${factions}\n- 나와 관계를 맺은 주요 인물: ${npcs}\n\n[나의 현재 상태 (My Current State)]\n- 이름: ${getDisplayName(userId)}\n- 직업: ${privatePlayerState.profession ?? '미정'}\n- 현재 위치: ${gameState.player.currentLocation ?? '알 수 없는 곳'}\n- 소지품 및 능력치: ${JSON.stringify({ inventory: privatePlayerState.inventory || [], stats: privatePlayerState.stats || {} })}\n\n[주변 관찰자 (Nearby Observers)]\n- 현재 장소에 함께 있는 다른 플레이어들입니다. 이들은 이번 턴에 행동하지 않습니다.\n- ${(activeUsers || []).map((u) => u.nickname || `플레이어 ${u.id.substring(0, 4)}`).join(', ') || '주변에 다른 플레이어가 없음'}\n\n[나의 선택 (My Action)]\n- 위 모든 상황 속에서, 나는 다음 행동을 선택했습니다. 이 선택으로 시작될 '장면'을 연출해주십시오.\n- "${choice}"`;
+    
+    let turningPointSection = "";
+    if (activeTurningPoint && activeTurningPoint.status === 'active') {
+      turningPointSection = `\n[현재 진행중인 주요 분기점: ${activeTurningPoint.title}]\n- 개요: ${activeTurningPoint.description}\n- 현재 목표 및 진척도:\n${(activeTurningPoint.objectives || []).map(obj => `  - ${obj.description} (${obj.progress}/${obj.goal})`).join('\n')}\n- 당신의 행동이 이 분기점의 목표에 기여한다면, 'turningPointUpdate'를 통해 결과를 알려주십시오.\n`;
+    }
+
+    const userPrompt = `${activeMemorySection}${npcPersonaCardSection}${turningPointSection}[세계의 연대기 (World Chronicle)]\n- 내가 발견한, 세상에 일어난 주요 역사적 사건들입니다. 이 기록은 절대적인 사실입니다.\n- ${knownMajorEvents.length > 0 ? knownMajorEvents.map((h) => h.summary).join('\n- ') : '아직 기록된 역사가 없음'}\n\n[나의 여정록 (My Journey Log) - 최근 기록]\n- 이것은 나의 개인적인 경험과 생각의 기록입니다.\n${personalLogEntries || '아직 여정을 시작하지 않음'}\n\n[주변의 최근 사건들 (Recent Public Events)]\n- 내가 있는 장소 주변에서 최근 일어난 공개적인 사건들입니다.\n${publicLogEntries || '최근에 주변에서 별다른 일은 없었음'}\n\n[주요 세력 및 인물 (Key Factions & NPCs)]\n- 나와 관련된 주요 세력: ${factions}\n- 나와 관계를 맺은 주요 인물: ${npcs}\n\n[나의 현재 상태 (My Current State)]\n- 이름: ${getDisplayName(userId)}\n- 직업: ${privatePlayerState.profession ?? '미정'}\n- 현재 위치: ${gameState.player.currentLocation ?? '알 수 없는 곳'}\n- 소지품 및 능력치: ${JSON.stringify({ inventory: privatePlayerState.inventory || [], stats: privatePlayerState.stats || {} })}\n\n[주변 관찰자 (Nearby Observers)]\n- 현재 장소에 함께 있는 다른 플레이어들입니다. 이들은 이번 턴에 행동하지 않습니다.\n- ${(activeUsers || []).map((u) => u.nickname || `플레이어 ${u.id.substring(0, 4)}`).join(', ') || '주변에 다른 플레이어가 없음'}\n\n[나의 선택 (My Action)]\n- 위 모든 상황 속에서, 나는 다음 행동을 선택했습니다. 이 선택으로 시작될 '장면'을 연출해주십시오.\n- "${choice}"`;
     return userPrompt;
   };
 
@@ -447,13 +511,36 @@ function App() {
         timestamp: serverTimestamp(),
         actor: { id: userId, displayName: getDisplayName(userId) },
       });
+      checkAndCreateTurningPoint();
     }
 
     if (llmResponse.npcMemoryUpdate && db) {
       const { npcName, newMemory } = llmResponse.npcMemoryUpdate;
       if (npcName && newMemory) {
-        const npcRef = getNpcRef(db, appId, npcName);
-        await setDoc(npcRef, { memory_log: arrayUnion(newMemory) }, { merge: true });
+        const npcId = npcName.replace(/\s+/g, '_');
+        const npcRef = getNpcRef(db, appId, npcId);
+        await setDoc(npcRef, { name: npcName, memory_log: arrayUnion(newMemory) }, { merge: true });
+      }
+    }
+
+    if (llmResponse.turningPointUpdate && activeTurningPoint) {
+      const { objectiveId, progressIncrement } = llmResponse.turningPointUpdate;
+      if (objectiveId && typeof progressIncrement === 'number') {
+        const turningPointRef = getActiveTurningPointRef(db, appId);
+        await runTransaction(db, async (transaction) => {
+          const tpDoc = await transaction.get(turningPointRef);
+          if (!tpDoc.exists()) return;
+
+          const tpData = tpDoc.data();
+          const newObjectives = (tpData.objectives || []).map((obj) => {
+            if (obj.id === objectiveId) {
+              const newProgress = (obj.progress || 0) + progressIncrement;
+              return { ...obj, progress: Math.min(Math.max(newProgress, 0), obj.goal) };
+            }
+            return obj;
+          });
+          transaction.update(turningPointRef, { objectives: newObjectives });
+        });
       }
     }
 
@@ -472,7 +559,7 @@ function App() {
     if (updates.npcRelations && typeof updates.npcRelations === 'object') {
       const existingRelations = privatePlayerState.npcRelations || {};
       updates.npcRelations = { ...existingRelations, ...updates.npcRelations };
-    } else if (Object.prototype.hasOwnProperty.call(updates, 'npcRelations')) {
+    } else if (updates.hasOwnProperty('npcRelations')) {
       delete updates.npcRelations;
       console.warn(`[Data Warning] LLM이 보낸 npcRelations 포맷이 유효하지 않아 무시합니다.`);
     }
@@ -507,7 +594,7 @@ function App() {
     }
     await setDoc(privateStateRef, { activeMemories: currentMemories }, { merge: true });
   };
-
+  
   const summarizeAndArchiveEvents = async () => {
     alert("시대 요약 기능은 다음 업데이트에서 구현될 예정입니다. 이 버튼을 누르면, '세계의 연대기'에 기록된 주요 사건들이 하나의 '역사 요약문'으로 압축되어, 게임의 장기적인 맥락을 유지하면서도 데이터 부담을 줄이게 됩니다.");
   };
@@ -664,7 +751,7 @@ function App() {
 
   const renderGameLog = () => ( <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('gameLog')}> <h2 className="text-lg font-bold text-gray-100">나의 여정록</h2> <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div> </div> {accordion.gameLog && ( <> <div className="flex justify-end mb-2 gap-2"> <button className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded-md" title="향후 구현될 기능입니다." onClick={summarizeAndArchiveEvents}>시대 요약</button> <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button> </div> <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}> {(personalStoryLog || []).length === 0 && !privatePlayerState.characterCreated && ( <div className="mb-4 p-2 rounded bg-gray-900/50 text-center"> <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p> <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p> </div> )} {(personalStoryLog || []).map((event, index) => ( <div key={event.id || index} className="mb-4 p-2 rounded bg-gray-900/50"> {event?.action && ( <p className="text-yellow-300 font-semibold italic text-sm"> 나의 선택: {event.action} </p> )} <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p> </div> ))} {isTextLoading && ( <div className="flex justify-center items-center mt-4"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div><span className="ml-3 text-gray-400">이야기를 생성 중...</span></div> )} {Object.entries(actionLocks || {}).map(([scope, lockedBy]) => { if (lockedBy === userId) return null; return ( <div key={scope} className="text-center text-yellow-400 font-semibold p-2 bg-black bg-opacity-20 rounded-md mt-2">{`'${scope.split(':')[1]}' 영역은 ${getDisplayName(lockedBy)}님이 사용 중입니다...`}</div> ) })} <div ref={logEndRef} /> </div> </> )} </div> );
   const renderChoices = () => ( <div className="flex flex-col gap-3"> {privatePlayerState.characterCreated ? ( [...(displayedChoices || []), ...(privatePlayerState.choices || [])].map((choice, index) => { if (!choice) return null; const scope = getActionScope(choice); const isLockedByOther = actionLocks[scope] && actionLocks[scope] !== userId; const allPrivateChoices = privatePlayerState.choices || []; const isPersonalChoice = allPrivateChoices.includes(choice); let buttonStyle = 'bg-blue-600 hover:bg-blue-700'; let prefix = ''; if (isPersonalChoice) { buttonStyle = 'bg-green-600 hover:bg-green-700'; prefix = '[개인] '; } if (isLockedByOther) { buttonStyle = 'bg-gray-500 cursor-not-allowed'; prefix = `[${getDisplayName(actionLocks[scope])} 사용 중] `; } return ( <button key={`${choice}-${index}`} className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 ${buttonStyle} text-white`} onClick={() => handleChoiceClick(choice)} disabled={isTextLoading || isLockedByOther} > {prefix}{choice} </button> ) }) ) : ( Object.keys(professions).map(key => ( <button key={key} onClick={() => handleChoiceClick(`${key}. ${professions[key].name}`)} disabled={isTextLoading} className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left" > <p className="text-lg text-blue-300">{`${key}. ${professions[key].name}`}</p> <p className="text-sm font-normal text-gray-300 mt-1">{professions[key].motivation}</p> </button> )) )} </div> );
-  const renderSidebar = () => ( <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner"> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}> <h4 className="text-md font-semibold text-gray-200">내 정보</h4> <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div> </div> {accordion.playerInfo && ( <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2 h-96 overflow-y-auto custom-scrollbar"> <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p> <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p> <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation || '알 수 없는 곳'}</p> <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats?.strength ?? 10}) 지능({privatePlayerState.stats?.intelligence ?? 10}) 민첩({privatePlayerState.stats?.agility ?? 10}) 카리스마({privatePlayerState.stats?.charisma ?? 10})</p> <p><span className="font-semibold text-blue-300">인벤토리:</span> {(privatePlayerState.inventory || []).join(', ') || '비어있음'}</p> <div> <span className="font-semibold text-yellow-300">활성 기억:</span> {(privatePlayerState.activeMemories || []).length > 0 ? ( <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {(privatePlayerState.activeMemories || []).map((memory, i) => <li key={`mem-${i}`} className="text-xs flex justify-between items-center"> <span>{memory}</span> <button onClick={() => toggleActiveMemory(memory, false)} className="text-red-400 hover:text-red-300 ml-2 text-lg">×</button> </li> )} </ul> ) : <p className="text-xs text-gray-400 ml-2">기억할 단서를 활성화하세요.</p>} </div> <div> <span className="font-semibold text-purple-300">알려진 단서:</span> {(privatePlayerState.knownClues || []).length > 0 ? ( <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {(privatePlayerState.knownClues || []).map((clue, i) => { const isActivated = (privatePlayerState.activeMemories || []).includes(clue); return ( <li key={`clue-${i}`} className="text-xs flex justify-between items-center"> <span>{clue}</span> {!isActivated && ( <button onClick={() => toggleActiveMemory(clue, true)} className="text-green-400 hover:text-green-300 ml-2 text-lg">↑</button> )} </li> ); })} </ul> ) : <p className="text-xs text-gray-400 ml-2">아직 발견한 단서가 없습니다.</p>} </div> <div> <span className="font-semibold text-indigo-300">NPC 관계:</span> <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {Object.entries(privatePlayerState.npcRelations || {}).length > 0 ? Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name} className="text-xs">{`${name}: ${value}`}</li>) : <li>알려진 관계 없음</li>} </ul> </div> </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}> <h4 className="text-md font-semibold text-gray-200">세계의 연대기</h4> <div className="text-xl">{accordion.chronicle ? '▼' : '▲'}</div> </div> {accordion.chronicle && ( <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar"> {(knownMajorEvents || []).length > 0 ? ( <ul className="list-disc list-inside"> {(knownMajorEvents || []).map((event) => <li key={event?.id}>{event?.summary ?? '기록이 손상되었습니다.'}</li>)} </ul> ) : ( <p>아직 발견한 주요 사건이 없습니다. 세상을 탐험해 보세요.</p> )} </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}> <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4> <div className="text-xl">{accordion.users ? '▼' : '▲'}</div> </div> {accordion.users && ( <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar"> {(activeUsers || []).length > 0 ? ( <ul className="text-sm text-gray-300 space-y-1"> {(activeUsers || []).map(user => ( <li key={user.id} className="truncate p-1 rounded-md"> <span className="font-medium text-green-300">{getDisplayName(user.id)}</span> <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span> </li> ))} </ul> ) : <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>} </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}> <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4> <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div> </div> {accordion.chat && ( <div className="bg-gray-600 p-3 rounded-md flex flex-col h-48"> <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2"> {(chatMessages || []).map((msg) => ( <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div> ))} <div ref={chatEndRef} /> </div> <div className="flex"> <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600" value={currentChatMessage} onChange={(e) => setCurrentChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()} disabled={!isAuthReady} /> <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md" onClick={sendChatMessage} disabled={!isAuthReady || !currentChatMessage.trim()}>보내기</button> </div> </div> )} </div> </div> );
+  const renderSidebar = () => ( <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner"> {activeTurningPoint && ( <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('turningPoint')}> <h4 className="text-md font-semibold text-yellow-300">주요 분기점</h4> <div className="text-xl">{accordion.turningPoint ? '▼' : '▲'}</div> </div> {accordion.turningPoint && ( <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2"> <p className="font-bold text-yellow-200">{activeTurningPoint.title}</p> <p className="text-xs italic text-gray-400">{activeTurningPoint.description}</p> {(activeTurningPoint.objectives || []).map(obj => ( <div key={obj.id}> <p className="text-xs font-semibold">{obj.description} ({obj.progress} / {obj.goal})</p> <div className="w-full bg-gray-600 rounded-full h-2.5"> <div className="bg-yellow-500 h-2.5 rounded-full" style={{ width: `${(obj.progress / obj.goal) * 100}%` }}></div> </div> </div> ))} </div> )} </div> )} <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}> <h4 className="text-md font-semibold text-gray-200">내 정보</h4> <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div> </div> {accordion.playerInfo && ( <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2 h-96 overflow-y-auto custom-scrollbar"> <p><span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}</p> <p><span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}</p> <p><span className="font-semibold text-blue-300">위치:</span> {gameState.player.currentLocation || '알 수 없는 곳'}</p> <p><span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats?.strength ?? 10}) 지능({privatePlayerState.stats?.intelligence ?? 10}) 민첩({privatePlayerState.stats?.agility ?? 10}) 카리스마({privatePlayerState.stats?.charisma ?? 10})</p> <p><span className="font-semibold text-blue-300">인벤토리:</span> {(privatePlayerState.inventory || []).join(', ') || '비어있음'}</p> <div> <span className="font-semibold text-yellow-300">활성 기억:</span> {(privatePlayerState.activeMemories || []).length > 0 ? ( <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {(privatePlayerState.activeMemories || []).map((memory, i) => <li key={`mem-${i}`} className="text-xs flex justify-between items-center"> <span>{memory}</span> <button onClick={() => toggleActiveMemory(memory, false)} className="text-red-400 hover:text-red-300 ml-2 text-lg">×</button> </li> )} </ul> ) : <p className="text-xs text-gray-400 ml-2">기억할 단서를 활성화하세요.</p>} </div> <div> <span className="font-semibold text-purple-300">알려진 단서:</span> {(privatePlayerState.knownClues || []).length > 0 ? ( <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {(privatePlayerState.knownClues || []).map((clue, i) => { const isActivated = (privatePlayerState.activeMemories || []).includes(clue); return ( <li key={`clue-${i}`} className="text-xs flex justify-between items-center"> <span>{clue}</span> {!isActivated && ( <button onClick={() => toggleActiveMemory(clue, true)} className="text-green-400 hover:text-green-300 ml-2 text-lg">↑</button> )} </li> ); })} </ul> ) : <p className="text-xs text-gray-400 ml-2">아직 발견한 단서가 없습니다.</p>} </div> <div> <span className="font-semibold text-indigo-300">NPC 관계:</span> <ul className="list-disc list-inside ml-2 space-y-1 mt-1"> {Object.entries(privatePlayerState.npcRelations || {}).length > 0 ? Object.entries(privatePlayerState.npcRelations).map(([name, value]) => <li key={name} className="text-xs">{`${name}: ${value}`}</li>) : <li>알려진 관계 없음</li>} </ul> </div> </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}> <h4 className="text-md font-semibold text-gray-200">세계의 연대기</h4> <div className="text-xl">{accordion.chronicle ? '▼' : '▲'}</div> </div> {accordion.chronicle && ( <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar"> {(knownMajorEvents || []).length > 0 ? ( <ul className="list-disc list-inside"> {(knownMajorEvents || []).map((event) => <li key={event?.id}>{event?.summary ?? '기록이 손상되었습니다.'}</li>)} </ul> ) : ( <p>아직 발견한 주요 사건이 없습니다. 세상을 탐험해 보세요.</p> )} </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}> <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4> <div className="text-xl">{accordion.users ? '▼' : '▲'}</div> </div> {accordion.users && ( <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar"> {(activeUsers || []).length > 0 ? ( <ul className="text-sm text-gray-300 space-y-1"> {(activeUsers || []).map(user => ( <li key={user.id} className="truncate p-1 rounded-md"> <span className="font-medium text-green-300">{getDisplayName(user.id)}</span> <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span> </li> ))} </ul> ) : <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>} </div> )} </div> <div className="mb-2"> <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}> <h4 className="text-md font-semibold text-gray-200">공개 채팅</h4> <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div> </div> {accordion.chat && ( <div className="bg-gray-600 p-3 rounded-md flex flex-col h-48"> <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2"> {(chatMessages || []).map((msg) => ( <div key={msg.id}><p><span className="font-medium text-yellow-300">{getDisplayName(msg.userId)}:</span> {msg.message}</p></div> ))} <div ref={chatEndRef} /> </div> <div className="flex"> <input type="text" className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600" value={currentChatMessage} onChange={(e) => setCurrentChatMessage(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()} disabled={!isAuthReady} /> <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md" onClick={sendChatMessage} disabled={!isAuthReady || !currentChatMessage.trim()}>보내기</button> </div> </div> )} </div> </div> );
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
