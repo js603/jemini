@@ -653,7 +653,6 @@ function App() {
   const handleChoiceClick = async (choice) => { if (isTextLoading) return; if (!privatePlayerState.characterCreated) { await createCharacter(choice); } else { await performPlayerAction(choice); } };
   const toggleAccordion = (key) => { setAccordion((prev) => ({ ...prev, [key]: !prev[key] })); };
   
-  // --- [오류 수정] 렌더링 함수들을 return 문 앞으로 이동 ---
   const LlmErrorModal = () => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
       <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -920,7 +919,6 @@ function App() {
     </div>
   );
   
-  // --- 조기 리턴 (Early Return) 구간 ---
   if (showNicknameModal) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -942,7 +940,6 @@ function App() {
     );
   }
 
-  // --- 메인 렌더링 ---
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
       {llmError && <LlmErrorModal />}
