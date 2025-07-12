@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import PropTypes from 'prop-types'; // ❗️ 1. prop-types 라이브러리 import
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -85,7 +86,7 @@ const getDefaultPrivatePlayerState = () => ({
   currentLocation: '방랑자의 안식처',
 });
 
-// ❗️❗️❗️ FIX: LlmErrorModal 컴포넌트를 App 컴포넌트 밖으로 이동 ❗️❗️❗️
+// Helper Component
 const LlmErrorModal = ({ llmError, llmRetryPrompt, setLlmError, setLlmRetryPrompt, onRetry }) => (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
         <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -104,6 +105,15 @@ const LlmErrorModal = ({ llmError, llmRetryPrompt, setLlmError, setLlmRetryPromp
         </div>
     </div>
 );
+
+// ❗️ 2. propTypes 정의 추가
+LlmErrorModal.propTypes = {
+  llmError: PropTypes.string,
+  llmRetryPrompt: PropTypes.object,
+  setLlmError: PropTypes.func.isRequired,
+  setLlmRetryPrompt: PropTypes.func.isRequired,
+  onRetry: PropTypes.func.isRequired,
+};
 
 
 // Main App Component
