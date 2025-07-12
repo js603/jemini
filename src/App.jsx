@@ -85,6 +85,27 @@ const getDefaultPrivatePlayerState = () => ({
   currentLocation: '방랑자의 안식처',
 });
 
+// ❗️❗️❗️ FIX: LlmErrorModal 컴포넌트를 App 컴포넌트 밖으로 이동 ❗️❗️❗️
+const LlmErrorModal = ({ llmError, llmRetryPrompt, setLlmError, setLlmRetryPrompt, onRetry }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
+            <h3 className="text-xl font-bold text-red-400">오류가 발생했습니다</h3>
+            <p className="text-gray-200">{llmError}</p>
+            <div className="flex justify-center gap-4">
+                {llmRetryPrompt && (
+                    <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md" onClick={onRetry}>
+                        재시도
+                    </button>
+                )}
+                <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => { setLlmError(null); setLlmRetryPrompt(null); }}>
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+);
+
+
 // Main App Component
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
@@ -680,7 +701,6 @@ function App() {
     alert("시대 요약 기능은 다음 업데이트에서 구현될 예정입니다. 이 버튼을 누르면, '세계의 연대기'에 기록된 주요 사건들이 하나의 '역사 요약문'으로 압축되어, 게임의 장기적인 맥락을 유지하면서도 데이터 부담을 줄이게 됩니다.");
   };
 
-  // --- JSX Render ---
   const handleRetry = async () => {
     if (!llmRetryPrompt) return;
     setLlmError(null);
@@ -714,7 +734,13 @@ function App() {
   
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
-      {llmError && <LlmErrorModal llmError={llmError} llmRetryPrompt={llmRetryPrompt} setLlmError={setLlmError} setLlmRetryPrompt={setLlmRetryPrompt} onRetry={handleRetry} />}
+      {llmError && <LlmErrorModal 
+        llmError={llmError}
+        llmRetryPrompt={llmRetryPrompt}
+        setLlmError={setLlmError}
+        setLlmRetryPrompt={setLlmRetryPrompt}
+        onRetry={handleRetry} 
+      />}
       {showResetModal && (<div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"><div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4"><h3 className="text-xl font-bold text-red-400">⚠️ 모든 데이터를 초기화할까요?</h3><p className="text-gray-200">이 작업은 되돌릴 수 없습니다. 모든 시나리오, 로그, 유저, 채팅 데이터가 삭제됩니다.</p><div className="flex justify-end gap-3"><button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => setShowResetModal(false)} disabled={isResetting}>취소</button><button className="px-4 py-2 bg-red-600 hover:bg-red-700 font-bold rounded-md" onClick={resetAllGameData} disabled={isResetting}>{isResetting ? '초기화 중...' : '초기화'}</button></div></div></div>)}
       
       <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
