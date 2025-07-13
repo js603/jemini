@@ -5,6 +5,7 @@ import {
   signInAnonymously,
   signInWithCustomToken,
   onAuthStateChanged,
+  deleteUser, // deleteUser 추가
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -155,7 +156,7 @@ function App() {
   };
 
   const resetAllGameData = async () => {
-    if (!db || !isAuthReady) return;
+    if (!db || !isAuthReady || !auth.currentUser) return;
     setIsResetting(true);
     try {
       const collectionsToDelete = [
@@ -193,10 +194,15 @@ function App() {
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
 
+      await deleteUser(auth.currentUser);
+      console.log("Firebase Auth user deleted.");
+
       localStorage.clear();
       window.location.reload();
+
     } catch (e) {
       console.error('전체 데이터 초기화 중 오류 발생:', e);
+      setLlmError('초기화에 실패했습니다. 이 오류가 반복되면 브라우저의 캐시를 삭제하고 다시 시도해 주세요.');
     } finally {
       setIsResetting(false);
       setShowResetModal(false);
@@ -837,8 +843,6 @@ function App() {
           )
         })
       ) : (
-        // 여기가 핵심 수정 부분입니다.
-        // worldview에 professions가 로드되었는지 확인하고, 그것을 기반으로 버튼을 렌더링합니다.
         worldview?.professions?.map((profession, index) => (
           <button key={index} onClick={() => handleChoiceClick(profession.name)} disabled={isTextLoading} className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left" >
             <p className="text-lg text-blue-300">{profession.name}</p>
