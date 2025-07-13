@@ -448,6 +448,8 @@ function App() {
 
   const updateNarratives = async (llmResponse, playerChoice, isDeclarative = false) => {
     const mainScenarioRef = getMainScenarioRef(db, appId);
+    
+    // 1. 트랜잭션으로 핵심 데이터 업데이트
     await runTransaction(db, async (transaction) => {
       const scenarioDoc = await transaction.get(mainScenarioRef);
       if (!scenarioDoc.exists()) { throw new Error('치명적 오류: 게임의 기본 시나리오 데이터가 없습니다.'); }
@@ -468,6 +470,11 @@ function App() {
       transaction.update(mainScenarioRef, updates);
     });
 
+    // 2. 트랜잭션 직후, 결과 타임스탬프 확보
+    const updatedScenarioDoc = await getDoc(mainScenarioRef);
+    const newChoicesTimestamp = updatedScenarioDoc.data()?.lastUpdate || null;
+
+    // 3. 나머지 비-트랜잭션 DB 작업 수행
     await addDoc(getPersonalStoryLogRef(db, appId, userId), { action: playerChoice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: serverTimestamp() });
     
     if (llmResponse.majorEvent?.summary && llmResponse.majorEvent?.location) {
@@ -505,10 +512,10 @@ function App() {
     
     await updatePrivateState(llmResponse);
     
+    // 4. 마지막에 모든 로컬 상태 업데이트
     const newPublicChoices = llmResponse.choices || [];
     setDisplayedChoices(newPublicChoices);
-    const updatedScenarioDoc = await getDoc(mainScenarioRef);
-    setChoicesTimestamp(updatedScenarioDoc.data()?.lastUpdate || null);
+    setChoicesTimestamp(newChoicesTimestamp); // 확보해둔 타임스탬프로 설정
   };
 
   const getActionScope = (choice) => {
