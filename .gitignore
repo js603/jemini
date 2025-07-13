@@ -1,9 +1,5 @@
-# 빌드 결과물
-/build
-
+package.json
+package-lock.json
 # ESLint 캐시
 .eslintcache
-node_modules/.cache
-
-# ESLint cache
-node_modules/.cache/.eslintcache
+node_modules
