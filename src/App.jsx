@@ -972,7 +972,7 @@ function App() {
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
       `}</style>
     </div>
-  );
+  );
 }
 
 export default App;
