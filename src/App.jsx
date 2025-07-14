@@ -103,7 +103,7 @@ const generateWorldCreationPrompt = (theme) => {
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [personalStoryLog, setPersonalStoryLog] = useState([]);
-  const [privatePlayerState, setPrivatePlayerState] = useState(null); // 초기값을 null로 변경
+  const [privatePlayerState, setPrivatePlayerState] = useState(null);
   const [displayedChoices, setDisplayedChoices] = useState([]);
   const [choicesTimestamp, setChoicesTimestamp] = useState(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
@@ -269,6 +269,50 @@ function App() {
     }
   };
 
+  const callGeminiTextLLM = async (userPrompt, systemPromptToUse) => {
+    setIsTextLoading(true);
+    const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
+    const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
+    const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const payload = {
+      contents: [
+        { role: 'user', parts: [{ text: systemPromptToUse }] },
+        { role: 'model', parts: [{ text: '{}' }] },
+        { role: 'user', parts: [{ text: userPrompt }] }
+      ]
+    };
+    const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    try {
+      let response = await tryGeminiCall(mainApiKey);
+      if (!response.ok) {
+        response = await tryGeminiCall(backupApiKey);
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json();
+      const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      const jsonMatch = llmOutputText?.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+      
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      throw new Error('Valid JSON object or array not found in LLM response.');
+    } catch (error) {
+      console.error('LLM API call error:', error);
+      setLlmError(error.message || 'LLM 호출 실패');
+      return null;
+    } finally {
+      setIsTextLoading(false);
+    }
+  };
+
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
@@ -291,13 +335,11 @@ function App() {
     }
   }, []);
 
-  // ▼▼▼▼▼ 앱 시작 시 모든 초기화 과정을 순차적으로 처리하는 통합 훅 ▼▼▼▼▼
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
 
     const initializeGame = async () => {
       try {
-        // --- 1단계: 테마 팩 확인 및 생성 ---
         const themePacksRef = getThemePacksRef(db, appId);
         const themePacksDoc = await getDoc(themePacksRef);
         let currentThemePacks;
@@ -321,7 +363,6 @@ function App() {
         }
         setThemePacks(currentThemePacks);
 
-        // --- 2단계: 플레이어 상태 및 세계관 확인 ---
         const playerStateRef = getPrivatePlayerStateRef(db, appId, userId);
         const playerStateDoc = await getDoc(playerStateRef);
         const currentPlayerState = playerStateDoc.exists() ? playerStateDoc.data() : getDefaultPrivatePlayerState();
@@ -336,7 +377,6 @@ function App() {
         if (worldviewDoc.exists()) {
             currentWorldview = worldviewDoc.data();
         } else {
-            // --- 3단계: 새 플레이어이고 세계관이 없으면, 세계관 생성 ---
             if (!isCharacterCreated) {
                 if (!currentThemePacks) {
                     throw new Error("Theme packs are not available for world creation.");
@@ -356,8 +396,6 @@ function App() {
             }
         }
         setWorldview(currentWorldview);
-
-        // --- 최종 단계: 모든 초기화 작업이 끝났으므로, 메인 로딩 상태를 종료 ---
         setIsLoading(false);
 
       } catch (error) {
@@ -372,9 +410,8 @@ function App() {
   }, [isAuthReady, db, userId]);
 
   useEffect(() => {
-    if (!isAuthReady || !db || !userId) return;
+    if (isLoading || !isAuthReady || !db) return;
 
-    // 공용 데이터 실시간 감지
     const unsubscribes = [
       onSnapshot(getMainScenarioRef(db, appId), (snap) => {
         if (snap.exists()) {
@@ -408,32 +445,40 @@ function App() {
       }),
     ];
     return () => unsubscribes.forEach((unsub) => unsub());
-  }, [isAuthReady, db]);
+  }, [isLoading, isAuthReady, db]);
 
-  // 실시간 리스너는 분리하여 유지
   useEffect(() => {
-    if (!isAuthReady || !db || !userId) return;
+    if (isLoading || !isAuthReady || !db || !userId) return;
+    
     const unsub1 = onSnapshot(getWorldviewRef(db, appId), (snap) => {
-      if (snap.exists()) setWorldview(snap.data());
+      setWorldview(snap.exists() ? snap.data() : null);
     });
+
     const unsub2 = onSnapshot(getPrivatePlayerStateRef(db, appId, userId), (snap) => {
-        if(snap.exists()) setPrivatePlayerState(snap.data());
+      setPrivatePlayerState(snap.exists() ? snap.data() : getDefaultPrivatePlayerState());
     });
+    
+    const unsub3 = onSnapshot(query(getPersonalStoryLogRef(db, appId, userId), orderBy('timestamp', 'desc'), limit(50)), (snapshot) => {
+      const stories = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })).reverse();
+      setPersonalStoryLog(stories);
+    });
+
     return () => {
         unsub1();
         unsub2();
+        unsub3();
     };
-  }, [isAuthReady, db, userId]);
+  }, [isLoading, isAuthReady, db, userId]);
 
   useEffect(() => {
-    if (!db || !userId || allMajorEvents.length === 0 || !privatePlayerState) return;
+    if (!privatePlayerState || !db || !userId || allMajorEvents.length === 0) return;
     const currentKnownIds = privatePlayerState.knownEventIds || [];
     const newDiscoveredEvents = allMajorEvents.filter(event => event?.location === privatePlayerState.currentLocation && !currentKnownIds.includes(event.id)).map(event => event.id);
     if (newDiscoveredEvents.length > 0) {
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
       setDoc(privateStateRef, { knownEventIds: arrayUnion(...newDiscoveredEvents) }, { merge: true });
     }
-  }, [privatePlayerState?.currentLocation, allMajorEvents, privatePlayerState?.knownEventIds, db, userId]);
+  }, [privatePlayerState?.currentLocation, allMajorEvents, privatePlayerState?.knownEventIds]);
 
   useEffect(() => {
     if(!privatePlayerState) return;
@@ -528,7 +573,6 @@ function App() {
     return userPrompt;
   };
 
-  const callGeminiTextLLM = async (userPrompt, systemPromptToUse) => { setIsTextLoading(true); const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8'; const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84'; const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`; const payload = { contents: [{ role: 'user', parts: [{ text: systemPromptToUse }] }, { role: 'model', parts: [{ text: '{}' }] }, { role: 'user', parts: [{ text: userPrompt }] }] }; const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); try { let response = await tryGeminiCall(mainApiKey); if (!response.ok) { response = await tryGeminiCall(backupApiKey); } if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}`); } const result = await response.json(); const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text; const jsonMatch = llmOutputText?.match(/\{[\s\S]*\}/); if (jsonMatch) return JSON.parse(jsonMatch[0]); throw new Error('Valid JSON object not found in LLM response.'); } catch (error) { console.error('LLM API call error:', error); setLlmError(error.message || 'LLM 호출 실패'); return null; } finally { setIsTextLoading(false); } };
   const sendChatMessage = async () => { if (!db || !userId || !isAuthReady || !currentChatMessage.trim()) return; const messageText = currentChatMessage.trim(); setCurrentChatMessage(''); const chatCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'chatMessages'); if (messageText.startsWith('!')) { const actionText = messageText.substring(1).trim(); if (actionText) { await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message: `*${actionText} (선언)*`, isAction: true, timestamp: serverTimestamp() }); await handleDeclarativeAction(actionText); } } else { await addDoc(chatCollectionRef, { userId, displayName: getDisplayName(userId), message: messageText, isAction: false, timestamp: serverTimestamp() }); } };
 
   const updateNarratives = async (llmResponse, playerChoice, isDeclarative = false) => {
@@ -812,7 +856,7 @@ function App() {
     )
   }
   
-  if (isLoading || isGeneratingContent || !privatePlayerState) {
+  if (isLoading || isGeneratingContent) {
     const loadingMessage = isGeneratingContent 
       ? '초기 콘텐츠를 생성하는 중... (최대 1분 소요)' 
       : '데이터를 불러오는 중...';
@@ -838,7 +882,7 @@ function App() {
             <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>전체 데이터 초기화</button>
           </div>
           <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-            {(personalStoryLog || []).length === 0 && !privatePlayerState.characterCreated && (
+            {privatePlayerState && (personalStoryLog || []).length === 0 && !privatePlayerState.characterCreated && (
               <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
                 <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
                 <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
@@ -875,7 +919,7 @@ function App() {
 
   const renderChoices = () => (
     <div className="flex flex-col gap-3">
-      {privatePlayerState.characterCreated ? (
+      {privatePlayerState && privatePlayerState.characterCreated ? (
         [...(displayedChoices || []), ...(privatePlayerState.choices || [])].map((choice, index) => {
           if (!choice) return null;
           const scope = getActionScope(choice);
@@ -944,7 +988,7 @@ function App() {
           )}
         </div>
       )}
-      <div className="mb-2">
+      {privatePlayerState && <div className="mb-2">
         <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
           <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
           <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
@@ -990,7 +1034,7 @@ function App() {
             </div>
           </div>
         )}
-      </div>
+      </div>}
       <div className="mb-2">
         <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}>
           <h4 className="text-md font-semibold text-gray-200">세계의 연대기</h4>
