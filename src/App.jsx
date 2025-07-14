@@ -52,7 +52,7 @@ const getPersonalStoryLogRef = (db, appId, userId) => collection(db, 'artifacts'
 const getNpcRef = (db, appId, npcId) => doc(db, 'artifacts', appId, 'public', 'data', 'npcs', npcId);
 const getActiveTurningPointRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'turningPoints', 'active');
 const getWorldviewRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'worldview', 'main');
-const getThemePacksRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'themePacks', 'main'); // 테마 팩 경로 추가
+const getThemePacksRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'themePacks', 'main');
 
 // 상태 초기화 유틸
 const getDefaultGameState = () => ({
@@ -79,7 +79,6 @@ const getDefaultPrivatePlayerState = () => ({
   currentLocation: null,
 });
 
-// ▼▼▼▼▼ 동적 프롬프트 생성을 위한 함수 ▼▼▼▼▼
 const generateWorldCreationPrompt = (theme) => {
   const professionsString = JSON.stringify(theme.professions, null, 2);
   return `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다. 전통적인 판타지나 SF에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오. 애니메이션 스타일, 열혈 스포츠, 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다.
@@ -141,7 +140,6 @@ function App() {
   const [themePacks, setThemePacks] = useState(null);
   const [isGeneratingContent, setIsGeneratingContent] = useState(false);
 
-  // ▼▼▼▼▼ 테마 팩 생성을 위한 마스터 프롬프트 ▼▼▼▼▼
   const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
 당신은 상상력이 풍부한 TRPG 게임 시나리오 작가이자, 다양한 세계관을 기획하는 콘텐츠 전략가입니다.
@@ -216,7 +214,6 @@ function App() {
     return user?.nickname || `플레이어 ${safeUid.substring(0, 4)}`;
   };
   
-  // ▼▼▼▼▼ 데이터 초기화 함수 수정 ▼▼▼▼▼
   const resetAllGameData = async () => {
     if (!db || !isAuthReady || !auth.currentUser) return;
     setIsResetting(true);
@@ -252,8 +249,7 @@ function App() {
         await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
       }
       
-      // 단일 문서들 삭제 (테마 팩 포함)
-      await deleteDoc(getThemePacksRef(db, appId)); // 중요: 테마 팩 데이터 삭제
+      await deleteDoc(getThemePacksRef(db, appId));
       await deleteDoc(getWorldviewRef(db, appId));
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
@@ -295,73 +291,97 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!isAuthReady || !db) return;
-
-    const initializeGameContent = async () => {
-      const themePacksRef = getThemePacksRef(db, appId);
-      const docSnap = await getDoc(themePacksRef);
-
-      if (docSnap.exists()) {
-        console.log("Found existing theme packs. Loading...");
-        setThemePacks(docSnap.data().packs);
-      } else {
-        console.log("No theme packs found. Generating new ones...");
-        setIsGeneratingContent(true);
-        try {
-          const generatedPacks = await callGeminiTextLLM(masterPromptForThemeGeneration, masterPromptForThemeGeneration);
-          
-          if (generatedPacks && Array.isArray(generatedPacks)) {
-            const payload = { packs: generatedPacks, createdAt: serverTimestamp() };
-            await setDoc(themePacksRef, payload);
-            setThemePacks(generatedPacks);
-            console.log(`${generatedPacks.length} new theme packs generated and saved.`);
-          } else {
-            throw new Error("LLM did not return a valid array for theme packs.");
-          }
-        } catch (error) {
-          console.error("Failed to generate and save theme packs:", error);
-          setLlmError("초기 게임 콘텐츠 생성에 실패했습니다. 이 오류는 보통 일시적이니, 페이지를 새로고침 해보세요.");
-        } finally {
-          setIsGeneratingContent(false);
-        }
-      }
-    };
-
-    initializeGameContent();
-  }, [isAuthReady, db]);
-
+  // ▼▼▼▼▼ 앱 시작 시 모든 초기화 과정을 순차적으로 처리하는 통합 훅 ▼▼▼▼▼
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
 
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    getDoc(privateStateRef).then((docSnap) => {
-      if (!docSnap.exists()) {
-        setDoc(privateStateRef, getDefaultPrivatePlayerState());
+    const initializeGame = async () => {
+      try {
+        // --- 1단계: 테마 팩 확인 및 생성 ---
+        const themePacksRef = getThemePacksRef(db, appId);
+        const themePacksDoc = await getDoc(themePacksRef);
+        let currentThemePacks;
+
+        if (themePacksDoc.exists()) {
+          console.log("Theme packs found, loading...");
+          currentThemePacks = themePacksDoc.data().packs;
+        } else {
+          console.log("No theme packs, generating new ones...");
+          setIsGeneratingContent(true);
+          const generatedPacks = await callGeminiTextLLM(masterPromptForThemeGeneration, masterPromptForThemeGeneration);
+          
+          if (generatedPacks && Array.isArray(generatedPacks)) {
+            await setDoc(themePacksRef, { packs: generatedPacks, createdAt: serverTimestamp() });
+            currentThemePacks = generatedPacks;
+            console.log("New theme packs generated.");
+          } else {
+            throw new Error("Theme pack generation failed: LLM did not return an array.");
+          }
+          setIsGeneratingContent(false);
+        }
+        setThemePacks(currentThemePacks); // 생성/로드된 데이터를 즉시 state에 반영
+
+        // --- 2단계: 플레이어 상태 및 세계관 확인 ---
+        const playerStateRef = getPrivatePlayerStateRef(db, appId, userId);
+        const playerStateDoc = await getDoc(playerStateRef);
+        const isCharacterCreated = playerStateDoc.exists() && playerStateDoc.data().characterCreated;
+
+        const worldviewRef = getWorldviewRef(db, appId);
+        const worldviewDoc = await getDoc(worldviewRef);
+
+        // --- 3단계: 새 플레이어이고 세계관이 없으면, 세계관 생성 ---
+        if (!isCharacterCreated && !worldviewDoc.exists()) {
+          if (!currentThemePacks) {
+            throw new Error("Theme packs are not available for world creation.");
+          }
+          console.log("Creating new world for new player...");
+          const randomTheme = currentThemePacks[Math.floor(Math.random() * currentThemePacks.length)];
+          const dynamicPrompt = generateWorldCreationPrompt(randomTheme);
+          const llmResponse = await callGeminiTextLLM(dynamicPrompt, dynamicPrompt);
+          
+          if (llmResponse) {
+            await setDoc(worldviewRef, llmResponse);
+            console.log("New world created.");
+          } else {
+            throw new Error("World creation failed: LLM did not respond correctly.");
+          }
+        }
+
+        // --- 최종 단계: 모든 초기화 작업이 끝났으므로, 메인 로딩 상태를 종료 ---
+        setIsLoading(false);
+
+      } catch (error) {
+        console.error("Error during game initialization:", error);
+        setLlmError(error.message || "게임 초기화 중 심각한 오류가 발생했습니다.");
+        setIsLoading(false); // 에러 발생 시에도 로딩은 종료
+        setIsGeneratingContent(false);
       }
-    });
+    };
+
+    initializeGame();
+  }, [isAuthReady, db, userId]);
+
+  useEffect(() => {
+    if (isLoading || !isAuthReady || !db || !userId) return; // 초기화가 끝나기 전에는 리스너 설정 방지
+
+    // 플레이어 개인 상태 실시간 감지
+    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
     const unsubscribePrivateState = onSnapshot(privateStateRef, (snapshot) => {
       if (snapshot.exists()) {
         setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
+      } else {
+        setPrivatePlayerState(getDefaultPrivatePlayerState());
       }
-      if (isLoading) setIsLoading(false);
     });
 
+    // 개인 로그 실시간 감지
     const personalLogQuery = query(getPersonalStoryLogRef(db, appId, userId), orderBy('timestamp', 'desc'), limit(50));
     const unsubscribePersonalLog = onSnapshot(personalLogQuery, (snapshot) => {
       const stories = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })).reverse();
       setPersonalStoryLog(stories);
     });
 
-    return () => {
-      unsubscribePrivateState();
-      unsubscribePersonalLog();
-    };
-  }, [isAuthReady, db, userId]);
-
-  useEffect(() => {
-    if (!isAuthReady || !db) return;
-
+    // 공용 데이터 실시간 감지
     const unsubscribes = [
       onSnapshot(getMainScenarioRef(db, appId), (snap) => {
         if (snap.exists()) {
@@ -396,9 +416,10 @@ function App() {
       onSnapshot(getActiveTurningPointRef(db, appId), (docSnap) => {
         setActiveTurningPoint(docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null);
       }),
+      ...unsubscribes
     ];
     return () => unsubscribes.forEach((unsub) => unsub());
-  }, [isAuthReady, db]);
+  }, [isLoading, isAuthReady, db, userId]); // isLoading을 추가하여 초기화 완료 후 리스너 설정
 
   useEffect(() => {
     if (!db || !userId || allMajorEvents.length === 0) return;
@@ -448,42 +469,6 @@ function App() {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [combinedFeed, accordion.chat]);
-  
-  useEffect(() => {
-    if (isLoading || isGeneratingContent || !db || !themePacks) return;
-
-    if (!privatePlayerState.characterCreated && !worldview) {
-      
-      const createInitialWorld = async () => {
-        console.log("No character and no worldview detected. Creating a new world to start...");
-        setIsTextLoading(true);
-        try {
-          const randomTheme = themePacks[Math.floor(Math.random() * themePacks.length)];
-          console.log(`Selected Theme for World Creation: ${randomTheme.name}`);
-          const dynamicPrompt = generateWorldCreationPrompt(randomTheme);
-          
-          const worldviewRef = getWorldviewRef(db, appId);
-          const llmResponse = await callGeminiTextLLM(dynamicPrompt, dynamicPrompt);
-
-          if (llmResponse) {
-            await setDoc(worldviewRef, llmResponse);
-            setWorldview(llmResponse);
-            console.log("Initial world created successfully. Ready for character selection.");
-          } else {
-            throw new Error("세계관 생성에 실패했습니다. LLM이 응답하지 않았습니다.");
-          }
-        } catch (error) {
-          console.error(error);
-          setLlmError("초기 세계를 생성하는 데 실패했습니다. 잠시 후 페이지를 새로고침하거나, 문제가 지속되면 데이터 초기화를 시도해 주세요.");
-        } finally {
-          setIsTextLoading(false);
-        }
-      };
-
-      createInitialWorld();
-    }
-  }, [isLoading, isGeneratingContent, db, privatePlayerState.characterCreated, worldview, themePacks]);
-
 
   const buildSystemPrompt = (worldviewData) => {
     const worldSetting = worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewData.title}\n${worldviewData.atmosphere}\n배경: ${worldviewData.background_story}` : `### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다... (기본값)`;
@@ -640,13 +625,11 @@ function App() {
   const createCharacter = async (choice) => {
     setIsTextLoading(true);
     try {
-      let currentWorldview = worldview;
-
-      if (!currentWorldview || !currentWorldview.professions) {
+      if (!worldview || !worldview.professions) {
         throw new Error("Worldview is not loaded. Cannot create character.");
       }
 
-      const selectedProfession = currentWorldview.professions.find(p => p.name === choice);
+      const selectedProfession = worldview.professions.find(p => p.name === choice);
 
       if (selectedProfession) {
         await setDoc(getPrivatePlayerStateRef(db, appId, userId), { 
@@ -654,7 +637,7 @@ function App() {
           characterCreated: true, 
           profession: selectedProfession.name, 
           initialMotivation: selectedProfession.motivation, 
-          currentLocation: currentWorldview.startingLocation
+          currentLocation: worldview.startingLocation
         }, { merge: true });
 
         await addDoc(getPersonalStoryLogRef(db, appId, userId), { 
@@ -671,7 +654,7 @@ function App() {
           
           const newPublicLogEntry = { 
             actor: { id: userId, displayName: getDisplayName(userId) }, 
-            log: `새로운 모험가, '${getDisplayName(userId)}'님이 '${currentWorldview.startingLocation}'에 모습을 드러냈습니다.`, 
+            log: `새로운 모험가, '${getDisplayName(userId)}'님이 '${worldview.startingLocation}'에 모습을 드러냈습니다.`, 
             timestamp: new Date(), 
           };
           const updatedPublicLog = [...cleanedPublicLog, newPublicLogEntry];
@@ -679,7 +662,7 @@ function App() {
           transaction.set(mainScenarioRef, payload, { merge: true });
         });
 
-        const startingChoices = currentWorldview.startingChoices;
+        const startingChoices = worldview.startingChoices;
         setDisplayedChoices(startingChoices);
         
         const updatedDoc = await getDoc(mainScenarioRef);
@@ -823,12 +806,11 @@ function App() {
       </div>
     )
   }
-
-  if (isLoading || isGeneratingContent || !themePacks || (!worldview && !privatePlayerState.characterCreated)) {
-    let loadingMessage = '데이터를 불러오는 중...';
-    if (isGeneratingContent) loadingMessage = '초기 콘텐츠를 생성하는 중... (최대 1분 소요)';
-    else if (!themePacks) loadingMessage = '게임 테마를 준비하는 중...';
-    else if (!worldview && !privatePlayerState.characterCreated) loadingMessage = '세계를 구축하는 중...';
+  
+  if (isLoading || isGeneratingContent) {
+    const loadingMessage = isGeneratingContent 
+      ? '초기 콘텐츠를 생성하는 중... (최대 1분 소요)' 
+      : '데이터를 불러오는 중...';
 
     return (
       <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center">
