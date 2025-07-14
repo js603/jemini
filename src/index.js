@@ -14,7 +14,7 @@ root.render(
   </React.StrictMode>
 );
 
-// 만약 React 17 이하 버전을 사용 중이거나,
+// 만약 React 17 이하 버전을 사용 중이거나,  
 // createRoot를 사용할 수 없는 환경이라면 아래 코드를 사용합니다.
 /*
 ReactDOM.render(
