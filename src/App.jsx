@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import {
@@ -384,10 +385,7 @@ function App() {
     }
   }, [isLoading, privatePlayerState.characterCreated, worldview, db]); // 의존성 배열이 매우 중요합니다.
 
-  // ====================================================================
-  // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-  // 아래는 '데이터 초기화' 후 세계관이 자동으로 생성되도록 추가된 코드입니다.
-  // ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+
   useEffect(() => {
     // 앱 로딩이 끝나고, DB가 준비되었는지 확인
     if (isLoading || !db || !isAuthReady) {
@@ -429,9 +427,6 @@ function App() {
     }
     // 의존성 배열은 이 로직이 필요한 정확한 시점에 실행되도록 보장합니다.
   }, [isLoading, db, isAuthReady, privatePlayerState.characterCreated, worldview]);
-  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-  // 여기까지가 추가된 코드입니다.
-  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
   const buildSystemPrompt = (worldviewData) => {
     const worldSetting = worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewData.title}\n${worldviewData.atmosphere}\n배경: ${worldviewData.background_story}` : `### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다... (기본값)`;
