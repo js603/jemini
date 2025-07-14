@@ -103,7 +103,7 @@ const generateWorldCreationPrompt = (theme) => {
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
   const [personalStoryLog, setPersonalStoryLog] = useState([]);
-  const [privatePlayerState, setPrivatePlayerState] = useState(getDefaultPrivatePlayerState());
+  const [privatePlayerState, setPrivatePlayerState] = useState(null); // 초기값을 null로 변경
   const [displayedChoices, setDisplayedChoices] = useState([]);
   const [choicesTimestamp, setChoicesTimestamp] = useState(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
@@ -319,33 +319,43 @@ function App() {
           }
           setIsGeneratingContent(false);
         }
-        setThemePacks(currentThemePacks); // 생성/로드된 데이터를 즉시 state에 반영
+        setThemePacks(currentThemePacks);
 
         // --- 2단계: 플레이어 상태 및 세계관 확인 ---
         const playerStateRef = getPrivatePlayerStateRef(db, appId, userId);
         const playerStateDoc = await getDoc(playerStateRef);
-        const isCharacterCreated = playerStateDoc.exists() && playerStateDoc.data().characterCreated;
-
+        const currentPlayerState = playerStateDoc.exists() ? playerStateDoc.data() : getDefaultPrivatePlayerState();
+        setPrivatePlayerState(currentPlayerState);
+        
+        const isCharacterCreated = currentPlayerState.characterCreated;
+        
         const worldviewRef = getWorldviewRef(db, appId);
         const worldviewDoc = await getDoc(worldviewRef);
+        let currentWorldview;
 
-        // --- 3단계: 새 플레이어이고 세계관이 없으면, 세계관 생성 ---
-        if (!isCharacterCreated && !worldviewDoc.exists()) {
-          if (!currentThemePacks) {
-            throw new Error("Theme packs are not available for world creation.");
-          }
-          console.log("Creating new world for new player...");
-          const randomTheme = currentThemePacks[Math.floor(Math.random() * currentThemePacks.length)];
-          const dynamicPrompt = generateWorldCreationPrompt(randomTheme);
-          const llmResponse = await callGeminiTextLLM(dynamicPrompt, dynamicPrompt);
-          
-          if (llmResponse) {
-            await setDoc(worldviewRef, llmResponse);
-            console.log("New world created.");
-          } else {
-            throw new Error("World creation failed: LLM did not respond correctly.");
-          }
+        if (worldviewDoc.exists()) {
+            currentWorldview = worldviewDoc.data();
+        } else {
+            // --- 3단계: 새 플레이어이고 세계관이 없으면, 세계관 생성 ---
+            if (!isCharacterCreated) {
+                if (!currentThemePacks) {
+                    throw new Error("Theme packs are not available for world creation.");
+                }
+                console.log("Creating new world for new player...");
+                const randomTheme = currentThemePacks[Math.floor(Math.random() * currentThemePacks.length)];
+                const dynamicPrompt = generateWorldCreationPrompt(randomTheme);
+                const llmResponse = await callGeminiTextLLM(dynamicPrompt, dynamicPrompt);
+                
+                if (llmResponse) {
+                    await setDoc(worldviewRef, llmResponse);
+                    currentWorldview = llmResponse;
+                    console.log("New world created.");
+                } else {
+                    throw new Error("World creation failed: LLM did not respond correctly.");
+                }
+            }
         }
+        setWorldview(currentWorldview);
 
         // --- 최종 단계: 모든 초기화 작업이 끝났으므로, 메인 로딩 상태를 종료 ---
         setIsLoading(false);
@@ -353,7 +363,7 @@ function App() {
       } catch (error) {
         console.error("Error during game initialization:", error);
         setLlmError(error.message || "게임 초기화 중 심각한 오류가 발생했습니다.");
-        setIsLoading(false); // 에러 발생 시에도 로딩은 종료
+        setIsLoading(false);
         setIsGeneratingContent(false);
       }
     };
@@ -362,24 +372,7 @@ function App() {
   }, [isAuthReady, db, userId]);
 
   useEffect(() => {
-    if (isLoading || !isAuthReady || !db || !userId) return; // 초기화가 끝나기 전에는 리스너 설정 방지
-
-    // 플레이어 개인 상태 실시간 감지
-    const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
-    const unsubscribePrivateState = onSnapshot(privateStateRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setPrivatePlayerState({ ...getDefaultPrivatePlayerState(), ...snapshot.data() });
-      } else {
-        setPrivatePlayerState(getDefaultPrivatePlayerState());
-      }
-    });
-
-    // 개인 로그 실시간 감지
-    const personalLogQuery = query(getPersonalStoryLogRef(db, appId, userId), orderBy('timestamp', 'desc'), limit(50));
-    const unsubscribePersonalLog = onSnapshot(personalLogQuery, (snapshot) => {
-      const stories = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })).reverse();
-      setPersonalStoryLog(stories);
-    });
+    if (!isAuthReady || !db || !userId) return;
 
     // 공용 데이터 실시간 감지
     const unsubscribes = [
@@ -393,9 +386,6 @@ function App() {
             lastUpdate: data.lastUpdate,
           }));
         }
-      }),
-      onSnapshot(getWorldviewRef(db, appId), (snap) => {
-        setWorldview(snap.exists() ? snap.data() : null);
       }),
       onSnapshot(getGameStatusRef(db, appId), (docSnap) => {
         setActionLocks(docSnap.data()?.actionLocks || {});
@@ -416,28 +406,43 @@ function App() {
       onSnapshot(getActiveTurningPointRef(db, appId), (docSnap) => {
         setActiveTurningPoint(docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null);
       }),
-      ...unsubscribes
     ];
     return () => unsubscribes.forEach((unsub) => unsub());
-  }, [isLoading, isAuthReady, db, userId]); // isLoading을 추가하여 초기화 완료 후 리스너 설정
+  }, [isAuthReady, db]);
+
+  // 실시간 리스너는 분리하여 유지
+  useEffect(() => {
+    if (!isAuthReady || !db || !userId) return;
+    const unsub1 = onSnapshot(getWorldviewRef(db, appId), (snap) => {
+      if (snap.exists()) setWorldview(snap.data());
+    });
+    const unsub2 = onSnapshot(getPrivatePlayerStateRef(db, appId, userId), (snap) => {
+        if(snap.exists()) setPrivatePlayerState(snap.data());
+    });
+    return () => {
+        unsub1();
+        unsub2();
+    };
+  }, [isAuthReady, db, userId]);
 
   useEffect(() => {
-    if (!db || !userId || allMajorEvents.length === 0) return;
+    if (!db || !userId || allMajorEvents.length === 0 || !privatePlayerState) return;
     const currentKnownIds = privatePlayerState.knownEventIds || [];
     const newDiscoveredEvents = allMajorEvents.filter(event => event?.location === privatePlayerState.currentLocation && !currentKnownIds.includes(event.id)).map(event => event.id);
     if (newDiscoveredEvents.length > 0) {
       const privateStateRef = getPrivatePlayerStateRef(db, appId, userId);
       setDoc(privateStateRef, { knownEventIds: arrayUnion(...newDiscoveredEvents) }, { merge: true });
     }
-  }, [privatePlayerState.currentLocation, allMajorEvents, privatePlayerState.knownEventIds, db, userId]);
+  }, [privatePlayerState?.currentLocation, allMajorEvents, privatePlayerState?.knownEventIds, db, userId]);
 
   useEffect(() => {
+    if(!privatePlayerState) return;
     const knownEvents = allMajorEvents.filter((event) => (privatePlayerState.knownEventIds || []).includes(event?.id));
     setKnownMajorEvents(knownEvents);
-  }, [privatePlayerState.knownEventIds, allMajorEvents]);
+  }, [privatePlayerState?.knownEventIds, allMajorEvents]);
 
   useEffect(() => {
-    if (!db || !userId || !nickname) return;
+    if (!db || !userId || !nickname || !privatePlayerState) return;
     const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'activeUsers', userId);
     setDoc(
       userDocRef,
@@ -456,7 +461,7 @@ function App() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [db, userId, nickname, privatePlayerState.profession]);
+  }, [db, userId, nickname, privatePlayerState?.profession]);
 
   useEffect(() => {
     if (accordion.gameLog && logEndRef.current) {
@@ -618,7 +623,7 @@ function App() {
     }
   };
 
-  const getActionScope = (choice) => { const npcMatch = choice.match(/(.+)에게 말을 건다/); if (npcMatch) { return `npc:${npcMatch[1].trim()}`; } return `location:${privatePlayerState.currentLocation}`; };
+  const getActionScope = (choice) => { const npcMatch = choice.match(/(.+)에게 말을 건다/); if (npcMatch) { return `npc:${npcMatch[1].trim()}`; } return `location:${privatePlayerState?.currentLocation}`; };
   const toggleActiveMemory = async (clue, activate) => { if (!db || !userId) return; const privateStateRef = getPrivatePlayerStateRef(db, appId, userId); let currentMemories = privatePlayerState.activeMemories || []; if (activate) { if (!currentMemories.includes(clue)) { currentMemories = [...currentMemories, clue]; } } else { currentMemories = currentMemories.filter((memory) => memory !== clue); } await setDoc(privateStateRef, { activeMemories: currentMemories }, { merge: true }); };
   const summarizeAndArchiveEvents = async () => { alert("시대 요약 기능은 다음 업데이트에서 구현될 예정입니다. 이 버튼을 누르면, '세계의 연대기'에 기록된 주요 사건들이 하나의 '역사 요약문'으로 압축되어, 게임의 장기적인 맥락을 유지하면서도 데이터 부담을 줄이게 됩니다."); };
 
@@ -777,7 +782,7 @@ function App() {
     }
   };
 
-  const handleChoiceClick = async (choice) => { if (isTextLoading) return; if (!privatePlayerState.characterCreated) { await createCharacter(choice); } else { await performPlayerAction(choice); } };
+  const handleChoiceClick = async (choice) => { if (isTextLoading || !privatePlayerState) return; if (!privatePlayerState.characterCreated) { await createCharacter(choice); } else { await performPlayerAction(choice); } };
   const toggleAccordion = (key) => { setAccordion((prev) => ({ ...prev, [key]: !prev[key] })); };
 
   const LlmErrorModal = () => (
@@ -807,7 +812,7 @@ function App() {
     )
   }
   
-  if (isLoading || isGeneratingContent) {
+  if (isLoading || isGeneratingContent || !privatePlayerState) {
     const loadingMessage = isGeneratingContent 
       ? '초기 콘텐츠를 생성하는 중... (최대 1분 소요)' 
       : '데이터를 불러오는 중...';
