@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import {
@@ -6,7 +5,7 @@ import {
   signInAnonymously,
   signInWithCustomToken,
   onAuthStateChanged,
-  deleteUser, // deleteUser 추가
+  deleteUser,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -53,6 +52,7 @@ const getPersonalStoryLogRef = (db, appId, userId) => collection(db, 'artifacts'
 const getNpcRef = (db, appId, npcId) => doc(db, 'artifacts', appId, 'public', 'data', 'npcs', npcId);
 const getActiveTurningPointRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'turningPoints', 'active');
 const getWorldviewRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'worldview', 'main');
+const getThemePacksRef = (db, appId) => doc(db, 'artifacts', appId, 'public', 'data', 'themePacks', 'main'); // 테마 팩 경로 추가
 
 // 상태 초기화 유틸
 const getDefaultGameState = () => ({
@@ -78,6 +78,28 @@ const getDefaultPrivatePlayerState = () => ({
   knownEventIds: [],
   currentLocation: null,
 });
+
+// ▼▼▼▼▼ 동적 프롬프트 생성을 위한 함수 ▼▼▼▼▼
+const generateWorldCreationPrompt = (theme) => {
+  const professionsString = JSON.stringify(theme.professions, null, 2);
+  return `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다. 전통적인 판타지나 SF에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오. 애니메이션 스타일, 열혈 스포츠, 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다.
+아래 JSON 구조와 예시를 '참고'하여, 완전히 새롭고 창의적인 세계관을 생성해주십시오. 예시와 똑같이 만들지 마십시오.
+
+### JSON 출력 구조 (이 구조를 반드시 따르세요)
+{
+  "title": "세계관의 이름 (예: '${theme.title}')",
+  "genre": "세계관의 장르 (예: '${theme.genre}')",
+  "atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글",
+  "background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사 또는 이야기의 시작점",
+  "startingLocation": "플레이어가 처음 눈을 뜨게 될 시작 장소의 이름 (예: '${theme.location}')",
+  "professions": ${professionsString},
+  "startingChoices": [
+    "주변을 둘러보며 현재 상황을 파악한다.",
+    "가장 가까운 사람에게 말을 걸어본다.",
+    "조용히 마음을 가다듬는다."
+  ]
+}`;
+};
 
 function App() {
   const [gameState, setGameState] = useState(getDefaultGameState());
@@ -116,6 +138,44 @@ function App() {
   const [knownMajorEvents, setKnownMajorEvents] = useState([]);
   const [activeTurningPoint, setActiveTurningPoint] = useState(null);
   const [worldview, setWorldview] = useState(null);
+  const [themePacks, setThemePacks] = useState(null);
+  const [isGeneratingContent, setIsGeneratingContent] = useState(false);
+
+  // ▼▼▼▼▼ 테마 팩 생성을 위한 마스터 프롬프트 ▼▼▼▼▼
+  const masterPromptForThemeGeneration = `
+# 페르소나 (Persona)
+당신은 상상력이 풍부한 TRPG 게임 시나리오 작가이자, 다양한 세계관을 기획하는 콘텐츠 전략가입니다.
+
+# 임무 (Task)
+당신의 임무는 아래의 'JSON 스키마'와 '좋은 예시'를 참고하여, 플레이어들에게 다채로운 경험을 제공할 수 있는 새로운 '테마 팩'을 10개 생성하는 것입니다.
+
+# JSON 스키마 (JSON Schema) - 각 테마 팩은 반드시 이 구조를 따라야 합니다.
+{
+  "name": "테마의 이름 (예: 판타지, 스포츠)",
+  "title": "세계관의 제목",
+  "genre": "세계관의 구체적인 장르",
+  "location": "시작 장소",
+  "professions": [
+    { "name": "역할 1의 이름", "motivation": "역할 1의 동기" },
+    { "name": "역할 2의 이름", "motivation": "역할 2의 동기" },
+    { "name": "역할 3의 이름", "motivation": "역할 3의 동기" },
+    { "name": "역할 4의 이름", "motivation": "역할 4의 동기" }
+  ]
+}
+
+# 좋은 예시 (Good Examples) - 이런 스타일과 품질로 생성해주세요.
+[
+  { "name": "판타지", "title": "고대 용의 마지막 눈물", "genre": "에픽 판타지 어드벤처", "location": "세상 끝에 있는 잊혀진 신전", "professions": [{ "name": "그림자 속 암살자", "motivation": "왕국을 배신한 옛 스승에게 복수하기 위해 어둠 속에서 힘을 길렀습니다." }] },
+  { "name": "사이버펑크/SF", "title": "네온 비가 내리는 2242년", "genre": "사이버펑크 느와르", "location": "거대 기업의 그림자 아래 있는 뒷골목", "professions": [{ "name": "기억을 거래하는 정보상", "motivation": "도시의 모든 비밀을 알고 있지만, 정작 자신의 과거는 돈을 주고 사야만 합니다." }] }
+]
+
+# 지시사항 (Instructions)
+1.  서로 다른 컨셉의 창의적인 테마 팩 10개를 생성해주세요. 생성되는 10개의 테마는 이름, 장르, 컨셉 면에서 서로 중복되어서는 안 됩니다.
+2.  장르는 최대한 다양하게 조합해주세요. (예: 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 정치 스릴러, 시대극, 아이돌 성장물 등)
+3.  각 테마 팩의 내용은 서로 논리적으로 연결되어야 합니다.
+4.  최종 결과물은 다른 설명 없이, 오직 하나의 완벽한 JSON 배열 \`[ ... ]\` 형식으로만 출력해주세요.
+`;
+
 
   const combinedFeed = useMemo(() => {
     const chatFeed = (chatMessages || []).map((msg) => ({
@@ -155,7 +215,8 @@ function App() {
     const user = activeUsers.find((u) => u.id === uid);
     return user?.nickname || `플레이어 ${safeUid.substring(0, 4)}`;
   };
-
+  
+  // ▼▼▼▼▼ 데이터 초기화 함수 수정 ▼▼▼▼▼
   const resetAllGameData = async () => {
     if (!db || !isAuthReady || !auth.currentUser) return;
     setIsResetting(true);
@@ -190,7 +251,9 @@ function App() {
         }
         await deleteDoc(doc(db, 'artifacts', appId, 'users', userDoc.id));
       }
-
+      
+      // 단일 문서들 삭제 (테마 팩 포함)
+      await deleteDoc(getThemePacksRef(db, appId)); // 중요: 테마 팩 데이터 삭제
       await deleteDoc(getWorldviewRef(db, appId));
       await deleteDoc(getMainScenarioRef(db, appId));
       await deleteDoc(getGameStatusRef(db, appId));
@@ -231,6 +294,42 @@ function App() {
       setLlmError('Firebase 초기화에 실패했습니다.');
     }
   }, []);
+
+  useEffect(() => {
+    if (!isAuthReady || !db) return;
+
+    const initializeGameContent = async () => {
+      const themePacksRef = getThemePacksRef(db, appId);
+      const docSnap = await getDoc(themePacksRef);
+
+      if (docSnap.exists()) {
+        console.log("Found existing theme packs. Loading...");
+        setThemePacks(docSnap.data().packs);
+      } else {
+        console.log("No theme packs found. Generating new ones...");
+        setIsGeneratingContent(true);
+        try {
+          const generatedPacks = await callGeminiTextLLM(masterPromptForThemeGeneration, masterPromptForThemeGeneration);
+          
+          if (generatedPacks && Array.isArray(generatedPacks)) {
+            const payload = { packs: generatedPacks, createdAt: serverTimestamp() };
+            await setDoc(themePacksRef, payload);
+            setThemePacks(generatedPacks);
+            console.log(`${generatedPacks.length} new theme packs generated and saved.`);
+          } else {
+            throw new Error("LLM did not return a valid array for theme packs.");
+          }
+        } catch (error) {
+          console.error("Failed to generate and save theme packs:", error);
+          setLlmError("초기 게임 콘텐츠 생성에 실패했습니다. 이 오류는 보통 일시적이니, 페이지를 새로고침 해보세요.");
+        } finally {
+          setIsGeneratingContent(false);
+        }
+      }
+    };
+
+    initializeGameContent();
+  }, [isAuthReady, db]);
 
   useEffect(() => {
     if (!isAuthReady || !db || !userId) return;
@@ -349,75 +448,33 @@ function App() {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [combinedFeed, accordion.chat]);
-
+  
   useEffect(() => {
-    // 앱이 로딩 상태가 아니고, 캐릭터는 생성되었는데, 세계관이 없는 경우를 감지
-    if (!isLoading && privatePlayerState.characterCreated && !worldview && db) {
-      
-      // 이 함수는 세계관이 없을 때만 호출됩니다.
-      const createMissingWorld = async () => {
-        console.warn("Character exists but worldview is missing. Re-creating world...");
-        
-        // 함수 실행 중 중복 호출 방지를 위해 임시로 worldview를 객체로 설정
-        setWorldview({}); 
+    if (isLoading || isGeneratingContent || !db || !themePacks) return;
 
-        try {
-          const worldviewRef = getWorldviewRef(db, appId);
-          // LLM을 호출하여 세계관 생성
-          const llmResponse = await callGeminiTextLLM(worldCreationPrompt, worldCreationPrompt);
-
-          if (llmResponse) {
-            await setDoc(worldviewRef, llmResponse);
-            // 성공적으로 생성된 세계관을 상태에 반영하면, 무한 루프가 깨지고 정상 렌더링됩니다.
-            setWorldview(llmResponse); 
-            console.log("World created successfully to resolve stuck state.");
-          } else {
-            // LLM 호출 실패 시 에러 처리
-            throw new Error("세계관 자동 복구에 실패했습니다.");
-          }
-        } catch (error) {
-          console.error(error);
-          setLlmError("세계관 정보가 없어 게임을 시작할 수 없습니다. '전체 데이터 초기화'를 시도해 주세요.");
-        }
-      };
-
-      createMissingWorld();
-    }
-  }, [isLoading, privatePlayerState.characterCreated, worldview, db]); // 의존성 배열이 매우 중요합니다.
-
-
-  useEffect(() => {
-    // 앱 로딩이 끝나고, DB가 준비되었는지 확인
-    if (isLoading || !db || !isAuthReady) {
-      return;
-    }
-
-    // 캐릭터가 아직 생성되지 않았고, 불러온 세계관도 없을 때
     if (!privatePlayerState.characterCreated && !worldview) {
       
       const createInitialWorld = async () => {
         console.log("No character and no worldview detected. Creating a new world to start...");
-        // 중복 생성을 막기 위해 임시 로딩 상태 활성화
         setIsTextLoading(true);
         try {
-          const worldviewRef = getWorldviewRef(db, appId);
+          const randomTheme = themePacks[Math.floor(Math.random() * themePacks.length)];
+          console.log(`Selected Theme for World Creation: ${randomTheme.name}`);
+          const dynamicPrompt = generateWorldCreationPrompt(randomTheme);
           
-          // LLM을 호출하여 세계관 생성
-          const llmResponse = await callGeminiTextLLM(worldCreationPrompt, worldCreationPrompt);
+          const worldviewRef = getWorldviewRef(db, appId);
+          const llmResponse = await callGeminiTextLLM(dynamicPrompt, dynamicPrompt);
 
           if (llmResponse) {
-            // Firestore에 세계관 저장
             await setDoc(worldviewRef, llmResponse);
-            // 앱의 state에 세계관 설정 (이것으로 UI가 다시 렌더링됩니다)
             setWorldview(llmResponse);
             console.log("Initial world created successfully. Ready for character selection.");
           } else {
-            // LLM 호출 실패 시 에러 처리
             throw new Error("세계관 생성에 실패했습니다. LLM이 응답하지 않았습니다.");
           }
         } catch (error) {
           console.error(error);
-          setLlmError("초기 세계를 생성하는 데 실패했습니다. 잠시 후 페이지를 새로고침하거나, 문제가 지속되면 '전체 데이터 초기화'를 다시 시도해 주세요.");
+          setLlmError("초기 세계를 생성하는 데 실패했습니다. 잠시 후 페이지를 새로고침하거나, 문제가 지속되면 데이터 초기화를 시도해 주세요.");
         } finally {
           setIsTextLoading(false);
         }
@@ -425,35 +482,13 @@ function App() {
 
       createInitialWorld();
     }
-    // 의존성 배열은 이 로직이 필요한 정확한 시점에 실행되도록 보장합니다.
-  }, [isLoading, db, isAuthReady, privatePlayerState.characterCreated, worldview]);
+  }, [isLoading, isGeneratingContent, db, privatePlayerState.characterCreated, worldview, themePacks]);
+
 
   const buildSystemPrompt = (worldviewData) => {
     const worldSetting = worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewData.title}\n${worldviewData.atmosphere}\n배경: ${worldviewData.background_story}` : `### 세계관 설정: 페이디드 판타지 (Faded Fantasy) 이 세계는 오래되었고, 과거의 영광은 빛이 바랬습니다... (기본값)`;
     return `### 페르소나 (Persona) 당신은 이 세계의 '수호자'이자 '사관(史官)'이며, 플레이어들에게는 '게임 마스터(GM)'로 알려져 있습니다. 당신의 임무는 단순한 이야기 생성을 넘어, 일관된 역사와 살아 숨 쉬는 세계관을 구축하는 것입니다. 모든 묘사와 사건은 이 세계의 정해진 분위기와 역사적 사실 위에서 피어나는 한 편의 서사시여야 합니다. ${worldSetting} ### 핵심 구동 원칙 1. **일관성의 원칙 (Canon) (가장 중요)**: User Prompt에 제공된 [세계의 연대기], [주요 세력 및 인물], [플레이어 정보]는 이 세계의 '정사(正史)'입니다. 당신은 절대 이 사실들을 왜곡하거나 모순되는 내용을 만들어서는 안 됩니다. 이 정보들을 바탕으로 세계를 확장해 나가십시오. 2. **상호연결성의 원칙 (Interconnection)**: 당신은 뛰어난 이야기꾼으로서, 현재 발생하는 사건을 과거의 역사나 다른 플레이어의 행적과 연결지어야 합니다. 예를 들어, 한 플레이어가 던전에서 발견한 고대 문양은, 다른 플레이어가 수도에서 쫓고 있는 비밀 결사의 상징일 수 있습니다. 세상이 서로 연결되어 있음을 플레이어가 느끼게 하십시오. 3. **장면 중심의 서사 원칙 (Scene-Centric)**: 플레이어의 '[선택]'은 하나의 '장면'을 시작하는 것과 같습니다. 당신의 "personalStory"는 반드시 그 선택의 즉각적인 결과와 묘사로 시작되어야 합니다. 대화라면 실제 대화 내용이, 행동이라면 그 행동의 과정과 결과가 구체적으로 서술되어야 합니다. 4. **'보여주기, 말하지 않기' 원칙 (Show, Don't Tell)**: "마을이 가난하다"고 설명하지 마십시오. 대신 "굶주린 아이들이 흙바닥에 주저앉아 있고, 대부분의 건물은 지붕이 허술하게 덧대어져 있다"고 묘사하십시오. 플레이어가 스스로 분위기와 상황을 파악하게 만드십시오. ### [추가] NPC 상호작용 규칙 - 플레이어가 NPC와 상호작용할 때, 해당 NPC의 [페르소나 카드]가 제공될 수 있습니다. - 당신은 반드시 이 [페르소나 카드]에 명시된 '핵심 정체성'과 '기억 로그'를 바탕으로 NPC의 대사와 행동을 일관성 있게 생성해야 합니다. - 상호작용의 결과로 NPC가 새로운 사실을 알게 되거나 감정이 변했다면, 이를 반영할 '기억 로그 업데이트'를 JSON 출력의 'npcMemoryUpdate' 필드에 요약하여 포함시키십시오. ### JSON 출력 구조 {"publicLogEntry": "만약 이 행동이 주변의 다른 플레이어나 NPC가 명백히 인지할 수 있는 '공개적인 사건'이라면, 3인칭 시점의 객관적인 기록을 한 문장으로 작성. (예: '플레이어 A가 경비병을 공격했다.') 그렇지 않으면 null.","personalStory": "플레이어의 선택으로 시작된 '장면'에 대한 상세하고 감정적인 1인칭 또는 2인칭 서사. 플레이어의 내면 묘사, 감각, 대화 내용 등을 포함.","choices": ["'personalStory'의 결과에 따라 플레이어가 할 수 있는 논리적인 다음 행동들."],"privateChoices": ["오직 행동 주체의 특성 때문에 가능한 특별한 행동들."],"groupChoices": ["같은 그룹 소속원들만 할 수 있는 비밀 행동들."],"majorEvent": {"summary": "만약 이 사건이 후대에 '역사'로 기록될 만한 중대한 전환점이라면, 사관의 어조로 요약. (예: '왕국력 342년, 방랑자의 안식처에서 발생한 이 사건은 훗날 '붉은 달 교단'의 부흥을 알리는 서막이 되었다.') 그렇지 않으면 null.","location": "사건이 발생한 장소 이름. majorEvent가 있을 경우 필수."},"sharedStateUpdates": {"subtleClues": [{"location": "장소명", "clue": "새롭게 생성된 단서"}]},"privateStateUpdates": {"location": "플레이어의 새로운 현재 위치. 변경되었을 경우에만 포함.","inventory": ["업데이트된 전체 인벤토리 목록"],"stats": {"strength": 12, "intelligence": 10, "agility": 10, "charisma": 10 },"activeQuests": ["업데이트된 개인 퀘스트 목록"],"knownClues": ["새롭게 알게 된 단서 목록"],"groups": ["업데이트된 소속 그룹 목록"],"npcRelations": {"가라크": "55 (나에 대한 경계심이 약간 누그러졌다.)"}},"npcMemoryUpdate": {"npcName": "상호작용 한 NPC의 이름","newMemory": "NPC의 기억에 추가될 새로운 로그 (예: '플레이어 B가 음식값을 빚지고 도망갔다.')"},"turningPointUpdate": {"objectiveId": "플레이어의 행동이 기여한 목표의 ID","progressIncrement": 10}}`;
   };
-
-  const worldCreationPrompt = `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다. 전통적인 판타지에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오. 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다. 아래 JSON 구조에 맞춰 응답해주십시오.
-
-### JSON 출력 구조
-{
-  "title": "세계관의 이름 (예: '네온 비가 내리는 도시, 2242')",
-  "genre": "세계관의 장르 (예: '사이버펑크 느와르')",
-  "atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글",
-  "background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사",
-  "startingLocation": "플레이어가 처음 눈을 뜨게 될 시작 장소의 이름 (예: '비에 젖은 뒷골목의 국수 가판대')",
-  "professions": [
-    { "name": "기업 해결사", "motivation": "거대 기업의 비리를 파헤치다 동료를 잃고 복수를 다짐합니다." },
-    { "name": "기억 상실된 사이보그", "motivation": "자신이 누구인지, 왜 몸의 일부가 기계인지에 대한 단서를 찾아야 합니다." },
-    { "name": "뒷골목 정보상", "motivation": "도시의 모든 비밀을 거래하며, 가장 큰 한탕을 노리던 중 위험한 정보에 휘말렸습니다." },
-    { "name": "반체제 저항군", "motivation": "억압적인 기업 통치에 맞서 싸우는 저항군의 일원으로서 중요한 임무를 부여받았습니다." }
-  ],
-  "startingChoices": [
-    "주변을 둘러보며 현재 상황을 파악한다.",
-    "가장 가까운 사람에게 말을 걸어본다.",
-    "일단 몸을 숨길 곳을 찾는다."
-  ]
-}`;
 
   const turningPointCreationPrompt = `당신은 역사의 흐름을 읽는 '운명' 그 자체입니다. 최근 세상에서 벌어진 다음 사건들을 보고, 이 흐름이 하나의 거대한 '전환점(Turning Point)'으로 수렴될 수 있는지 판단하십시오. 현재 활성화된 전환점은 없습니다. 만약 중대한 갈등의 씨앗이나, 거대한 위협, 혹은 새로운 시대의 서막이 보인다면, 그에 맞는 전환점을 아래 JSON 형식으로 생성해주십시오. 아직 시기가 아니라면 'create' 값을 false로 설정하십시오. ### 최근 사건들 {event_summary} ### JSON 출력 구조 {"create": true,"turningPoint": {"title": "전환점의 제목 (예: '수도에 창궐한 역병')","description": "전환점에 대한 흥미로운 설명","status": "active","objectives": [{ "id": "objective_1", "description": "첫 번째 목표 (예: 역병의 근원 찾기)", "progress": 0, "goal": 100 },{ "id": "objective_2", "description": "두 번째 목표 (예: 치료제 개발 지원)", "progress": 0, "goal": 100 }]}}`;
 
@@ -605,36 +640,23 @@ function App() {
   const createCharacter = async (choice) => {
     setIsTextLoading(true);
     try {
-      const worldviewRef = getWorldviewRef(db, appId);
       let currentWorldview = worldview;
 
-      // 세계관이 없다면 새로 생성 (기존 로직 유지)
       if (!currentWorldview || !currentWorldview.professions) {
-        console.log("No worldview found. Creating a new one...");
-        const llmResponse = await callGeminiTextLLM(worldCreationPrompt, worldCreationPrompt);
-        if (llmResponse) {
-          await setDoc(worldviewRef, llmResponse);
-          currentWorldview = llmResponse;
-          setWorldview(llmResponse);
-        } else {
-          throw new Error("Failed to create a new worldview.");
-        }
+        throw new Error("Worldview is not loaded. Cannot create character.");
       }
 
-      // 선택한 직업 이름(choice)으로 worldview.professions 배열에서 해당 직업 정보 찾기
       const selectedProfession = currentWorldview.professions.find(p => p.name === choice);
 
       if (selectedProfession) {
-        // 찾은 직업 정보와 동적 시작 위치를 사용해 플레이어 상태 설정
         await setDoc(getPrivatePlayerStateRef(db, appId, userId), { 
           ...getDefaultPrivatePlayerState(), 
           characterCreated: true, 
           profession: selectedProfession.name, 
           initialMotivation: selectedProfession.motivation, 
-          currentLocation: currentWorldview.startingLocation // 동적 시작 위치 사용
+          currentLocation: currentWorldview.startingLocation
         }, { merge: true });
 
-        // 개인 로그에 기록
         await addDoc(getPersonalStoryLogRef(db, appId, userId), { 
           action: '여정에 나서다', 
           story: `나는 '${selectedProfession.name}'으로서, '${selectedProfession.motivation}'라는 동기를 품고 이 세상에 첫 발을 내디뎠다.`, 
@@ -647,7 +669,6 @@ function App() {
           const baseData = scenarioDoc.exists() ? scenarioDoc.data() : getDefaultGameState();
           const cleanedPublicLog = (baseData.publicLog || []).map((log) => { if (log.timestamp && typeof log.timestamp.toDate === 'function') { return { ...log }; } return { ...log, timestamp: new Date() }; });
           
-          // 공개 로그에 새로운 모험가가 나타났음을 알림 (장소 정보 추가)
           const newPublicLogEntry = { 
             actor: { id: userId, displayName: getDisplayName(userId) }, 
             log: `새로운 모험가, '${getDisplayName(userId)}'님이 '${currentWorldview.startingLocation}'에 모습을 드러냈습니다.`, 
@@ -655,10 +676,9 @@ function App() {
           };
           const updatedPublicLog = [...cleanedPublicLog, newPublicLogEntry];
           const payload = { ...baseData, publicLog: updatedPublicLog, lastUpdate: serverTimestamp() };
-          transaction.set(mainScenarioRef, payload);
+          transaction.set(mainScenarioRef, payload, { merge: true });
         });
 
-        // LLM이 생성한 동적 시작 선택지를 표시
         const startingChoices = currentWorldview.startingChoices;
         setDisplayedChoices(startingChoices);
         
@@ -804,11 +824,16 @@ function App() {
     )
   }
 
-  if (isLoading || (privatePlayerState.characterCreated && !worldview)) {
+  if (isLoading || isGeneratingContent || !themePacks || (!worldview && !privatePlayerState.characterCreated)) {
+    let loadingMessage = '데이터를 불러오는 중...';
+    if (isGeneratingContent) loadingMessage = '초기 콘텐츠를 생성하는 중... (최대 1분 소요)';
+    else if (!themePacks) loadingMessage = '게임 테마를 준비하는 중...';
+    else if (!worldview && !privatePlayerState.characterCreated) loadingMessage = '세계를 구축하는 중...';
+
     return (
       <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center">
         <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div>
-        <span className="ml-4 text-xl">{isLoading ? '데이터를 불러오는 중...' : '세계를 구축하는 중...'}</span>
+        <span className="ml-4 text-xl">{loadingMessage}</span>
       </div>
     );
   }
