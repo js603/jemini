@@ -33,7 +33,6 @@ const defaultFirebaseConfig = {
     measurementId: 'G-FNGF42T1FP',
 };
 
-// 수정금지
 const firebaseConfig = defaultFirebaseConfig;
 // ====================================================================
 
@@ -163,6 +162,7 @@ function App() {
     const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
+    const [optimisticAction, setOptimisticAction] = useState(null);
 
     const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
@@ -207,9 +207,6 @@ function App() {
         [activeUsers, userId, nickname]
     );
 
-    // ====================================================================
-    // ❗️ [수정됨] 새로운 계층적 삭제 함수
-    // ====================================================================
     const deleteCurrentWorld = async () => {
         if (!db || !worldId) return;
 
@@ -219,7 +216,6 @@ function App() {
         try {
             const worldRef = getWorldMetaRef(db, worldId);
 
-            // 단계 1: 가장 깊은 하위 컬렉션인 각 플레이어의 개인 데이터 삭제
             const usersCollectionRef = collection(worldRef, 'users');
             const usersSnapshot = await getDocs(usersCollectionRef);
             
@@ -228,7 +224,6 @@ function App() {
                 const userDeletionPromises = usersSnapshot.docs.map(async (userDoc) => {
                     const userId = userDoc.id;
                     
-                    // 각 유저의 personalStoryLog 컬렉션 삭제
                     const personalStoryLogRef = collection(userDoc.ref, 'personalStoryLog');
                     const personalStoryLogSnapshot = await getDocs(personalStoryLogRef);
                     if (!personalStoryLogSnapshot.empty) {
@@ -238,7 +233,6 @@ function App() {
                         console.log(`- ${userId}의 personalStoryLog 삭제 완료`);
                     }
 
-                    // 각 유저의 playerState 컬렉션 삭제
                     const playerStateRef = collection(userDoc.ref, 'playerState');
                     const playerStateSnapshot = await getDocs(playerStateRef);
                     if (!playerStateSnapshot.empty) {
@@ -251,7 +245,6 @@ function App() {
                 await Promise.all(userDeletionPromises);
             }
 
-            // 단계 2: 플레이어 문서 및 다른 최상위 컬렉션 문서들 일괄 삭제
             console.log("플레이어 문서 및 공용 컬렉션 삭제 중...");
             const collectionsToDelete = [
                 'users', 
@@ -276,13 +269,12 @@ function App() {
             });
             await Promise.all(collectionDeletionPromises);
 
-            // 최종 단계: 월드 관련 최상위 문서 및 월드 루트 문서 삭제
             console.log("월드 루트 문서 삭제 중...");
             const finalBatch = writeBatch(db);
             finalBatch.delete(getThemePacksRef(db, worldId));
             finalBatch.delete(getWorldviewRef(db, worldId));
             finalBatch.delete(getMainScenarioRef(db, worldId));
-            finalBatch.delete(worldRef); // 마지막으로 월드 루트 문서 삭제
+            finalBatch.delete(worldRef);
             await finalBatch.commit();
             
             console.log("월드 삭제 완료!");
@@ -296,7 +288,6 @@ function App() {
             setShowResetModal(false);
         }
     };
-    // ====================================================================
 
     const callGeminiTextLLM = useCallback(
         async (userPrompt, systemPromptToUse) => {
@@ -520,7 +511,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                     targetState = targetStateDoc.data();
                                 }
                             }
-                            
+
                             const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
                             const activeUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
                             const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
@@ -629,12 +620,18 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             onSnapshot(getPrivatePlayerStateRef(db, worldId, userId), (s) => {
                 if (s.exists()) { 
                     const data = s.data();
+                    
+                    if (privatePlayerState && privatePlayerState.choicesTimestamp?.toMillis() !== data.choicesTimestamp?.toMillis()){
+                        setOptimisticAction(null);
+                    }
+
                     setPrivatePlayerState(data);
                     if(data.interruption) {
                         setShowInterruptionModal(true);
                     }
                 }
                 else { setPrivatePlayerState(getDefaultPrivatePlayerState()); }
+                setIsLoading(false);
             }),
             onSnapshot(query(getPersonalStoryLogRef(db, worldId, userId), orderBy('timestamp', 'desc'), limit(50)), (s) => setPersonalStoryLog(s.docs.map(d => ({ id: d.id, ...d.data() })).reverse())),
             onSnapshot(getMainScenarioRef(db, worldId), (s) => setGameState(s.exists() ? s.data() : getDefaultGameState())),
@@ -648,11 +645,10 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             if (!playerDoc.exists()) {
                 await setDoc(getPrivatePlayerStateRef(db, worldId, userId), getDefaultPrivatePlayerState());
             }
-            setIsLoading(false);
         };
         initPlayer();
         return () => unsubs.forEach(unsub => unsub());
-    }, [worldId, db, userId]);
+    }, [worldId, db, userId, privatePlayerState]);
 
     useEffect(() => {
         if (!worldId || !db || !userId) return;
@@ -739,25 +735,19 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             const maxRetries = 3;
 
             for (let i = 0; i < maxRetries; i++) {
-                console.log(`테마 팩 생성 시도 ${i + 1}/${maxRetries}...`);
-                const promptToUse = (i === 0)
-                    ? masterPromptForThemeGeneration
-                    : buildFixJsonPrompt(lastRawOutput);
-
+                const promptToUse = (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(lastRawOutput);
                 const response = await callGeminiTextLLM(promptToUse, (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(''));
 
                 if (response && Array.isArray(response) && response.length > 0) {
                     generatedPacks = response;
-                    console.log('테마 팩 생성 성공!');
                     break;
                 } else {
                     lastRawOutput = typeof response === 'string' ? response : JSON.stringify(response);
-                    console.warn(`시도 ${i + 1} 실패: LLM이 유효한 배열을 반환하지 않았습니다. 출력물:`, lastRawOutput);
                 }
             }
 
             if (!generatedPacks) {
-                throw new Error('테마 팩 생성에 최종적으로 실패했습니다. LLM이 유효한 데이터를 반환하지 않습니다.');
+                throw new Error('테마 팩 생성에 최종적으로 실패했습니다.');
             }
 
             const randomTheme = generatedPacks[Math.floor(Math.random() * generatedPacks.length)];
@@ -785,10 +775,14 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const handleChoiceClick = async (choice, motivation = null) => {
-        if (isTextLoading || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
-        setIsTextLoading(true);
+        if (optimisticAction || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
 
         const isCreation = !privatePlayerState.characterCreated;
+        if (isCreation) {
+            setIsTextLoading(true); 
+        } else {
+            setOptimisticAction(choice);
+        }
 
         const event = {
             type: 'PLAYER_ACTION',
@@ -807,6 +801,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         } catch (e) {
             console.error('이벤트 제출 실패:', e);
             setLlmError('선택을 제출하는 데 실패했습니다.');
+            setOptimisticAction(null);
             setIsTextLoading(false);
         }
     };
@@ -904,9 +899,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                         placeholder="닉네임"
                         value={nicknameInput}
                         onChange={(e) => setNicknameInput(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleNicknameSubmit();
-                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleNicknameSubmit(); }}
                         autoFocus
                     />
                     <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim()}>
@@ -976,40 +969,32 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
             </div>
             {accordion.gameLog && (
-                <>
-                    <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-                        {privatePlayerState && !privatePlayerState.characterCreated && (
-                            <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
-                                <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
-                                <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
-                            </div>
-                        )}
-                        {(personalStoryLog || []).map((event, index) => (
-                            <div key={event.id || index} className="mb-4 p-2 rounded bg-gray-900/50">
-                                {event?.action && <p className="text-yellow-300 font-semibold italic text-sm"> {event.action.startsWith('[') ? `${event.action}` : `나의 선택: ${event.action}`} </p>}
-                                <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p>
-                            </div>
-                        ))}
-                        {isTextLoading && (
-                            <div className="flex justify-center items-center mt-4">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                                <span className="ml-3 text-gray-400">세상의 흐름을 읽는 중...</span>
-                            </div>
-                        )}
-                        <div ref={logEndRef} />
-                    </div>
-                </>
+                <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
+                    {privatePlayerState && !privatePlayerState.characterCreated && (
+                        <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
+                            <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
+                            <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
+                        </div>
+                    )}
+                    {(personalStoryLog || []).map((event, index) => (
+                        <div key={event.id || index} className="mb-4 p-2 rounded bg-gray-900/50">
+                            {event?.action && <p className="text-yellow-300 font-semibold italic text-sm"> {event.action.startsWith('[') ? `${event.action}` : `나의 선택: ${event.action}`} </p>}
+                            <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p>
+                        </div>
+                    ))}
+                    {isTextLoading && (
+                        <div className="flex justify-center items-center mt-4">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
+                            <span className="ml-3 text-gray-400">세상의 흐름을 읽는 중...</span>
+                        </div>
+                    )}
+                    <div ref={logEndRef} />
+                </div>
             )}
         </div>
     );
 
     const ChoicesDisplay = () => {
-        const areChoicesStale = useMemo(() => {
-            const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
-            const gTs = gameState.lastUpdate?.toMillis();
-            return pTs && gTs && pTs < gTs;
-        }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
-
         if (privatePlayerState?.status === 'dead') {
             return (
                 <div className="flex flex-col gap-3">
@@ -1024,7 +1009,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 </div>
             );
         }
-
+    
         if (privatePlayerState && !privatePlayerState.characterCreated) {
             return (
                 <div className="flex flex-col gap-3">
@@ -1037,24 +1022,37 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 </div>
             );
         }
-
+    
         return (
             <div className="flex flex-col gap-3">
-                {areChoicesStale && (
-                    <div className="p-2 text-center bg-yellow-900/50 border border-yellow-600 rounded-md text-yellow-300 text-sm">
-                        상황이 변경되었습니다! 선택이 실패할 수 있습니다.
-                    </div>
-                )}
                 {(privatePlayerState?.choices || []).map((choice, index) => {
                     if (!choice) return null;
+                    
+                    const isOptimistic = optimisticAction === choice;
+                    const isDisabled = !!optimisticAction;
+    
                     return (
                         <button
                             key={`${choice}-${index}`}
-                            className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 bg-blue-600 hover:bg-blue-700 text-white`}
+                            className={`flex items-center justify-center px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 ${
+                                isDisabled 
+                                ? 'bg-gray-500 text-gray-300 cursor-wait' 
+                                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                            } ${isOptimistic ? 'bg-yellow-600 !text-white' : ''}`}
                             onClick={() => handleChoiceClick(choice)}
-                            disabled={isTextLoading}
+                            disabled={isDisabled}
                         >
-                            {choice}
+                            {isOptimistic ? (
+                                <>
+                                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    행동 기록 중...
+                                </>
+                            ) : (
+                                choice
+                            )}
                         </button>
                     );
                 })}
@@ -1063,236 +1061,236 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const renderSidebar = () => {
-        const isPlayerDead = privatePlayerState?.status === 'dead';
+      const isPlayerDead = privatePlayerState?.status === 'dead';
 
-        return (
-            <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
-                {worldview && (
-                    <div className="mb-2">
-                        <div className="flex items-center justify-between mb-2">
-                             <h4 className="text-md font-semibold text-gray-200">
-                                 현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
-                             </h4>
-                             <div className="flex gap-2">
-                                <button className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md" onClick={() => setWorldId(null)}>
-                                     로비로
-                                 </button>
-                                 <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
-                                     월드 삭제
-                                 </button>
-                             </div>
-                        </div>
-                        <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
-                            <p className="font-bold text-yellow-200">
-                                {worldview.title} <span className="text-gray-400 font-normal">({worldview.genre})</span>
-                            </p>
-                            <p className="text-xs italic text-gray-400">{worldview.atmosphere}</p>
-                        </div>
-                    </div>
-                )}
-                {activeTurningPoint && (
-                    <div className="mb-2">
-                        <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('turningPoint')}>
-                            <h4 className="text-md font-semibold text-yellow-300">주요 분기점</h4>
-                            <div className="text-xl">{accordion.turningPoint ? '▼' : '▲'}</div>
-                        </div>
-                        {accordion.turningPoint && (
-                            <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
-                                <p className="font-bold text-yellow-200">{activeTurningPoint.title}</p>
-                                <p className="text-xs italic text-gray-400">{activeTurningPoint.description}</p>
-                                {(activeTurningPoint.objectives || []).map((obj) => (
-                                    <div key={obj.id}>
-                                        <p className="text-xs font-semibold">
-                                            {obj.description} ({obj.progress || 0} / {obj.goal})
-                                        </p>
-                                        <div className="w-full bg-gray-600 rounded-full h-2.5">
-                                            <div className="bg-yellow-500 h-2.5 rounded-full" style={{ width: `${((obj.progress || 0) / obj.goal) * 100}%` }}></div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-                {privatePlayerState && (
-                    <div className="mb-2">
-                        <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
-                            <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
-                            <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
-                        </div>
-                        {accordion.playerInfo && (
-                            <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2 h-96 overflow-y-auto custom-scrollbar">
-                                <p>
-                                    <span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}
-                                    {isPlayerDead && <span className="text-red-400 font-bold"> (사망)</span>}
-                                </p>
-                                <p>
-                                    <span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}
-                                </p>
-                                <p>
-                                    <span className="font-semibold text-blue-300">위치:</span> {privatePlayerState.currentLocation || '알 수 없는 곳'}
-                                </p>
-                                <p>
-                                    <span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats?.strength ?? 10}) 지능({privatePlayerState.stats?.intelligence ?? 10}) 민첩({privatePlayerState.stats?.agility ?? 10}) 카리스마(
-                                    {privatePlayerState.stats?.charisma ?? 10})
-                                </p>
-                                <p>
-                                    <span className="font-semibold text-blue-300">인벤토리:</span> {(privatePlayerState.inventory || []).join(', ') || '비어있음'}
-                                </p>
-                                <div>
-                                    <span className="font-semibold text-yellow-300">활성 기억:</span>
-                                    {(privatePlayerState.activeMemories || []).length > 0 ? (
-                                        <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
-                                            {(privatePlayerState.activeMemories || []).map((memory, i) => (
-                                                <li key={`mem-${i}`} className="text-xs flex justify-between items-center">
-                                                    <span>{memory}</span> <button onClick={() => toggleActiveMemory(memory, false)} className="text-red-400 hover:text-red-300 ml-2 text-lg">×</button>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-xs text-gray-400 ml-2">기억할 단서를 활성화하세요.</p>
-                                    )}
-                                </div>
-                                <div>
-                                    <span className="font-semibold text-purple-300">알려진 단서:</span>
-                                    {(privatePlayerState.knownClues || []).length > 0 ? (
-                                        <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
-                                            {(privatePlayerState.knownClues || []).map((clue, i) => {
-                                                const isActivated = (privatePlayerState.activeMemories || []).includes(clue);
-                                                return (
-                                                    <li key={`clue-${i}`} className="text-xs flex justify-between items-center">
-                                                        <span>{clue}</span>
-                                                        {!isActivated && (
-                                                            <button onClick={() => toggleActiveMemory(clue, true)} className="text-green-400 hover:text-green-300 ml-2 text-lg">
-                                                                ↑
-                                                            </button>
-                                                        )}
-                                                    </li>
-                                                );
-                                            })}
-                                        </ul>
-                                    ) : (
-                                        <p className="text-xs text-gray-400 ml-2">아직 발견한 단서가 없습니다.</p>
-                                    )}
-                                </div>
-                                <div>
-                                    <span className="font-semibold text-indigo-300">NPC 관계:</span>
-                                    <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
-                                        {Object.entries(privatePlayerState.npcRelations || {}).length > 0 ? (
-                                            Object.entries(privatePlayerState.npcRelations).map(([name, value]) => (
-                                                <li key={name} className="text-xs">{`${name}: ${value}`}</li>
-                                            ))
-                                        ) : (
-                                            <li>알려진 관계 없음</li>
-                                        )}
-                                    </ul>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-                <div className="mb-2">
-                    <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}>
-                        <h4 className="text-md font-semibold text-gray-200">세계의 연대기</h4>
-                        <div className="text-xl">{accordion.chronicle ? '▼' : '▲'}</div>
-                    </div>
-                    {accordion.chronicle && (
-                        <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
-                            {(knownMajorEvents || []).length > 0 ? (
-                                <ul className="list-disc list-inside">
-                                    {(knownMajorEvents || []).map((event) => (
-                                        <li key={event?.id}>{event?.summary ?? '기록이 손상되었습니다.'}</li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <p>아직 발견한 주요 사건이 없습니다. 세상을 탐험해 보세요.</p>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div className="mb-2">
-                    <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
-                        <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
-                        <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
-                    </div>
-                    {accordion.users && (
-                        <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar">
-                            {(activeUsers || []).length > 0 ? (
-                                <ul className="text-sm text-gray-300 space-y-1">
-                                    {(activeUsers || []).map((user) => (
-                                        <li key={user.id} className="truncate p-1 rounded-md">
-                                            <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
-                                            <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div className="mb-2">
-                    <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
-                        <h4 className="text-md font-semibold text-gray-200">세상의 소식</h4>
-                        <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
-                    </div>
-                    {accordion.chat && (
-                        <div className="bg-gray-600 p-3 rounded-md flex flex-col h-96">
-                            <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
-                                {combinedFeed.map((item, index) => {
-                                    if (item.type === 'chat') {
-                                        const isMyMessage = item.userId === userId;
-                                        const time = item.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                        return (
-                                            <div key={item.id || index} className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}>
-                                                <div className={`text-xs text-gray-400 px-1 ${isMyMessage ? 'text-right' : 'text-left'}`}>{getDisplayName(item.userId)}</div>
-                                                <div className="flex items-end gap-2">
-                                                    {isMyMessage && <span className="text-xs text-gray-500">{time}</span>}
-                                                    <div className={`max-w-xs rounded-lg px-3 py-2 ${isMyMessage ? 'bg-blue-800' : 'bg-gray-700'} ${item.isAction ? 'italic font-semibold border border-yellow-500 text-yellow-300' : ''}`}>
-                                                        <p className="whitespace-pre-wrap break-words">{item.isAction ? `! ${item.message}` : item.message}</p>
-                                                    </div>
-                                                    {!isMyMessage && <span className="text-xs text-gray-500">{time}</span>}
-                                                </div>
-                                            </div>
-                                        );
-                                    }
-                                    if (item.type === 'system') {
-                                        return (
-                                            <div key={item.id || index} className="text-center my-2">
-                                                <p className={`text-xs px-2 py-1 rounded-md inline-block ${item.isDeclaration ? 'text-yellow-300 bg-red-900/50 font-bold' : 'text-yellow-400 italic bg-black/20'}`}>
-                                                    {item.log.includes('❗') ? `${item.log}` : `[${item.actor?.displayName ?? '누군가'}] ${item.log}`}
-                                                </p>
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                })}
-                                <div ref={chatEndRef} />
-                            </div>
-                            <div className="flex">
-                                <input
-                                    type="text"
-                                    placeholder={isPlayerDead ? "당신은 더 이상 말할 수 없습니다." : "!를 붙여 행동을 선언하세요"}
-                                    className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-white placeholder-gray-500 disabled:bg-gray-800 disabled:cursor-not-allowed"
-                                    value={currentChatMessage}
-                                    onChange={(e) => setCurrentChatMessage(e.target.value)}
-                                    onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
-                                    disabled={!isAuthReady || isPlayerDead}
-                                />
-                                <button
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md disabled:opacity-50 disabled:cursor-not-allowed"
-                                    onClick={sendChatMessage}
-                                    disabled={!isAuthReady || !currentChatMessage.trim() || isPlayerDead}
-                                >
-                                    전송
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
+      return (
+          <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
+              {worldview && (
+                  <div className="mb-2">
+                      <div className="flex items-center justify-between mb-2">
+                           <h4 className="text-md font-semibold text-gray-200">
+                               현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
+                           </h4>
+                           <div className="flex gap-2">
+                              <button className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md" onClick={() => setWorldId(null)}>
+                                   로비로
+                               </button>
+                               <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
+                                   월드 삭제
+                               </button>
+                           </div>
+                      </div>
+                      <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
+                          <p className="font-bold text-yellow-200">
+                              {worldview.title} <span className="text-gray-400 font-normal">({worldview.genre})</span>
+                          </p>
+                          <p className="text-xs italic text-gray-400">{worldview.atmosphere}</p>
+                      </div>
+                  </div>
+              )}
+              {activeTurningPoint && (
+                  <div className="mb-2">
+                      <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('turningPoint')}>
+                          <h4 className="text-md font-semibold text-yellow-300">주요 분기점</h4>
+                          <div className="text-xl">{accordion.turningPoint ? '▼' : '▲'}</div>
+                      </div>
+                      {accordion.turningPoint && (
+                          <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
+                              <p className="font-bold text-yellow-200">{activeTurningPoint.title}</p>
+                              <p className="text-xs italic text-gray-400">{activeTurningPoint.description}</p>
+                              {(activeTurningPoint.objectives || []).map((obj) => (
+                                  <div key={obj.id}>
+                                      <p className="text-xs font-semibold">
+                                          {obj.description} ({obj.progress || 0} / {obj.goal})
+                                      </p>
+                                      <div className="w-full bg-gray-600 rounded-full h-2.5">
+                                          <div className="bg-yellow-500 h-2.5 rounded-full" style={{ width: `${((obj.progress || 0) / obj.goal) * 100}%` }}></div>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                  </div>
+              )}
+              {privatePlayerState && (
+                  <div className="mb-2">
+                      <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('playerInfo')}>
+                          <h4 className="text-md font-semibold text-gray-200">내 정보</h4>
+                          <div className="text-xl">{accordion.playerInfo ? '▼' : '▲'}</div>
+                      </div>
+                      {accordion.playerInfo && (
+                          <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2 h-96 overflow-y-auto custom-scrollbar">
+                              <p>
+                                  <span className="font-semibold text-blue-300">이름:</span> {getDisplayName(userId)}
+                                  {isPlayerDead && <span className="text-red-400 font-bold"> (사망)</span>}
+                              </p>
+                              <p>
+                                  <span className="font-semibold text-blue-300">직업:</span> {privatePlayerState.profession || '미정'}
+                              </p>
+                              <p>
+                                  <span className="font-semibold text-blue-300">위치:</span> {privatePlayerState.currentLocation || '알 수 없는 곳'}
+                              </p>
+                              <p>
+                                  <span className="font-semibold text-blue-300">능력치:</span> 힘({privatePlayerState.stats?.strength ?? 10}) 지능({privatePlayerState.stats?.intelligence ?? 10}) 민첩({privatePlayerState.stats?.agility ?? 10}) 카리스마(
+                                  {privatePlayerState.stats?.charisma ?? 10})
+                              </p>
+                              <p>
+                                  <span className="font-semibold text-blue-300">인벤토리:</span> {(privatePlayerState.inventory || []).join(', ') || '비어있음'}
+                              </p>
+                              <div>
+                                  <span className="font-semibold text-yellow-300">활성 기억:</span>
+                                  {(privatePlayerState.activeMemories || []).length > 0 ? (
+                                      <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
+                                          {(privatePlayerState.activeMemories || []).map((memory, i) => (
+                                              <li key={`mem-${i}`} className="text-xs flex justify-between items-center">
+                                                  <span>{memory}</span> <button onClick={() => toggleActiveMemory(memory, false)} className="text-red-400 hover:text-red-300 ml-2 text-lg">×</button>
+                                              </li>
+                                          ))}
+                                      </ul>
+                                  ) : (
+                                      <p className="text-xs text-gray-400 ml-2">기억할 단서를 활성화하세요.</p>
+                                  )}
+                              </div>
+                              <div>
+                                  <span className="font-semibold text-purple-300">알려진 단서:</span>
+                                  {(privatePlayerState.knownClues || []).length > 0 ? (
+                                      <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
+                                          {(privatePlayerState.knownClues || []).map((clue, i) => {
+                                              const isActivated = (privatePlayerState.activeMemories || []).includes(clue);
+                                              return (
+                                                  <li key={`clue-${i}`} className="text-xs flex justify-between items-center">
+                                                      <span>{clue}</span>
+                                                      {!isActivated && (
+                                                          <button onClick={() => toggleActiveMemory(clue, true)} className="text-green-400 hover:text-green-300 ml-2 text-lg">
+                                                              ↑
+                                                          </button>
+                                                      )}
+                                                  </li>
+                                              );
+                                          })}
+                                      </ul>
+                                  ) : (
+                                      <p className="text-xs text-gray-400 ml-2">아직 발견한 단서가 없습니다.</p>
+                                  )}
+                              </div>
+                              <div>
+                                  <span className="font-semibold text-indigo-300">NPC 관계:</span>
+                                  <ul className="list-disc list-inside ml-2 space-y-1 mt-1">
+                                      {Object.entries(privatePlayerState.npcRelations || {}).length > 0 ? (
+                                          Object.entries(privatePlayerState.npcRelations).map(([name, value]) => (
+                                              <li key={name} className="text-xs">{`${name}: ${value}`}</li>
+                                          ))
+                                      ) : (
+                                          <li>알려진 관계 없음</li>
+                                      )}
+                                  </ul>
+                              </div>
+                          </div>
+                      )}
+                  </div>
+              )}
+              <div className="mb-2">
+                  <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chronicle')}>
+                      <h4 className="text-md font-semibold text-gray-200">세계의 연대기</h4>
+                      <div className="text-xl">{accordion.chronicle ? '▼' : '▲'}</div>
+                  </div>
+                  {accordion.chronicle && (
+                      <div className="bg-gray-600 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-1 h-32 overflow-y-auto custom-scrollbar">
+                          {(knownMajorEvents || []).length > 0 ? (
+                              <ul className="list-disc list-inside">
+                                  {(knownMajorEvents || []).map((event) => (
+                                      <li key={event?.id}>{event?.summary ?? '기록이 손상되었습니다.'}</li>
+                                  ))}
+                              </ul>
+                          ) : (
+                              <p>아직 발견한 주요 사건이 없습니다. 세상을 탐험해 보세요.</p>
+                          )}
+                      </div>
+                  )}
+              </div>
+              <div className="mb-2">
+                  <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('users')}>
+                      <h4 className="text-md font-semibold text-gray-200">현재 플레이어들</h4>
+                      <div className="text-xl">{accordion.users ? '▼' : '▲'}</div>
+                  </div>
+                  {accordion.users && (
+                      <div className="bg-gray-600 p-3 rounded-md h-32 overflow-y-auto custom-scrollbar">
+                          {(activeUsers || []).length > 0 ? (
+                              <ul className="text-sm text-gray-300 space-y-1">
+                                  {(activeUsers || []).map((user) => (
+                                      <li key={user.id} className="truncate p-1 rounded-md">
+                                          <span className="font-medium text-green-300">{getDisplayName(user.id)}</span>
+                                          <span className="text-gray-400 text-xs"> ({user.profession || '모험가'})</span>
+                                      </li>
+                                  ))}
+                              </ul>
+                          ) : (
+                              <p className="text-sm text-gray-400">활동 중인 플레이어가 없습니다.</p>
+                          )}
+                      </div>
+                  )}
+              </div>
+              <div className="mb-2">
+                  <div className="flex items-center justify-between cursor-pointer select-none" onClick={() => toggleAccordion('chat')}>
+                      <h4 className="text-md font-semibold text-gray-200">세상의 소식</h4>
+                      <div className="text-xl">{accordion.chat ? '▼' : '▲'}</div>
+                  </div>
+                  {accordion.chat && (
+                      <div className="bg-gray-600 p-3 rounded-md flex flex-col h-96">
+                          <div className="flex-grow overflow-y-auto custom-scrollbar mb-3 text-sm space-y-2">
+                              {combinedFeed.map((item, index) => {
+                                  if (item.type === 'chat') {
+                                      const isMyMessage = item.userId === userId;
+                                      const time = item.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                      return (
+                                          <div key={item.id || index} className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}>
+                                              <div className={`text-xs text-gray-400 px-1 ${isMyMessage ? 'text-right' : 'text-left'}`}>{getDisplayName(item.userId)}</div>
+                                              <div className="flex items-end gap-2">
+                                                  {isMyMessage && <span className="text-xs text-gray-500">{time}</span>}
+                                                  <div className={`max-w-xs rounded-lg px-3 py-2 ${isMyMessage ? 'bg-blue-800' : 'bg-gray-700'} ${item.isAction ? 'italic font-semibold border border-yellow-500 text-yellow-300' : ''}`}>
+                                                      <p className="whitespace-pre-wrap break-words">{item.isAction ? `! ${item.message}` : item.message}</p>
+                                                  </div>
+                                                  {!isMyMessage && <span className="text-xs text-gray-500">{time}</span>}
+                                              </div>
+                                          </div>
+                                      );
+                                  }
+                                  if (item.type === 'system') {
+                                      return (
+                                          <div key={item.id || index} className="text-center my-2">
+                                              <p className={`text-xs px-2 py-1 rounded-md inline-block ${item.isDeclaration ? 'text-yellow-300 bg-red-900/50 font-bold' : 'text-yellow-400 italic bg-black/20'}`}>
+                                                  {item.log.includes('❗') ? `${item.log}` : `[${item.actor?.displayName ?? '누군가'}] ${item.log}`}
+                                              </p>
+                                          </div>
+                                      );
+                                  }
+                                  return null;
+                              })}
+                              <div ref={chatEndRef} />
+                          </div>
+                          <div className="flex">
+                              <input
+                                  type="text"
+                                  placeholder={isPlayerDead ? "당신은 더 이상 말할 수 없습니다." : "!를 붙여 행동을 선언하세요"}
+                                  className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-white placeholder-gray-500 disabled:bg-gray-800 disabled:cursor-not-allowed"
+                                  value={currentChatMessage}
+                                  onChange={(e) => setCurrentChatMessage(e.target.value)}
+                                  onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                                  disabled={!isAuthReady || isPlayerDead}
+                              />
+                              <button
+                                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 font-bold rounded-r-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                  onClick={sendChatMessage}
+                                  disabled={!isAuthReady || !currentChatMessage.trim() || isPlayerDead}
+                              >
+                                  전송
+                              </button>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      );
     }
 
     return (
