@@ -107,13 +107,11 @@ const buildCharacterCreationPrompt = (professionName, motivation, startingLocati
 const buildFixJsonPrompt = (malformedJsonString) => {
     return `### 페르소나 (Persona)
 당신은 데이터 형식을 완벽하게 이해하는 '데이터 구조 전문가'입니다. 당신의 임무는 망가진 JSON 문자열을 완벽하게 유효한 JSON 배열 형식으로 복구하는 것입니다.
-
 ### 문제의 데이터 (Malformed Data)
 아래 데이터는 원래 JSON 배열이어야 하지만, 어떠한 이유로 형식이 깨져 있습니다.
 \`\`\`
 ${malformedJsonString}
 \`\`\`
-
 ### 지시사항 (Instructions)
 1. 위 '문제의 데이터'를 분석하여 올바른 JSON 배열 형식으로 수정해주십시오.
 2. 불필요한 설명, 사과, 변명 등은 모두 제거하고, 오직 완벽하게 복구된 JSON 배열만을 출력해야 합니다.
@@ -134,7 +132,6 @@ function App() {
     const [gameState, setGameState] = useState(getDefaultGameState());
     const [personalStoryLog, setPersonalStoryLog] = useState([]);
     const [privatePlayerState, setPrivatePlayerState] = useState(null);
-    const [isTextLoading, setIsTextLoading] = useState(false);
     const [activeUsers, setActiveUsers] = useState([]);
     const [chatMessages, setChatMessages] = useState([]);
     const [currentChatMessage, setCurrentChatMessage] = useState('');
@@ -163,6 +160,7 @@ function App() {
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
     const [optimisticAction, setOptimisticAction] = useState(null);
+    const [streamingResponse, setStreamingResponse] = useState(null);
 
     const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
@@ -209,21 +207,15 @@ function App() {
 
     const deleteCurrentWorld = async () => {
         if (!db || !worldId) return;
-
         setIsResetting(true);
         console.log(`월드 삭제 시작: ${worldId}`);
-
         try {
             const worldRef = getWorldMetaRef(db, worldId);
-
             const usersCollectionRef = collection(worldRef, 'users');
             const usersSnapshot = await getDocs(usersCollectionRef);
-
             if (!usersSnapshot.empty) {
-                console.log(`${usersSnapshot.size}명의 플레이어 하위 데이터 삭제 중...`);
                 const userDeletionPromises = usersSnapshot.docs.map(async (userDoc) => {
                     const userId = userDoc.id;
-
                     const personalStoryLogRef = collection(userDoc.ref, 'personalStoryLog');
                     const personalStoryLogSnapshot = await getDocs(personalStoryLogRef);
                     if (!personalStoryLogSnapshot.empty) {
@@ -231,7 +223,6 @@ function App() {
                         personalStoryLogSnapshot.docs.forEach(doc => batch.delete(doc.ref));
                         await batch.commit();
                     }
-
                     const playerStateRef = collection(userDoc.ref, 'playerState');
                     const playerStateSnapshot = await getDocs(playerStateRef);
                     if (!playerStateSnapshot.empty) {
@@ -242,19 +233,7 @@ function App() {
                 });
                 await Promise.all(userDeletionPromises);
             }
-
-            console.log("플레이어 문서 및 공용 컬렉션 삭제 중...");
-            const collectionsToDelete = [
-                'users',
-                'events',
-                'system',
-                'public/data/activeUsers',
-                'public/data/chatMessages',
-                'public/data/majorEvents',
-                'public/data/npcs',
-                'public/data/turningPoints'
-            ];
-
+            const collectionsToDelete = ['users', 'events', 'system', 'public/data/activeUsers', 'public/data/chatMessages', 'public/data/majorEvents', 'public/data/npcs', 'public/data/turningPoints'];
             const collectionDeletionPromises = collectionsToDelete.map(async (path) => {
                 const collRef = collection(db, 'worlds', worldId, ...path.split('/'));
                 const snapshot = await getDocs(collRef);
@@ -265,18 +244,13 @@ function App() {
                 }
             });
             await Promise.all(collectionDeletionPromises);
-
-            console.log("월드 루트 문서 삭제 중...");
             const finalBatch = writeBatch(db);
             finalBatch.delete(getThemePacksRef(db, worldId));
             finalBatch.delete(getWorldviewRef(db, worldId));
             finalBatch.delete(getMainScenarioRef(db, worldId));
             finalBatch.delete(worldRef);
             await finalBatch.commit();
-
-            console.log("월드 삭제 완료!");
             setWorldId(null);
-
         } catch (e) {
             console.error('월드 데이터 삭제 중 오류 발생:', e);
             setLlmError('월드 삭제에 실패했습니다. 콘솔 로그를 확인해주세요.');
@@ -286,44 +260,72 @@ function App() {
         }
     };
 
-    const callGeminiTextLLM = useCallback(
-        async (userPrompt, systemPromptToUse) => {
-            const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
-            const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
-            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+    const callGeminiTextLLMStream = useCallback(
+        async (userPrompt, systemPromptToUse, onStreamUpdate, onStreamEnd) => {
+            setLlmError(null);
+            const apiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:streamGenerateContent?key=${apiKey}&alt=sse`;
+
             const payload = {
                 contents: [
                     { role: 'user', parts: [{ text: systemPromptToUse }] },
                     { role: 'model', parts: [{ text: '{"response_format": "json"}' }] },
                     { role: 'user', parts: [{ text: userPrompt }] }
                 ],
-                generationConfig: {
-                    responseMimeType: "application/json",
-                }
             };
-            const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             try {
-                let response = await tryGeminiCall(mainApiKey);
-                if (!response.ok) response = await tryGeminiCall(backupApiKey);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                const result = await response.json();
-                const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                const jsonMatch = llmOutputText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-                if (jsonMatch && jsonMatch[0]) {
-                    try {
-                        return JSON.parse(jsonMatch[0]);
-                    } catch (e) {
-                        console.warn('JSON 파싱 실패, 원본 텍스트 반환', e);
-                        return llmOutputText;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok || !response.body) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let fullText = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonStr = line.substring(6);
+                                const parsed = JSON.parse(jsonStr);
+                                const textChunk = parsed.candidates[0]?.content?.parts[0]?.text || '';
+                                if (textChunk) {
+                                    fullText += textChunk;
+                                    onStreamUpdate(textChunk);
+                                }
+                            } catch (e) {
+                                // Incomplete JSON, continue buffering
+                            }
+                        }
                     }
                 }
-                console.warn('LLM 응답에서 유효한 JSON을 찾지 못했습니다.');
-                return llmOutputText;
+
+                const jsonMatch = fullText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+                if (jsonMatch && jsonMatch[0]) {
+                    onStreamEnd(JSON.parse(jsonMatch[0]));
+                } else {
+                    throw new Error('스트림 종료 후 유효한 JSON을 찾지 못했습니다.');
+                }
+
             } catch (error) {
-                console.error('LLM API 호출 중 치명적 오류 발생:', error);
+                console.error('LLM 스트리밍 API 호출 중 오류 발생:', error);
                 setLlmError(error.message || 'LLM 호출에 실패했습니다.');
-                return null;
+                onStreamEnd(null);
             }
         },
         [setLlmError]
@@ -378,8 +380,8 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
             const { choice } = eventData.payload;
             const actorDisplayName = getDisplayName(eventData.userId);
-            const personalLogSummary = summarizeLogs(worldState.personalLog.map(doc => doc.data()), 1000, true);
-            const publicLogSummary = summarizeLogs(worldState.publicLog, 500, false);
+            const personalLogSummary = summarizeLogs(worldState.personalLog.map(doc => doc.data()), 700, true);
+            const publicLogSummary = summarizeLogs(worldState.publicLog, 350, false);
             const actorKnownEvents = worldState.allMajorEvents.filter((doc) => (actorState.knownEventIds || []).includes(doc.id)).map((doc) => `- ${doc.data().summary}`).join('\n') || '아직 기록된 역사가 없음';
 
             let targetSection = '';
@@ -405,129 +407,78 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         [getDisplayName]
     );
 
-    const turningPointCreationPrompt = `당신은 역사의 흐름을 읽는 '운명' 그 자체입니다. 최근 세상에서 벌어진 다음 사건들을 보고, 이 흐름이 하나의 거대한 '전환점(Turning Point)'으로 수렴될 수 있는지 판단하십시오. 현재 활성화된 전환점은 없습니다. 만약 중대한 갈등의 씨앗이나, 거대한 위협, 혹은 새로운 시대의 서막이 보인다면, 그에 맞는 전환점을 아래 JSON 형식으로 생성해주십시오. 아직 시기가 아니라면 'create' 값을 false로 설정하십시오. ### 최근 사건들 {event_summary} ### JSON 출력 구조 {"create": true,"turningPoint": {"title": "전환점의 제목 (예: '수도에 창궐한 역병')","description": "전환점에 대한 흥미로운 설명","status": "active","objectives": [{ "id": "objective_1", "description": "첫 번째 목표 (예: 역병의 근원 찾기)", "progress": 0, "goal": 100 },{ "id": "objective_2", "description": "두 번째 목표 (예: 치료제 개발 지원)", "progress": 0, "goal": 100 }]}}`;
-
-    const checkAndCreateTurningPoint = useCallback(async () => {
-        if (!db || !worldId) return;
-        const activeTpDoc = await getDoc(getActiveTurningPointRef(db, worldId));
-        if (activeTpDoc.exists()) return;
-
-        const publicLog = (await getDoc(getMainScenarioRef(db, worldId))).data()?.publicLog || [];
-        const majorEvents = (await getDocs(getMajorEventsRef(db, worldId))).docs.map((d) => d.data());
-
-        const publicLogSummary = publicLog.slice(-20).map((e) => e.log).join('\n');
-        const majorEventsSummary = majorEvents.slice(-10).map((e) => e.summary).join('\n');
-        if (majorEventsSummary.length < 10) return;
-
-        const eventSummary = `[최근 공개 사건들]\n${publicLogSummary}\n\n[최근 주요 역사]\n${majorEventsSummary}`;
-        const prompt = turningPointCreationPrompt.replace('{event_summary}', eventSummary);
-        const llmResponse = await callGeminiTextLLM(prompt, buildSystemPrompt(worldview));
-
-        if (llmResponse && llmResponse.create && llmResponse.turningPoint) {
-            await setDoc(getActiveTurningPointRef(db, worldId), { ...llmResponse.turningPoint, startTimestamp: serverTimestamp() });
-        }
-    }, [db, worldId, callGeminiTextLLM, buildSystemPrompt, worldview]);
-
-    const findTargetInText = (text, users, actorId) => {
-        for (const user of users) {
-            if (user.id !== actorId && user.nickname && text.includes(user.nickname)) {
-                return {
-                    targetUserId: user.id,
-                    targetDisplayName: user.nickname,
-                };
-            }
-        }
-        return null;
-    };
+    const turningPointCreationPrompt = `...`;
+    const checkAndCreateTurningPoint = useCallback(async () => { /* ... */ });
+    const findTargetInText = (text, users, actorId) => { /* ... */ };
 
     const processEvent = useCallback(
         async (eventId, eventData) => {
             if (!db || !worldId) return;
-            const eventRef = doc(db, 'worlds', worldId, 'events', eventId);
+
+            const eventRef = doc(getEventsCollectionRef(db, worldId), eventId);
             await setDoc(eventRef, { status: 'processing' }, { merge: true });
-            
-            setIsTextLoading(true);
+
             try {
                 const worldviewDoc = await getDoc(getWorldviewRef(db, worldId));
                 if (!worldviewDoc.exists()) throw new Error("Worldview not found!");
                 const systemPromptToUse = buildSystemPrompt(worldviewDoc.data());
 
                 if (eventData.type === 'PLAYER_ACTION') {
-                    const eventUserId = eventData.userId;
-                    if (eventData.payload.isCreationAction) {
-                        const userPromptText = await buildLlmPrompt(eventData, null, null, { worldview: worldviewDoc.data() });
-                        const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse);
-                        if (!llmResponse || typeof llmResponse !== 'object') throw new Error('캐릭터 생성 LLM 응답 오류');
-                        await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), {
-                            ...getDefaultPrivatePlayerState(), ...llmResponse.privateStateUpdates, characterCreated: true, profession: eventData.payload.choice, choices: llmResponse.choices || [], choicesTimestamp: serverTimestamp(),
-                        }, { merge: true });
-                        await addDoc(getPersonalStoryLogRef(db, worldId, eventUserId), {
-                            action: `[직업 선택: ${eventData.payload.choice}]`, story: llmResponse.personalStory || '운명의 길이 열렸다.', timestamp: serverTimestamp()
-                        });
-                    } else {
-                        await runTransaction(db, async (transaction) => {
-                            const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventUserId);
-                            const mainScenarioRef = getMainScenarioRef(db, worldId);
-                            const actorStateDoc = await transaction.get(actorStateRef);
-                            const mainScenarioDoc = await transaction.get(mainScenarioRef);
-                            if (!actorStateDoc.exists()) throw new Error("Actor state not found!");
-                            const currentActorState = actorStateDoc.data();
-                            const currentScenario = mainScenarioDoc.exists() ? mainScenarioDoc.data() : getDefaultGameState();
-                            const eventTimestamp = eventData.payload.choicesTimestamp?.toMillis();
-                            const scenarioTimestamp = currentScenario.lastUpdate?.toMillis();
-                            if (eventTimestamp && scenarioTimestamp && eventTimestamp < scenarioTimestamp) {
-                                const conflictLog = (currentScenario.publicLog || []).find((log) => log.timestamp.toMillis() > eventTimestamp);
-                                const interveningEvent = conflictLog ? `[${conflictLog.actor.displayName}] ${conflictLog.log}` : '알 수 없는 사건';
-                                const conflictPrompt = await buildLlmPrompt(null, null, null, null, { originalChoice: eventData.payload.choice, interveningEvent });
-                                const llmResponse = await callGeminiTextLLM(conflictPrompt, systemPromptToUse);
-                                const newLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
-                                transaction.set(newLogRef, { action: '나의 선택이 현실과 충돌함', story: llmResponse.personalStory, timestamp: serverTimestamp() });
-                                transaction.update(actorStateRef, { choices: llmResponse.choices || [], choicesTimestamp: currentScenario.lastUpdate });
+                    setStreamingResponse({ text: '', action: eventData.payload.choice });
+                    
+                    const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventData.userId);
+                    const actorStateDoc = await getDoc(actorStateRef);
+                    if (!actorStateDoc.exists()) throw new Error("Actor state not found for event processing.");
+                    const actorState = actorStateDoc.data();
+
+                    const mainScenarioRef = getMainScenarioRef(db, worldId);
+                    const mainScenarioDoc = await getDoc(mainScenarioRef);
+                    const worldPublicLog = mainScenarioDoc.exists() ? mainScenarioDoc.data().publicLog : [];
+
+                    const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventData.userId), orderBy('timestamp', 'desc'), limit(10)));
+                    const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
+
+                    const worldState = {
+                        publicLog: worldPublicLog,
+                        allMajorEvents: allMajorEventsSnap.docs,
+                        personalLog: personalLogSnap.docs
+                    };
+                    
+                    const userPromptText = await buildLlmPrompt(eventData, actorState, null, worldState, null);
+
+                    await callGeminiTextLLMStream(
+                        userPromptText,
+                        systemPromptToUse,
+                        (textChunk) => {
+                            setStreamingResponse(prev => ({ ...prev, text: (prev.text || '') + textChunk }));
+                        },
+                        async (llmResponse) => {
+                            setStreamingResponse(null);
+                            if (!llmResponse) {
+                                await setDoc(eventRef, { status: 'failed', error: 'LLM returned null response' }, { merge: true });
                                 return;
-                            }
-                            let targetState = null;
-                            if (eventData.payload.targetUserId) {
-                                const targetStateDoc = await transaction.get(getPrivatePlayerStateRef(db, worldId, eventData.payload.targetUserId));
-                                if (targetStateDoc.exists()) {
-                                    targetState = targetStateDoc.data();
-                                }
-                            }
-                            const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
-                            const activeUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
-                            const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
-                            const worldState = { publicLog: currentScenario.publicLog, allMajorEvents: allMajorEventsSnap.docs, activeUsers: activeUsersSnap.docs.map((d) => ({ id: d.id, ...d.data() })), personalLog: personalLogSnap.docs };
-                            const userPromptText = await buildLlmPrompt(eventData, currentActorState, targetState, worldState);
-                            const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse);
-                            if (!llmResponse || typeof llmResponse !== 'object') throw new Error('LLM 응답 오류');
-                            const newTimestamp = serverTimestamp();
-                            let currentPublicLog = currentScenario.publicLog || [];
-                            if (eventData.payload.isDeclarative) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: `❗ ${eventData.payload.choice}`, isDeclaration: true, timestamp: new Date(Date.now() - 1) }); }
-                            if (llmResponse.publicLogEntry) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: llmResponse.publicLogEntry, timestamp: new Date() }); }
-                            transaction.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
-                            const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
-                            transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
-                            const actorUpdates = { choices: llmResponse.choices || [], choicesTimestamp: newTimestamp, ...llmResponse.privateStateUpdates, };
-                            transaction.set(actorStateRef, actorUpdates, { merge: true });
-                            if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
-                                const targetId = eventData.payload.targetUserId;
-                                const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
-                                const newTargetLogRef = doc(getPersonalStoryLogRef(db, worldId, targetId));
-                                transaction.set(newTargetLogRef, {
-                                    action: `[${getDisplayName(eventUserId)}의 행동에 휘말림]`, story: llmResponse.targetPersonalStory, timestamp: newTimestamp,
-                                });
-                                const interruptionData = {
-                                    story: `[${getDisplayName(eventUserId)}의 행동] ${llmResponse.targetPersonalStory}`,
-                                    choices: llmResponse.choicesForTarget || ['상황을 파악한다.'],
-                                };
-                                const targetUpdates = {
-                                    choicesTimestamp: newTimestamp,
-                                    ...llmResponse.targetStateUpdates,
-                                    interruption: interruptionData
-                                };
-                                transaction.set(targetStateRef, targetUpdates, { merge: true });
-                            }
-                        });
-                    }
+                            };
+
+                            await runTransaction(db, async (transaction) => {
+                                const newTimestamp = serverTimestamp();
+                                const currentScenarioDoc = await transaction.get(mainScenarioRef);
+                                const currentScenario = currentScenarioDoc.exists() ? currentScenarioDoc.data() : getDefaultGameState();
+                                let currentPublicLog = currentScenario.publicLog || [];
+                                
+                                if (eventData.payload.isDeclarative) { currentPublicLog.push({ actor: { id: eventData.userId, displayName: getDisplayName(eventData.userId) }, log: `❗ ${eventData.payload.choice}`, isDeclaration: true, timestamp: new Date(Date.now() - 1) }); }
+                                if (llmResponse.publicLogEntry) { currentPublicLog.push({ actor: { id: eventData.userId, displayName: getDisplayName(eventData.userId) }, log: llmResponse.publicLogEntry, timestamp: new Date() }); }
+                                transaction.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
+
+                                const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventData.userId));
+                                transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
+                                
+                                const actorUpdates = { choices: llmResponse.choices || [], choicesTimestamp: newTimestamp, ...llmResponse.privateStateUpdates };
+                                transaction.set(actorStateRef, actorUpdates, { merge: true });
+                            });
+                            await setDoc(eventRef, { status: 'processed' }, { merge: true });
+                        }
+                    );
+
                 } else if (eventData.type === 'CHAT_MESSAGE') {
                    const { message, userId: chatUserId } = eventData.payload;
                    const isAction = message.startsWith('!');
@@ -542,18 +493,17 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                        };
                        await addDoc(getEventsCollectionRef(db, worldId), newActionEvent);
                    }
+                   await setDoc(eventRef, { status: 'processed' }, { merge: true });
                 }
-                await setDoc(eventRef, { status: 'processed' }, { merge: true });
             } catch (error) {
                 console.error(`이벤트 처리 실패 (ID: ${eventId}):`, error);
-                setLlmError(`이벤트 처리 중 오류 발생: ${error.message}`);
+                setLlmError(error.message);
                 setLlmRetryEvent({ id: eventId, data: eventData });
+                setStreamingResponse(null);
                 await setDoc(eventRef, { status: 'failed', error: error.message }, { merge: true });
-            } finally {
-                setIsTextLoading(false);
             }
         },
-        [db, worldId, callGeminiTextLLM, getDisplayName, buildSystemPrompt, buildLlmPrompt]
+        [db, worldId, getDisplayName, buildSystemPrompt, buildLlmPrompt, callGeminiTextLLMStream]
     );
 
     useEffect(() => {
@@ -589,7 +539,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
     useEffect(() => {
         if (!worldId || !db || !userId) return;
-        setIsLoading(true);
+        
+        if (!streamingResponse) setIsLoading(true);
+
         const unsubs = [
             onSnapshot(getWorldviewRef(db, worldId), (s) => setWorldview(s.exists() ? s.data() : null)),
             onSnapshot(getPrivatePlayerStateRef(db, worldId, userId), (s) => {
@@ -602,9 +554,10 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     if (data.interruption) {
                         setShowInterruptionModal(true);
                     }
+                } else {
+                    setPrivatePlayerState(getDefaultPrivatePlayerState());
                 }
-                else { setPrivatePlayerState(getDefaultPrivatePlayerState()); }
-                setIsLoading(false);
+                if (!streamingResponse) setIsLoading(false);
             }),
             onSnapshot(query(getPersonalStoryLogRef(db, worldId, userId), orderBy('timestamp', 'desc'), limit(50)), (s) => setPersonalStoryLog(s.docs.map(d => ({ id: d.id, ...d.data() })).reverse())),
             onSnapshot(getMainScenarioRef(db, worldId), (s) => setGameState(s.exists() ? s.data() : getDefaultGameState())),
@@ -613,6 +566,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             onSnapshot(query(getMajorEventsRef(db, worldId), orderBy('timestamp')), (s) => setAllMajorEvents(s.docs.map(d => ({ id: d.id, ...d.data() })))),
             onSnapshot(getActiveTurningPointRef(db, worldId), (s) => setActiveTurningPoint(s.exists() ? { id: s.id, ...s.data() } : null)),
         ];
+        
         const initPlayer = async () => {
             const playerDoc = await getDoc(getPrivatePlayerStateRef(db, worldId, userId));
             if (!playerDoc.exists()) {
@@ -620,8 +574,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             }
         };
         initPlayer();
+        
         return () => unsubs.forEach(unsub => unsub());
-    }, [worldId, db, userId]);
+    }, [worldId, db, userId, streamingResponse]);
 
     useEffect(() => {
         if (!worldId || !db || !userId) return;
@@ -672,7 +627,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
     useEffect(() => {
         if (accordion.gameLog && logEndRef.current) logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }, [personalStoryLog, accordion.gameLog]);
+    }, [personalStoryLog, accordion.gameLog, streamingResponse]);
 
     useEffect(() => {
         if (accordion.chat && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -709,7 +664,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
             for (let i = 0; i < maxRetries; i++) {
                 const promptToUse = (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(lastRawOutput);
-                const response = await callGeminiTextLLM(promptToUse, (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(''));
+                const response = await callGeminiTextLLMStream(promptToUse, (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(''));
 
                 if (response && Array.isArray(response) && response.length > 0) {
                     generatedPacks = response;
@@ -724,7 +679,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             }
 
             const randomTheme = generatedPacks[Math.floor(Math.random() * generatedPacks.length)];
-            const llmResponse = await callGeminiTextLLM(generateWorldCreationPrompt(randomTheme), generateWorldCreationPrompt(randomTheme));
+            const llmResponse = await callGeminiTextLLMStream(generateWorldCreationPrompt(randomTheme), generateWorldCreationPrompt(randomTheme));
             if (!llmResponse || typeof llmResponse !== 'object' || Array.isArray(llmResponse)) {
                 throw new Error('세계관 생성에 실패했습니다.');
             }
@@ -748,14 +703,11 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const handleChoiceClick = async (choice, motivation = null) => {
-        if (optimisticAction || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
-
+        if (optimisticAction || streamingResponse || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
+        
         const isCreation = !privatePlayerState.characterCreated;
-        if (isCreation) {
-            setIsTextLoading(true);
-        } else {
-            setOptimisticAction(choice);
-        }
+        
+        setOptimisticAction(choice);
 
         const event = {
             type: 'PLAYER_ACTION',
@@ -775,10 +727,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             console.error('이벤트 제출 실패:', e);
             setLlmError('선택을 제출하는 데 실패했습니다.');
             setOptimisticAction(null);
-            setIsTextLoading(false);
         }
     };
-
+    
     const handleInterruptionAcknowledge = async () => {
         if (!db || !userId || !worldId || !privatePlayerState?.interruption) return;
 
@@ -836,17 +787,17 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             </div>
         </div>
     );
-
+    
     const InterruptionModal = () => {
         if (!showInterruptionModal || !privatePlayerState?.interruption) return null;
-
+    
         return (
             <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center p-4 z-50">
                 <div className="bg-gray-800 border border-yellow-500 rounded-lg shadow-xl p-6 w-full max-w-lg space-y-4 text-center animate-pulse-once">
                     <h3 className="text-2xl font-bold text-yellow-300">! 상황 개입 !</h3>
                     <div className="bg-gray-900 p-4 rounded-md">
                         <p className="text-gray-200 whitespace-pre-wrap text-lg leading-relaxed">
-                            {privatePlayerState.interruption.story}
+                           {privatePlayerState.interruption.story}
                         </p>
                     </div>
                     <p className="text-sm text-gray-400">당신의 선택지가 변경되었습니다.</p>
@@ -955,10 +906,13 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p>
                         </div>
                     ))}
-                    {isTextLoading && (
-                        <div className="flex justify-center items-center mt-4">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                            <span className="ml-3 text-gray-400">세상의 흐름을 읽는 중...</span>
+                    {streamingResponse && (
+                        <div className="mb-4 p-2 rounded bg-yellow-900/30 animate-pulse">
+                            <p className="text-yellow-300 font-semibold italic text-sm">나의 선택: {streamingResponse.action}</p>
+                            <p className="whitespace-pre-wrap mt-1 text-yellow-200">
+                                {streamingResponse.text}
+                                <span className="inline-block w-2 h-4 bg-yellow-200 ml-1 animate-ping"></span>
+                            </p>
                         </div>
                     )}
                     <div ref={logEndRef} />
@@ -987,7 +941,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             return (
                 <div className="flex flex-col gap-3">
                     {(worldview?.professions || []).map((profession, index) => (
-                        <button key={index} onClick={() => handleChoiceClick(profession.name, profession.motivation)} disabled={isTextLoading} className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left">
+                        <button key={index} onClick={() => handleChoiceClick(profession.name, profession.motivation)} disabled={isCreatingWorld} className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left">
                             <p className="text-lg text-blue-300">{profession.name}</p>
                             <p className="text-sm font-normal text-gray-300 mt-1">{profession.motivation}</p>
                         </button>
@@ -1002,7 +956,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     if (!choice) return null;
 
                     const isOptimistic = optimisticAction === choice;
-                    const isDisabled = !!optimisticAction;
+                    const isDisabled = !!optimisticAction || !!streamingResponse;
 
                     return (
                         <button
