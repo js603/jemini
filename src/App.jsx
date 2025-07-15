@@ -72,7 +72,7 @@ const getDefaultPrivatePlayerState = () => ({
     knownEventIds: [],
     currentLocation: null,
     status: 'alive',
-    interruption: null, // ❗️ 상황 개입(Interruption) 시스템을 위한 필드
+    interruption: null, 
 });
 
 const summarizeLogs = (logs, maxLength, isPersonal) => {
@@ -131,7 +131,7 @@ const generateWorldCreationPrompt = (theme) => {
 };
 
 function App() {
-    const [worldId, setWorldId] = useState(null); // ❗️ 로비 기능을 위해 초기값을 null로 변경
+    const [worldId, setWorldId] = useState(null);
     const [gameState, setGameState] = useState(getDefaultGameState());
     const [personalStoryLog, setPersonalStoryLog] = useState([]);
     const [privatePlayerState, setPrivatePlayerState] = useState(null);
@@ -162,7 +162,7 @@ function App() {
     const [isCreatingWorld, setIsCreatingWorld] = useState(false);
     const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
-    const [showInterruptionModal, setShowInterruptionModal] = useState(false); // ❗️ Interruption Modal 상태
+    const [showInterruptionModal, setShowInterruptionModal] = useState(false);
 
     const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
@@ -207,46 +207,96 @@ function App() {
         [activeUsers, userId, nickname]
     );
 
+    // ====================================================================
+    // ❗️ [수정됨] 새로운 계층적 삭제 함수
+    // ====================================================================
     const deleteCurrentWorld = async () => {
         if (!db || !worldId) return;
+
         setIsResetting(true);
+        console.log(`월드 삭제 시작: ${worldId}`);
+
         try {
-            // This is a simplified deletion. For a production app, use a Cloud Function for deep deletion.
+            const worldRef = getWorldMetaRef(db, worldId);
+
+            // 단계 1: 가장 깊은 하위 컬렉션인 각 플레이어의 개인 데이터 삭제
+            const usersCollectionRef = collection(worldRef, 'users');
+            const usersSnapshot = await getDocs(usersCollectionRef);
+            
+            if (!usersSnapshot.empty) {
+                console.log(`${usersSnapshot.size}명의 플레이어 하위 데이터 삭제 중...`);
+                const userDeletionPromises = usersSnapshot.docs.map(async (userDoc) => {
+                    const userId = userDoc.id;
+                    
+                    // 각 유저의 personalStoryLog 컬렉션 삭제
+                    const personalStoryLogRef = collection(userDoc.ref, 'personalStoryLog');
+                    const personalStoryLogSnapshot = await getDocs(personalStoryLogRef);
+                    if (!personalStoryLogSnapshot.empty) {
+                        const batch = writeBatch(db);
+                        personalStoryLogSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+                        await batch.commit();
+                        console.log(`- ${userId}의 personalStoryLog 삭제 완료`);
+                    }
+
+                    // 각 유저의 playerState 컬렉션 삭제
+                    const playerStateRef = collection(userDoc.ref, 'playerState');
+                    const playerStateSnapshot = await getDocs(playerStateRef);
+                    if (!playerStateSnapshot.empty) {
+                        const batch = writeBatch(db);
+                        playerStateSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+                        await batch.commit();
+                        console.log(`- ${userId}의 playerState 삭제 완료`);
+                    }
+                });
+                await Promise.all(userDeletionPromises);
+            }
+
+            // 단계 2: 플레이어 문서 및 다른 최상위 컬렉션 문서들 일괄 삭제
+            console.log("플레이어 문서 및 공용 컬렉션 삭제 중...");
             const collectionsToDelete = [
-                'events', 
                 'users', 
-                'system', 
+                'events', 
+                'system',
                 'public/data/activeUsers',
                 'public/data/chatMessages',
                 'public/data/majorEvents',
                 'public/data/npcs',
                 'public/data/turningPoints'
             ];
-    
-            for (const path of collectionsToDelete) {
+
+            const collectionDeletionPromises = collectionsToDelete.map(async (path) => {
                 const collRef = collection(db, 'worlds', worldId, ...path.split('/'));
                 const snapshot = await getDocs(collRef);
-                const batch = writeBatch(db);
-                snapshot.docs.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-            }
-            
-            const batch = writeBatch(db);
-            batch.delete(getThemePacksRef(db, worldId));
-            batch.delete(getWorldviewRef(db, worldId));
-            batch.delete(getMainScenarioRef(db, worldId));
-            batch.delete(getWorldMetaRef(db, worldId));
-            await batch.commit();
+                if (!snapshot.empty) {
+                    const batch = writeBatch(db);
+                    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+                    await batch.commit();
+                    console.log(`- 컬렉션 '${path}' 삭제 완료`);
+                }
+            });
+            await Promise.all(collectionDeletionPromises);
 
+            // 최종 단계: 월드 관련 최상위 문서 및 월드 루트 문서 삭제
+            console.log("월드 루트 문서 삭제 중...");
+            const finalBatch = writeBatch(db);
+            finalBatch.delete(getThemePacksRef(db, worldId));
+            finalBatch.delete(getWorldviewRef(db, worldId));
+            finalBatch.delete(getMainScenarioRef(db, worldId));
+            finalBatch.delete(worldRef); // 마지막으로 월드 루트 문서 삭제
+            await finalBatch.commit();
+            
+            console.log("월드 삭제 완료!");
             setWorldId(null);
+
         } catch (e) {
             console.error('월드 데이터 삭제 중 오류 발생:', e);
-            setLlmError('월드 삭제에 실패했습니다. Firestore 규칙이나 경로를 확인해주세요.');
+            setLlmError('월드 삭제에 실패했습니다. 콘솔 로그를 확인해주세요.');
         } finally {
             setIsResetting(false);
             setShowResetModal(false);
         }
     };
+    // ====================================================================
 
     const callGeminiTextLLM = useCallback(
         async (userPrompt, systemPromptToUse) => {
@@ -307,7 +357,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 ### 중요 규칙
 - 모든 플레이어는 'status' 필드를 가집니다. 만약 플레이어가 행동의 결과로 사망(death)하거나, 행동 불능(incapacitated) 상태가 되면 status를 'dead'로 설정하십시오.
 - 'dead' 상태가 된 플레이어의 'choices'는 반드시 그의 마지막을 나타내는 단 하나의 선택지(예: '나의 이야기는 여기서 끝났다.')여야 합니다.
-- ❗️ **대상(Target)이 있는 경우 'targetPersonalStory'는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, 'targetPersonalStory' 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다.
+- ❗️ **대상(Target)이 있는 경우 \`targetPersonalStory\`는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, \`targetPersonalStory\` 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다.
 
 ### JSON 출력 구조 (반드시 이 구조를 따르십시오)
 {
@@ -351,7 +401,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             const publicLogSummary = summarizeLogs(worldState.publicLog, 500, false);
             const actorKnownEvents = worldState.allMajorEvents.filter((doc) => (actorState.knownEventIds || []).includes(doc.id)).map((doc) => `- ${doc.data().summary}`).join('\n') || '아직 기록된 역사가 없음';
 
-            // 대상(Target) 정보를 프롬프트에 명확하게 포함
             let targetSection = '';
             if (targetState) {
                 const targetDisplayName = getDisplayName(eventData.payload.targetUserId);
@@ -471,8 +520,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                     targetState = targetStateDoc.data();
                                 }
                             }
-
-                            // NOTE: Transactional reads for these are complex and might exceed limits. Using non-transactional reads.
+                            
                             const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
                             const activeUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
                             const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
@@ -493,8 +541,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
                             const actorUpdates = { choices: llmResponse.choices || [], choicesTimestamp: newTimestamp, ...llmResponse.privateStateUpdates, };
                             transaction.set(actorStateRef, actorUpdates, { merge: true });
-
-                            // ❗️ 대상(Target) 처리 및 Interruption 로직
+                            
                             if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
                                 const targetId = eventData.payload.targetUserId;
                                 const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
@@ -503,7 +550,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                     action: `[${getDisplayName(eventUserId)}의 행동에 휘말림]`, story: llmResponse.targetPersonalStory, timestamp: newTimestamp,
                                 });
 
-                                // Interruption 객체 생성
                                 const interruptionData = {
                                     story: `[${getDisplayName(eventUserId)}의 행동] ${llmResponse.targetPersonalStory}`,
                                     choices: llmResponse.choicesForTarget || ['상황을 파악한다.'],
@@ -512,7 +558,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                 const targetUpdates = { 
                                     choicesTimestamp: newTimestamp, 
                                     ...llmResponse.targetStateUpdates,
-                                    interruption: interruptionData // interruption 필드 설정
+                                    interruption: interruptionData
                                 };
                                 transaction.set(targetStateRef, targetUpdates, { merge: true });
                             }
@@ -555,7 +601,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         return () => unsub();
     }, []);
 
-    // ❗️ worldId가 변경될 때 localStorage를 업데이트/제거하는 로직
     useEffect(() => {
         if (worldId) {
             localStorage.setItem('worldId', worldId);
@@ -585,7 +630,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 if (s.exists()) { 
                     const data = s.data();
                     setPrivatePlayerState(data);
-                    // ❗️ Interruption 감지 로직
                     if(data.interruption) {
                         setShowInterruptionModal(true);
                     }
@@ -767,19 +811,17 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         }
     };
     
-    // ❗️ Interruption 처리 함수
     const handleInterruptionAcknowledge = async () => {
         if (!db || !userId || !worldId || !privatePlayerState?.interruption) return;
-
-        // 새로운 선택지로 즉시 교체
+        
         const newChoices = privatePlayerState.interruption.choices;
         await setDoc(getPrivatePlayerStateRef(db, worldId, userId), { 
-            interruption: null, // 서버의 interruption 상태를 null로 되돌림
+            interruption: null, 
             choices: newChoices,
             choicesTimestamp: serverTimestamp()
         }, { merge: true });
 
-        setShowInterruptionModal(false); // 모달 닫기
+        setShowInterruptionModal(false); 
     };
 
     const toggleAccordion = (key) => setAccordion((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -827,7 +869,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         </div>
     );
     
-    // ❗️ Interruption Modal 컴포넌트
     const InterruptionModal = () => {
         if (!showInterruptionModal || !privatePlayerState?.interruption) return null;
     
@@ -1028,7 +1069,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
                 {worldview && (
                     <div className="mb-2">
-                         {/* ❗️ 로비/삭제 버튼 위치 이동 */}
                         <div className="flex items-center justify-between mb-2">
                              <h4 className="text-md font-semibold text-gray-200">
                                  현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
@@ -1258,18 +1298,18 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
             {llmError && <LlmErrorModal />}
-            <InterruptionModal /> {/* ❗️ Interruption 모달 렌더링 */}
+            <InterruptionModal />
             {showResetModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
                     <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
                         <h3 className="text-xl font-bold text-red-400">⚠️ 현재 월드의 모든 데이터를 삭제할까요?</h3>
-                        <p className="text-gray-200">이 작업은 되돌릴 수 없습니다. 이 월드의 모든 시나리오, 로그, 유저, 채팅 데이터가 삭제됩니다.</p>
+                        <p className="text-gray-200">이 작업은 되돌릴 수 없습니다. 모든 하위 데이터까지 완전히 삭제됩니다.</p>
                         <div className="flex justify-end gap-3">
                             <button className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md" onClick={() => setShowResetModal(false)} disabled={isResetting}>
                                 취소
                             </button>
                             <button className="px-4 py-2 bg-red-600 hover:bg-red-700 font-bold rounded-md" onClick={deleteCurrentWorld} disabled={isResetting}>
-                                {isResetting ? '삭제 중...' : '삭제'}
+                                {isResetting ? '삭제 중...' : '완전 삭제'}
                             </button>
                         </div>
                     </div>
