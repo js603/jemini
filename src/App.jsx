@@ -307,7 +307,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 ### 중요 규칙
 - 모든 플레이어는 'status' 필드를 가집니다. 만약 플레이어가 행동의 결과로 사망(death)하거나, 행동 불능(incapacitated) 상태가 되면 status를 'dead'로 설정하십시오.
 - 'dead' 상태가 된 플레이어의 'choices'는 반드시 그의 마지막을 나타내는 단 하나의 선택지(예: '나의 이야기는 여기서 끝났다.')여야 합니다.
-- ❗️ **대상(Target)이 있는 경우 `targetPersonalStory`는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, `targetPersonalStory` 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다.
+- ❗️ **대상(Target)이 있는 경우 'targetPersonalStory'는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, 'targetPersonalStory' 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다.
 
 ### JSON 출력 구조 (반드시 이 구조를 따르십시오)
 {
