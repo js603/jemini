@@ -330,6 +330,7 @@ function App() {
                 let buffer = '';
                 let fullText = '';
 
+                // eslint-disable-next-line no-constant-condition
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
@@ -540,7 +541,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             if (!llmResponse) {
                                 await setDoc(eventRef, { status: 'failed', error: 'LLM returned null response' }, { merge: true });
                                 return;
-                            };
+                            }
                             await runTransaction(db, async (transaction) => {
                                 const newTimestamp = serverTimestamp();
                                 const currentScenarioDoc = await transaction.get(mainScenarioRef);
