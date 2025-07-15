@@ -33,6 +33,7 @@ const defaultFirebaseConfig = {
     measurementId: 'G-FNGF42T1FP',
 };
 
+// 수정금지
 const firebaseConfig = defaultFirebaseConfig;
 // ====================================================================
 
@@ -71,7 +72,7 @@ const getDefaultPrivatePlayerState = () => ({
     knownEventIds: [],
     currentLocation: null,
     status: 'alive',
-    interruption: null,
+    interruption: null, 
 });
 
 const summarizeLogs = (logs, maxLength, isPersonal) => {
@@ -162,7 +163,6 @@ function App() {
     const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
-    const [optimisticAction, setOptimisticAction] = useState(null);
 
     const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
@@ -207,6 +207,9 @@ function App() {
         [activeUsers, userId, nickname]
     );
 
+    // ====================================================================
+    // ❗️ [수정됨] 새로운 계층적 삭제 함수
+    // ====================================================================
     const deleteCurrentWorld = async () => {
         if (!db || !worldId) return;
 
@@ -216,14 +219,16 @@ function App() {
         try {
             const worldRef = getWorldMetaRef(db, worldId);
 
+            // 단계 1: 가장 깊은 하위 컬렉션인 각 플레이어의 개인 데이터 삭제
             const usersCollectionRef = collection(worldRef, 'users');
             const usersSnapshot = await getDocs(usersCollectionRef);
-
+            
             if (!usersSnapshot.empty) {
                 console.log(`${usersSnapshot.size}명의 플레이어 하위 데이터 삭제 중...`);
                 const userDeletionPromises = usersSnapshot.docs.map(async (userDoc) => {
                     const userId = userDoc.id;
-
+                    
+                    // 각 유저의 personalStoryLog 컬렉션 삭제
                     const personalStoryLogRef = collection(userDoc.ref, 'personalStoryLog');
                     const personalStoryLogSnapshot = await getDocs(personalStoryLogRef);
                     if (!personalStoryLogSnapshot.empty) {
@@ -233,6 +238,7 @@ function App() {
                         console.log(`- ${userId}의 personalStoryLog 삭제 완료`);
                     }
 
+                    // 각 유저의 playerState 컬렉션 삭제
                     const playerStateRef = collection(userDoc.ref, 'playerState');
                     const playerStateSnapshot = await getDocs(playerStateRef);
                     if (!playerStateSnapshot.empty) {
@@ -245,10 +251,11 @@ function App() {
                 await Promise.all(userDeletionPromises);
             }
 
+            // 단계 2: 플레이어 문서 및 다른 최상위 컬렉션 문서들 일괄 삭제
             console.log("플레이어 문서 및 공용 컬렉션 삭제 중...");
             const collectionsToDelete = [
-                'users',
-                'events',
+                'users', 
+                'events', 
                 'system',
                 'public/data/activeUsers',
                 'public/data/chatMessages',
@@ -269,14 +276,15 @@ function App() {
             });
             await Promise.all(collectionDeletionPromises);
 
+            // 최종 단계: 월드 관련 최상위 문서 및 월드 루트 문서 삭제
             console.log("월드 루트 문서 삭제 중...");
             const finalBatch = writeBatch(db);
             finalBatch.delete(getThemePacksRef(db, worldId));
             finalBatch.delete(getWorldviewRef(db, worldId));
             finalBatch.delete(getMainScenarioRef(db, worldId));
-            finalBatch.delete(worldRef);
+            finalBatch.delete(worldRef); // 마지막으로 월드 루트 문서 삭제
             await finalBatch.commit();
-
+            
             console.log("월드 삭제 완료!");
             setWorldId(null);
 
@@ -288,6 +296,7 @@ function App() {
             setShowResetModal(false);
         }
     };
+    // ====================================================================
 
     const callGeminiTextLLM = useCallback(
         async (userPrompt, systemPromptToUse) => {
@@ -511,7 +520,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                     targetState = targetStateDoc.data();
                                 }
                             }
-
+                            
                             const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
                             const activeUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
                             const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
@@ -527,12 +536,12 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             if (eventData.payload.isDeclarative) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: `❗ ${eventData.payload.choice}`, isDeclaration: true, timestamp: new Date(Date.now() - 1) }); }
                             if (llmResponse.publicLogEntry) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: llmResponse.publicLogEntry, timestamp: new Date() }); }
                             transaction.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
-
+                            
                             const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
                             transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
                             const actorUpdates = { choices: llmResponse.choices || [], choicesTimestamp: newTimestamp, ...llmResponse.privateStateUpdates, };
                             transaction.set(actorStateRef, actorUpdates, { merge: true });
-
+                            
                             if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
                                 const targetId = eventData.payload.targetUserId;
                                 const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
@@ -546,8 +555,8 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                     choices: llmResponse.choicesForTarget || ['상황을 파악한다.'],
                                 };
 
-                                const targetUpdates = {
-                                    choicesTimestamp: newTimestamp,
+                                const targetUpdates = { 
+                                    choicesTimestamp: newTimestamp, 
                                     ...llmResponse.targetStateUpdates,
                                     interruption: interruptionData
                                 };
@@ -618,20 +627,14 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         const unsubs = [
             onSnapshot(getWorldviewRef(db, worldId), (s) => setWorldview(s.exists() ? s.data() : null)),
             onSnapshot(getPrivatePlayerStateRef(db, worldId, userId), (s) => {
-                if (s.exists()) {
+                if (s.exists()) { 
                     const data = s.data();
-
-                    if (privatePlayerState && privatePlayerState.choicesTimestamp?.toMillis() !== data.choicesTimestamp?.toMillis()) {
-                        setOptimisticAction(null);
-                    }
-
                     setPrivatePlayerState(data);
-                    if (data.interruption) {
+                    if(data.interruption) {
                         setShowInterruptionModal(true);
                     }
                 }
                 else { setPrivatePlayerState(getDefaultPrivatePlayerState()); }
-                setIsLoading(false);
             }),
             onSnapshot(query(getPersonalStoryLogRef(db, worldId, userId), orderBy('timestamp', 'desc'), limit(50)), (s) => setPersonalStoryLog(s.docs.map(d => ({ id: d.id, ...d.data() })).reverse())),
             onSnapshot(getMainScenarioRef(db, worldId), (s) => setGameState(s.exists() ? s.data() : getDefaultGameState())),
@@ -645,10 +648,11 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             if (!playerDoc.exists()) {
                 await setDoc(getPrivatePlayerStateRef(db, worldId, userId), getDefaultPrivatePlayerState());
             }
+            setIsLoading(false);
         };
         initPlayer();
         return () => unsubs.forEach(unsub => unsub());
-    }, [worldId, db, userId, privatePlayerState]);
+    }, [worldId, db, userId]);
 
     useEffect(() => {
         if (!worldId || !db || !userId) return;
@@ -735,19 +739,25 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             const maxRetries = 3;
 
             for (let i = 0; i < maxRetries; i++) {
-                const promptToUse = (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(lastRawOutput);
+                console.log(`테마 팩 생성 시도 ${i + 1}/${maxRetries}...`);
+                const promptToUse = (i === 0)
+                    ? masterPromptForThemeGeneration
+                    : buildFixJsonPrompt(lastRawOutput);
+
                 const response = await callGeminiTextLLM(promptToUse, (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(''));
 
                 if (response && Array.isArray(response) && response.length > 0) {
                     generatedPacks = response;
+                    console.log('테마 팩 생성 성공!');
                     break;
                 } else {
                     lastRawOutput = typeof response === 'string' ? response : JSON.stringify(response);
+                    console.warn(`시도 ${i + 1} 실패: LLM이 유효한 배열을 반환하지 않았습니다. 출력물:`, lastRawOutput);
                 }
             }
 
             if (!generatedPacks) {
-                throw new Error('테마 팩 생성에 최종적으로 실패했습니다.');
+                throw new Error('테마 팩 생성에 최종적으로 실패했습니다. LLM이 유효한 데이터를 반환하지 않습니다.');
             }
 
             const randomTheme = generatedPacks[Math.floor(Math.random() * generatedPacks.length)];
@@ -775,14 +785,10 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const handleChoiceClick = async (choice, motivation = null) => {
-        if (optimisticAction || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
+        if (isTextLoading || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
+        setIsTextLoading(true);
 
         const isCreation = !privatePlayerState.characterCreated;
-        if (isCreation) {
-            setIsTextLoading(true);
-        } else {
-            setOptimisticAction(choice);
-        }
 
         const event = {
             type: 'PLAYER_ACTION',
@@ -801,22 +807,21 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         } catch (e) {
             console.error('이벤트 제출 실패:', e);
             setLlmError('선택을 제출하는 데 실패했습니다.');
-            setOptimisticAction(null);
             setIsTextLoading(false);
         }
     };
-
+    
     const handleInterruptionAcknowledge = async () => {
         if (!db || !userId || !worldId || !privatePlayerState?.interruption) return;
-
+        
         const newChoices = privatePlayerState.interruption.choices;
-        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), {
-            interruption: null,
+        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), { 
+            interruption: null, 
             choices: newChoices,
             choicesTimestamp: serverTimestamp()
         }, { merge: true });
 
-        setShowInterruptionModal(false);
+        setShowInterruptionModal(false); 
     };
 
     const toggleAccordion = (key) => setAccordion((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -863,17 +868,17 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             </div>
         </div>
     );
-
+    
     const InterruptionModal = () => {
         if (!showInterruptionModal || !privatePlayerState?.interruption) return null;
-
+    
         return (
             <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center p-4 z-50">
                 <div className="bg-gray-800 border border-yellow-500 rounded-lg shadow-xl p-6 w-full max-w-lg space-y-4 text-center animate-pulse-once">
                     <h3 className="text-2xl font-bold text-yellow-300">! 상황 개입 !</h3>
                     <div className="bg-gray-900 p-4 rounded-md">
                         <p className="text-gray-200 whitespace-pre-wrap text-lg leading-relaxed">
-                            {privatePlayerState.interruption.story}
+                           {privatePlayerState.interruption.story}
                         </p>
                     </div>
                     <p className="text-sm text-gray-400">당신의 선택지가 변경되었습니다.</p>
@@ -899,7 +904,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                         placeholder="닉네임"
                         value={nicknameInput}
                         onChange={(e) => setNicknameInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleNicknameSubmit(); }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleNicknameSubmit();
+                        }}
                         autoFocus
                     />
                     <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim()}>
@@ -969,32 +976,40 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 <div className="text-xl">{accordion.gameLog ? '▼' : '▲'}</div>
             </div>
             {accordion.gameLog && (
-                <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
-                    {privatePlayerState && !privatePlayerState.characterCreated && (
-                        <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
-                            <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
-                            <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
-                        </div>
-                    )}
-                    {(personalStoryLog || []).map((event, index) => (
-                        <div key={event.id || index} className="mb-4 p-2 rounded bg-gray-900/50">
-                            {event?.action && <p className="text-yellow-300 font-semibold italic text-sm"> {event.action.startsWith('[') ? `${event.action}` : `나의 선택: ${event.action}`} </p>}
-                            <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p>
-                        </div>
-                    ))}
-                    {isTextLoading && (
-                        <div className="flex justify-center items-center mt-4">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
-                            <span className="ml-3 text-gray-400">세상의 흐름을 읽는 중...</span>
-                        </div>
-                    )}
-                    <div ref={logEndRef} />
-                </div>
+                <>
+                    <div className="flex-grow bg-gray-700 p-4 rounded-md overflow-y-auto h-96 custom-scrollbar text-sm md:text-base leading-relaxed" style={{ maxHeight: '24rem' }}>
+                        {privatePlayerState && !privatePlayerState.characterCreated && (
+                            <div className="mb-4 p-2 rounded bg-gray-900/50 text-center">
+                                <p className="text-yellow-300 font-semibold italic text-lg">모험의 서막</p>
+                                <p className="whitespace-pre-wrap mt-1">당신은 어떤 운명을 선택하시겠습니까?</p>
+                            </div>
+                        )}
+                        {(personalStoryLog || []).map((event, index) => (
+                            <div key={event.id || index} className="mb-4 p-2 rounded bg-gray-900/50">
+                                {event?.action && <p className="text-yellow-300 font-semibold italic text-sm"> {event.action.startsWith('[') ? `${event.action}` : `나의 선택: ${event.action}`} </p>}
+                                <p className="whitespace-pre-wrap mt-1" dangerouslySetInnerHTML={{ __html: (event?.story ?? '').replace(/\n/g, '<br />') }}></p>
+                            </div>
+                        ))}
+                        {isTextLoading && (
+                            <div className="flex justify-center items-center mt-4">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-300"></div>
+                                <span className="ml-3 text-gray-400">세상의 흐름을 읽는 중...</span>
+                            </div>
+                        )}
+                        <div ref={logEndRef} />
+                    </div>
+                </>
             )}
         </div>
     );
 
     const ChoicesDisplay = () => {
+        const areChoicesStale = useMemo(() => {
+            const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
+            const gTs = gameState.lastUpdate?.toMillis();
+            return pTs && gTs && pTs < gTs;
+        }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
+
         if (privatePlayerState?.status === 'dead') {
             return (
                 <div className="flex flex-col gap-3">
@@ -1025,33 +1040,21 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
         return (
             <div className="flex flex-col gap-3">
+                {areChoicesStale && (
+                    <div className="p-2 text-center bg-yellow-900/50 border border-yellow-600 rounded-md text-yellow-300 text-sm">
+                        상황이 변경되었습니다! 선택이 실패할 수 있습니다.
+                    </div>
+                )}
                 {(privatePlayerState?.choices || []).map((choice, index) => {
                     if (!choice) return null;
-
-                    const isOptimistic = optimisticAction === choice;
-                    const isDisabled = !!optimisticAction;
-
                     return (
                         <button
                             key={`${choice}-${index}`}
-                            className={`flex items-center justify-center px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 ${isDisabled
-                                ? 'bg-gray-500 text-gray-300 cursor-wait'
-                                : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                } ${isOptimistic ? 'bg-yellow-600 !text-white' : ''}`}
+                            className={`px-6 py-3 font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 bg-blue-600 hover:bg-blue-700 text-white`}
                             onClick={() => handleChoiceClick(choice)}
-                            disabled={isDisabled}
+                            disabled={isTextLoading}
                         >
-                            {isOptimistic ? (
-                                <>
-                                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    행동 기록 중...
-                                </>
-                            ) : (
-                                choice
-                            )}
+                            {choice}
                         </button>
                     );
                 })}
@@ -1067,17 +1070,17 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 {worldview && (
                     <div className="mb-2">
                         <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-md font-semibold text-gray-200">
-                                현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
-                            </h4>
-                            <div className="flex gap-2">
+                             <h4 className="text-md font-semibold text-gray-200">
+                                 현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
+                             </h4>
+                             <div className="flex gap-2">
                                 <button className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md" onClick={() => setWorldId(null)}>
-                                    로비로
-                                </button>
-                                <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
-                                    월드 삭제
-                                </button>
-                            </div>
+                                     로비로
+                                 </button>
+                                 <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
+                                     월드 삭제
+                                 </button>
+                             </div>
                         </div>
                         <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
                             <p className="font-bold text-yellow-200">
