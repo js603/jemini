@@ -213,7 +213,7 @@ function cleanLlmOutput(llmOutputText) {
         .replace(/\n{2,}/g, '\n')
         .trim();
     // 맨 앞에 [ 또는 {, 맨 뒤에 ] 또는 } 만 남기기
-    const match = cleaned.match(/([\[{][\s\S]*[\]}])/);
+    const match = cleaned.match(/([[{][\s\S]*[\]}])/);
     return match ? match[1] : cleaned;
 }
 
