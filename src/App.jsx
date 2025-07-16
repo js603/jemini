@@ -185,6 +185,22 @@ function getMillis(ts) {
     return null;
 }
 
+// Firestore 트랜잭션 재시도 래퍼 함수 추가 (파일 상단)
+async function runTransactionWithRetry(db, updateFunction, maxRetries = 3) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await runTransaction(db, updateFunction);
+        } catch (e) {
+            lastError = e;
+            if (e.code !== 'failed-precondition' && e.code !== 'aborted') throw e;
+            // 잠깐 대기 후 재시도
+            await new Promise(res => setTimeout(res, 100 + Math.random() * 200));
+        }
+    }
+    throw lastError;
+}
+
 function App() {
     const [worldId, setWorldId] = useState(() => localStorage.getItem('worldId') || null);
     const [gameState, setGameState] = useState(getDefaultGameState());
@@ -692,7 +708,7 @@ ${activeMemoryPrompt}
                 } else if (eventData.type === CONSTANTS.EVENT_TYPES.PLAYER_ACTION) {
                     // Regular Player Action (Refactored Logic)
                     // 1. Read volatile data and check for conflicts in a transaction
-                    const readResult = await runTransaction(db, async (transaction) => {
+                    const readResult = await runTransactionWithRetry(db, async (transaction) => {
                         const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventData.userId);
                         const mainScenarioRef = getMainScenarioRef(db, worldId);
 
@@ -949,7 +965,7 @@ ${activeMemoryPrompt}
 
         const tryAcquireLease = async () => {
             try {
-                await runTransaction(db, async (t) => {
+                await runTransactionWithRetry(db, async (t) => {
                     const leaseDoc = await t.get(leaseRef);
                     const leaseData = leaseDoc.data();
                     const now = Date.now();
