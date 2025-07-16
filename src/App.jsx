@@ -71,6 +71,7 @@ const getDefaultPrivatePlayerState = () => ({
     currentLocation: null,
     status: 'alive',
     interruption: null,
+    isProcessingAction: false, // ❗️[신규] 행동 처리 상태 필드
 });
 
 const summarizeLogs = (logs, maxLength, isPersonal) => {
@@ -106,16 +107,16 @@ const buildFixJsonPrompt = (malformedJsonString) => {
     return `### 페르소나 (Persona)
 당신은 데이터 형식을 완벽하게 이해하는 '데이터 구조 전문가'입니다.
 ### 임무 (Task)
-당신의 임무는 망가진 JSON 문자열을 완벽하게 유효한 JSON 배열 형식으로 복구하는 것입니다.
+당신의 임무는 망가진 JSON 문자열을 완벽하게 유효한 JSON 객체 또는 배열 형식으로 복구하는 것입니다.
 ### 문제의 데이터 (Malformed Data)
-아래 데이터는 원래 JSON 배열이어야 하지만, 어떠한 이유로 형식이 깨져 있습니다.
+아래 데이터는 원래 JSON이어야 하지만, 어떠한 이유로 형식이 깨져 있습니다.
 \`\`\`
 ${malformedJsonString}
 \`\`\`
 ### 지시사항 (Instructions)
-1. 위 '문제의 데이터'를 분석하여 올바른 JSON 배열 형식으로 수정해주십시오.
-2. 불필요한 설명, 사과, 변명 등은 모두 제거하고, 오직 완벽하게 복구된 JSON 배열만을 출력해야 합니다.
-3. 최종 결과는 반드시 \`[ ... ]\` 로 시작하고 끝나야 합니다.`;
+1. 위 '문제의 데이터'를 분석하여 올바른 JSON 형식으로 수정해주십시오.
+2. 불필요한 설명, 사과, 변명 등은 모두 제거하고, 오직 완벽하게 복구된 JSON만을 출력해야 합니다.
+3. 최종 결과는 반드시 \`{...}\` 또는 \`[...] \`로 시작하고 끝나야 합니다.`;
 };
 
 const generateWorldCreationPrompt = (theme) => {
@@ -133,7 +134,7 @@ function App() {
     const [gameState, setGameState] = useState(getDefaultGameState());
     const [personalStoryLog, setPersonalStoryLog] = useState([]);
     const [privatePlayerState, setPrivatePlayerState] = useState(null);
-    const [isTextLoading, setIsTextLoading] = useState(false);
+    const [isLlmApiLoading, setIsLlmApiLoading] = useState(false);
     const [activeUsers, setActiveUsers] = useState([]);
     const [chatMessages, setChatMessages] = useState([]);
     const [currentChatMessage, setCurrentChatMessage] = useState('');
@@ -158,9 +159,10 @@ function App() {
     const [worldview, setWorldview] = useState(null);
     const [worlds, setWorlds] = useState([]);
     const [isCreatingWorld, setIsCreatingWorld] = useState(false);
-    const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
+
+    const isTextLoading = isLlmApiLoading || (privatePlayerState?.isProcessingAction ?? false);
 
     const masterPromptForThemeGeneration = `
 # 페르소나 (Persona)
@@ -274,13 +276,12 @@ function App() {
             setLlmError('월드 삭제에 실패했습니다. 콘솔 로그를 확인해주세요.');
         } finally {
             setIsResetting(false);
-            setShowResetModal(false);
         }
     };
 
     const callGeminiTextLLM = useCallback(
         async (userPrompt, systemPromptToUse) => {
-            setIsTextLoading(true);
+            setIsLlmApiLoading(true);
             const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
             const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
             const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
@@ -321,11 +322,67 @@ function App() {
                 setLlmError(error.message || 'LLM 호출에 실패했습니다.');
                 return null;
             } finally {
-                setIsTextLoading(false);
+                setIsLlmApiLoading(false);
             }
         },
         [setLlmError]
     );
+
+    const callLlmWithAutoFix = useCallback(async (initialUserPrompt, systemPrompt, expectedType = 'object') => {
+        const isResponseTypeValid = (res) => {
+            if (expectedType === 'object') {
+                return res && typeof res === 'object' && !Array.isArray(res);
+            }
+            if (expectedType === 'array') {
+                return Array.isArray(res);
+            }
+            return false;
+        };
+
+        let llmResponse = await callGeminiTextLLM(initialUserPrompt, systemPrompt);
+
+        if (isResponseTypeValid(llmResponse)) {
+            return llmResponse;
+        }
+
+        console.warn(`LLM 초기 응답이 기대 타입('${expectedType}')과 다릅니다. 자동 복구를 시도합니다.`, llmResponse);
+        const rawOutput = typeof llmResponse === 'string' ? llmResponse : JSON.stringify(llmResponse);
+
+        if (!rawOutput || rawOutput.trim().length < 2) {
+             console.error('LLM 응답이 비어있어 복구할 수 없습니다.');
+             throw new Error('LLM 응답 오류');
+        }
+
+        const fixPrompt = buildFixJsonPrompt(rawOutput);
+        llmResponse = await callGeminiTextLLM(fixPrompt, fixPrompt);
+
+        if (isResponseTypeValid(llmResponse)) {
+            console.log('LLM 응답 자동 복구에 성공했습니다!');
+            return llmResponse;
+        }
+
+        console.warn('LLM 응답 자동 복구 실패. 강제 형 변환을 시도합니다.');
+        if (expectedType === 'object') {
+            if (Array.isArray(llmResponse) && llmResponse.length > 0) {
+                console.warn('배열을 객체로 변환합니다 (첫 번째 요소 사용).');
+                return llmResponse[0];
+            }
+            console.error('객체 변환 최종 실패. 빈 객체를 반환합니다.');
+            return {};
+        }
+
+        if (expectedType === 'array') {
+            if (llmResponse && typeof llmResponse === 'object' && !Array.isArray(llmResponse)) {
+                console.warn('객체를 배열로 변환합니다.');
+                return [llmResponse];
+            }
+            console.error('배열 변환 최종 실패. 빈 배열을 반환합니다.');
+            return [];
+        }
+
+        throw new Error('LLM 응답 오류: 기대하는 타입으로 변환할 수 없습니다.');
+    }, [callGeminiTextLLM]);
+
 
     const buildSystemPrompt = useCallback(
         (worldviewData) =>
@@ -420,26 +477,22 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
         const eventSummary = `[최근 공개 사건들]\n${publicLogSummary}\n\n[최근 주요 역사]\n${majorEventsSummary}`;
         const prompt = turningPointCreationPrompt.replace('{event_summary}', eventSummary);
-        const llmResponse = await callGeminiTextLLM(prompt, buildSystemPrompt(worldview));
+        const llmResponse = await callLlmWithAutoFix(prompt, buildSystemPrompt(worldview), 'object');
 
         if (llmResponse && llmResponse.create && llmResponse.turningPoint) {
             await setDoc(getActiveTurningPointRef(db, worldId), { ...llmResponse.turningPoint, startTimestamp: serverTimestamp() });
         }
-    }, [db, worldId, callGeminiTextLLM, buildSystemPrompt, worldview]);
+    }, [db, worldId, callLlmWithAutoFix, buildSystemPrompt, worldview]);
 
-    // ====================================================================
-    // ❗️ [수정됨] @닉네임 형식으로 명확하게 대상을 지정하도록 로직 수정
-    // ====================================================================
     const findTargetInText = (text, users, actorId) => {
         const mentionRegex = /@(\S+)/;
         const match = text.match(mentionRegex);
 
-        if (!match) return null; // @멘션이 없으면 null 반환
+        if (!match) return null;
 
         const mentionedNickname = match[1];
 
         for (const user of users) {
-            // 자신의 닉네임과 @멘션된 닉네임이 같고, 자기 자신이 아닌 경우
             if (user.id !== actorId && user.nickname === mentionedNickname) {
                 return {
                     targetUserId: user.id,
@@ -448,9 +501,8 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             }
         }
 
-        return null; // 일치하는 사용자를 찾지 못한 경우
+        return null;
     };
-    // ====================================================================
 
     const processEvent = useCallback(
         async (eventId, eventData) => {
@@ -468,11 +520,18 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
                     if (eventData.payload.isCreationAction) {
                         const userPromptText = await buildLlmPrompt(eventData, null, null, { worldview: worldviewDoc.data() });
-                        const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse);
-                        if (!llmResponse || typeof llmResponse !== 'object') throw new Error('캐릭터 생성 LLM 응답 오류');
-                        await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), {
-                            ...getDefaultPrivatePlayerState(), ...llmResponse.privateStateUpdates, characterCreated: true, profession: eventData.payload.choice, choices: llmResponse.choices || [], choicesTimestamp: serverTimestamp(),
-                        }, { merge: true });
+                        const llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
+                        
+                        const updates = {
+                            ...getDefaultPrivatePlayerState(),
+                            ...llmResponse.privateStateUpdates,
+                            characterCreated: true,
+                            profession: eventData.payload.choice,
+                            choices: llmResponse.choices || [],
+                            choicesTimestamp: serverTimestamp(),
+                            isProcessingAction: false,
+                        };
+                        await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), updates, { merge: true });
                         await addDoc(getPersonalStoryLogRef(db, worldId, eventUserId), {
                             action: `[직업 선택: ${eventData.payload.choice}]`, story: llmResponse.personalStory || '운명의 길이 열렸다.', timestamp: serverTimestamp()
                         });
@@ -495,10 +554,14 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                 const conflictLog = (currentScenario.publicLog || []).find((log) => log.timestamp.toMillis() > eventTimestamp);
                                 const interveningEvent = conflictLog ? `[${conflictLog.actor.displayName}] ${conflictLog.log}` : '알 수 없는 사건';
                                 const conflictPrompt = await buildLlmPrompt(null, null, null, null, { originalChoice: eventData.payload.choice, interveningEvent });
-                                const llmResponse = await callGeminiTextLLM(conflictPrompt, systemPromptToUse);
+                                const llmResponse = await callLlmWithAutoFix(conflictPrompt, systemPromptToUse, 'object');
                                 const newLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
                                 transaction.set(newLogRef, { action: '나의 선택이 현실과 충돌함', story: llmResponse.personalStory, timestamp: serverTimestamp() });
-                                transaction.update(actorStateRef, { choices: llmResponse.choices || [], choicesTimestamp: currentScenario.lastUpdate });
+                                transaction.update(actorStateRef, {
+                                    choices: llmResponse.choices || [],
+                                    choicesTimestamp: currentScenario.lastUpdate,
+                                    isProcessingAction: false,
+                                });
                                 return;
                             }
 
@@ -515,8 +578,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
                             const worldState = { publicLog: currentScenario.publicLog, allMajorEvents: allMajorEventsSnap.docs, activeUsers: activeUsersSnap.docs.map((d) => ({ id: d.id, ...d.data() })), personalLog: personalLogSnap.docs };
                             const userPromptText = await buildLlmPrompt(eventData, currentActorState, targetState, worldState);
-                            const llmResponse = await callGeminiTextLLM(userPromptText, systemPromptToUse);
-                            if (!llmResponse || typeof llmResponse !== 'object') throw new Error('LLM 응답 오류');
+                            const llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
 
                             const newTimestamp = serverTimestamp();
                             let currentPublicLog = currentScenario.publicLog || [];
@@ -525,8 +587,15 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             transaction.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
                             const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
                             transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
-                            const actorUpdates = { choices: llmResponse.choices || [], choicesTimestamp: newTimestamp, ...llmResponse.privateStateUpdates, };
+                            
+                            const actorUpdates = {
+                                choices: llmResponse.choices || [],
+                                choicesTimestamp: newTimestamp,
+                                ...llmResponse.privateStateUpdates,
+                                isProcessingAction: false,
+                            };
                             transaction.set(actorStateRef, actorUpdates, { merge: true });
+
                             if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
                                 const targetId = eventData.payload.targetUserId;
                                 const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
@@ -565,12 +634,16 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                 await setDoc(eventRef, { status: 'processed' }, { merge: true });
             } catch (error) {
                 console.error(`이벤트 처리 실패 (ID: ${eventId}):`, error);
+                const eventUserId = eventData.userId;
+                if (eventUserId) {
+                    await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), { isProcessingAction: false }, { merge: true });
+                }
                 setLlmError(`이벤트 처리 중 오류 발생: ${error.message}`);
                 setLlmRetryEvent({ id: eventId, data: eventData });
                 await setDoc(eventRef, { status: 'failed', error: error.message }, { merge: true });
             }
         },
-        [db, worldId, callGeminiTextLLM, getDisplayName, buildSystemPrompt]
+        [db, worldId, callLlmWithAutoFix, getDisplayName, buildSystemPrompt]
     );
 
     useEffect(() => {
@@ -703,20 +776,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         setKnownMajorEvents(allMajorEvents.filter((event) => (privatePlayerState.knownEventIds || []).includes(event?.id)));
     }, [privatePlayerState?.knownEventIds, allMajorEvents]);
 
-    useEffect(() => {
-        // 기존 로직
-        setIsTextLoading(false);
-    }, [privatePlayerState?.choicesTimestamp, privatePlayerState?.choices, personalStoryLog]);
-
-    // 추가: 내 선택이 stale(실패) 상태일 때도 강제 해제
-    useEffect(() => {
-        const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
-        const gTs = gameState.lastUpdate?.toMillis();
-        if (pTs && gTs && pTs < gTs) {
-            setIsTextLoading(false);
-        }
-    }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
-
     const sendChatMessage = async () => {
         if (!db || !userId || !isAuthReady || !currentChatMessage.trim() || !worldId || privatePlayerState?.status === 'dead') return;
         const messageText = currentChatMessage.trim();
@@ -730,35 +789,16 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         setIsCreatingWorld(true);
         setLlmError(null);
         try {
-            let generatedPacks = null;
-            let lastRawOutput = '';
-            const maxRetries = 3;
+            const themePacksPrompt = masterPromptForThemeGeneration;
+            const generatedPacks = await callLlmWithAutoFix(themePacksPrompt, themePacksPrompt, 'array');
 
-            for (let i = 0; i < maxRetries; i++) {
-                console.log(`테마 팩 생성 시도 ${i + 1}/${maxRetries}...`);
-                const promptToUse = (i === 0) ?
-                    masterPromptForThemeGeneration :
-                    buildFixJsonPrompt(lastRawOutput);
-                const response = await callGeminiTextLLM(promptToUse, (i === 0) ? masterPromptForThemeGeneration : buildFixJsonPrompt(''));
-                if (response && Array.isArray(response) && response.length > 0) {
-                    generatedPacks = response;
-                    console.log('테마 팩 생성 성공!');
-                    break;
-                } else {
-                    lastRawOutput = typeof response === 'string' ? response : JSON.stringify(response);
-                    console.warn(`시도 ${i + 1} 실패: LLM이 유효한 배열을 반환하지 않았습니다. 출력물:`, lastRawOutput);
-                }
-            }
-
-            if (!generatedPacks) {
+            if (!generatedPacks || generatedPacks.length === 0) {
                 throw new Error('테마 팩 생성에 최종적으로 실패했습니다. LLM이 유효한 데이터를 반환하지 않습니다.');
             }
 
             const randomTheme = generatedPacks[Math.floor(Math.random() * generatedPacks.length)];
-            const llmResponse = await callGeminiTextLLM(generateWorldCreationPrompt(randomTheme), generateWorldCreationPrompt(randomTheme));
-            if (!llmResponse || typeof llmResponse !== 'object' || Array.isArray(llmResponse)) {
-                throw new Error('세계관 생성에 실패했습니다.');
-            }
+            const worldCreationPrompt = generateWorldCreationPrompt(randomTheme)
+            const llmResponse = await callLlmWithAutoFix(worldCreationPrompt, worldCreationPrompt, 'object');
 
             const newWorldRef = doc(collection(db, 'worlds'));
             const batch = writeBatch(db);
@@ -780,44 +820,46 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
     const handleChoiceClick = async (choice, motivation = null) => {
         if (isTextLoading || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
-        setIsTextLoading(true);
 
-        const isCreation = !privatePlayerState.characterCreated;
-
-        const event = {
-            type: 'PLAYER_ACTION',
-            userId: userId,
-            payload: {
-                choice,
-                choicesTimestamp: privatePlayerState.choicesTimestamp || null,
-                isCreationAction: isCreation,
-                motivation: motivation,
-            },
-            timestamp: serverTimestamp(),
-            status: 'pending',
-        };
         try {
+            const playerStateRef = getPrivatePlayerStateRef(db, worldId, userId);
+            await setDoc(playerStateRef, { isProcessingAction: true }, { merge: true });
+
+            const isCreation = !privatePlayerState.characterCreated;
+            const event = {
+                type: 'PLAYER_ACTION',
+                userId: userId,
+                payload: {
+                    choice,
+                    choicesTimestamp: privatePlayerState.choicesTimestamp || null,
+                    isCreationAction: isCreation,
+                    motivation: motivation,
+                },
+                timestamp: serverTimestamp(),
+                status: 'pending',
+            };
             await addDoc(getEventsCollectionRef(db, worldId), event);
         } catch (e) {
             console.error('이벤트 제출 실패:', e);
             setLlmError('선택을 제출하는 데 실패했습니다.');
-            setIsTextLoading(false);
+            const playerStateRef = getPrivatePlayerStateRef(db, worldId, userId);
+            await setDoc(playerStateRef, { isProcessingAction: false }, { merge: true });
         }
     };
 
     const handleInterruptionAcknowledge = async () => {
         if (!db || !userId || !worldId || !privatePlayerState?.interruption) return;
         const newChoices = privatePlayerState.interruption.choices;
-        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), {
-            interruption: null,
+        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), { 
+            interruption: null, 
             choices: newChoices,
             choicesTimestamp: serverTimestamp()
         }, { merge: true });
-        setShowInterruptionModal(false);
+        setShowInterruptionModal(false); 
     };
 
     const toggleAccordion = (key) => setAccordion((prev) => ({ ...prev, [key]: !prev[key] }));
-
+    
     const handleClueClick = async (clue) => {
         if (!db || !userId || !worldId || !clue || isTextLoading) return;
 
@@ -833,7 +875,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             knownClues: arrayUnion(clue)
         }, { merge: true });
     };
-
+    
     const toggleActiveMemory = async (clue, activate) => {
         if (!db || !userId || !worldId) return;
         const privateStateRef = getPrivatePlayerStateRef(db, worldId, userId);
@@ -845,7 +887,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         }
         await setDoc(privateStateRef, { activeMemories: currentMemories }, { merge: true });
     };
-
+    
     const LlmErrorModal = () => (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
             <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -876,7 +918,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             </div>
         </div>
     );
-
+    
     const InterruptionModal = () => {
         if (!showInterruptionModal || !privatePlayerState?.interruption) return null;
         return (
@@ -885,7 +927,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     <h3 className="text-2xl font-bold text-yellow-300">! 상황 개입 !</h3>
                     <div className="bg-gray-900 p-4 rounded-md">
                         <p className="text-gray-200 whitespace-pre-wrap text-lg leading-relaxed">
-                            {privatePlayerState.interruption.story}
+                           {privatePlayerState.interruption.story}
                         </p>
                     </div>
                     <p className="text-sm text-gray-400">당신의 선택지가 변경되었습니다.</p>
@@ -982,7 +1024,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
             const parts = storyText.split(/<\/?clue>/g);
             return parts.map((part, index) => {
-                if (index % 2 === 1) { // 홀수 인덱스는 <clue> 태그 안의 내용
+                if (index % 2 === 1) { 
                     const isKnown = (privatePlayerState?.knownClues || []).includes(part);
                     return (
                         <span
@@ -1035,7 +1077,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             </div>
         );
     };
-
+    
     const ChoicesDisplay = () => {
         const areChoicesStale = useMemo(() => {
             const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
@@ -1103,16 +1145,16 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     <div className="mb-2">
                         <div className="flex items-center justify-between mb-2">
                             <h4 className="text-md font-semibold text-gray-200">
-                                현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
-                            </h4>
+                                 현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
+                             </h4>
                             <div className="flex gap-2">
                                 <button className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md" onClick={() => setWorldId(null)}>
-                                    로비로
-                                </button>
-                                <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
+                                  로비로
+                                 </button>
+                                 <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
                                     월드 삭제
-                                </button>
-                            </div>
+                                 </button>
+                             </div>
                         </div>
                         <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
                             <p className="font-bold text-yellow-200">
@@ -1303,9 +1345,6 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                                 <div ref={chatEndRef} />
                             </div>
                             <div className="flex">
-                                {/* ==================================================================== */}
-                                {/* ❗️ [수정됨] 행동 선언 시 @닉네임으로 대상을 지정하도록 안내 문구 수정 */}
-                                {/* ==================================================================== */}
                                 <input
                                     type="text"
                                     placeholder={isPlayerDead ? "당신은 더 이상 말할 수 없습니다." : "! 행동 또는 !@대상 행동 선언"}
