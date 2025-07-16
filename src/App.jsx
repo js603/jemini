@@ -20,6 +20,7 @@ import {
     writeBatch,
     where,
 } from 'firebase/firestore';
+
 // ====================================================================
 // Firebase configuration information - 수정 금지
 const defaultFirebaseConfig = {
@@ -35,20 +36,58 @@ const defaultFirebaseConfig = {
 const firebaseConfig = defaultFirebaseConfig;
 // ====================================================================
 
+// 코드 가독성 및 유지보수를 위한 상수 정의
+const CONSTANTS = {
+    EVENT_TYPES: {
+        PLAYER_ACTION: 'PLAYER_ACTION',
+        CHAT_MESSAGE: 'CHAT_MESSAGE',
+    },
+    EVENT_STATUS: {
+        PENDING: 'pending',
+        PROCESSING: 'processing',
+        PROCESSED: 'processed',
+        FAILED: 'failed',
+    },
+    PLAYER_STATUS: {
+        ALIVE: 'alive',
+        DEAD: 'dead',
+    },
+    COLLECTIONS: {
+        WORLDS: 'worlds',
+        USERS: 'users',
+        PLAYER_STATE: 'playerState',
+        PERSONAL_STORY_LOG: 'personalStoryLog',
+        EVENTS: 'events',
+        SYSTEM: 'system',
+        PUBLIC: 'public',
+        DATA: 'data',
+        MAIN_SCENARIO: 'mainScenario',
+        MAJOR_EVENTS: 'majorEvents',
+        NPCS: 'npcs',
+        TURNING_POINTS: 'turningPoints',
+        WORLDVIEW: 'worldview',
+        THEME_PACKS: 'themePacks',
+        PROCESSOR: 'processor',
+        ACTIVE_USERS: 'activeUsers',
+        CHAT_MESSAGES: 'chatMessages',
+    },
+};
+
 // Firestore 경로 유틸 (World Instancing 적용)
-const getWorldMetaRef = (db, worldId) => doc(db, 'worlds', worldId);
-const getMainScenarioRef = (db, worldId) => doc(db, 'worlds', worldId, 'public', 'data', 'mainScenario', 'main');
-const getPrivatePlayerStateRef = (db, worldId, userId) => doc(db, 'worlds', worldId, 'users', userId, 'playerState', 'state');
-const getMajorEventsRef = (db, worldId) => collection(db, 'worlds', worldId, 'public', 'data', 'majorEvents');
-const getPersonalStoryLogRef = (db, worldId, userId) => collection(db, 'worlds', worldId, 'users', userId, 'personalStoryLog');
-const getNpcRef = (db, worldId, npcId) => doc(db, 'worlds', worldId, 'public', 'data', 'npcs', npcId);
-const getActiveTurningPointRef = (db, worldId) => doc(db, 'worlds', worldId, 'public', 'data', 'turningPoints', 'active');
-const getWorldviewRef = (db, worldId) => doc(db, 'worlds', worldId, 'public', 'data', 'worldview', 'main');
-const getThemePacksRef = (db, worldId) => doc(db, 'worlds', worldId, 'public', 'data', 'themePacks', 'main');
-const getEventsCollectionRef = (db, worldId) => collection(db, 'worlds', worldId, 'events');
-const getProcessorLeaseRef = (db, worldId) => doc(db, 'worlds', worldId, 'system', 'processor');
-const getActiveUsersCollectionRef = (db, worldId) => collection(db, 'worlds', worldId, 'public', 'data', 'activeUsers');
-const getChatMessagesCollectionRef = (db, worldId) => collection(db, 'worlds', worldId, 'public', 'data', 'chatMessages');
+const getWorldMetaRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId);
+const getMainScenarioRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.MAIN_SCENARIO, 'main');
+const getPrivatePlayerStateRef = (db, worldId, userId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.USERS, userId, CONSTANTS.COLLECTIONS.PLAYER_STATE, 'state');
+const getMajorEventsRef = (db, worldId) => collection(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.MAJOR_EVENTS);
+const getPersonalStoryLogRef = (db, worldId, userId) => collection(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.USERS, userId, CONSTANTS.COLLECTIONS.PERSONAL_STORY_LOG);
+const getNpcRef = (db, worldId, npcId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.NPCS, npcId);
+const getActiveTurningPointRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.TURNING_POINTS, 'active');
+const getWorldviewRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.WORLDVIEW, 'main');
+const getThemePacksRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.THEME_PACKS, 'main');
+const getEventsCollectionRef = (db, worldId) => collection(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.EVENTS);
+const getProcessorLeaseRef = (db, worldId) => doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.SYSTEM, CONSTANTS.COLLECTIONS.PROCESSOR);
+const getActiveUsersCollectionRef = (db, worldId) => collection(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.ACTIVE_USERS);
+const getChatMessagesCollectionRef = (db, worldId) => collection(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA, CONSTANTS.COLLECTIONS.CHAT_MESSAGES);
+
 
 // 상태 초기화 유틸
 const getDefaultGameState = () => ({ publicLog: [], subtleClues: [], lastUpdate: null });
@@ -69,9 +108,9 @@ const getDefaultPrivatePlayerState = () => ({
     npcRelations: {},
     knownEventIds: [],
     currentLocation: null,
-    status: 'alive',
+    status: CONSTANTS.PLAYER_STATUS.ALIVE,
     interruption: null,
-    isProcessingAction: false, // ❗️[신규] 행동 처리 상태 필드
+    isProcessingAction: false,
 });
 
 const summarizeLogs = (logs, maxLength, isPersonal) => {
@@ -98,9 +137,9 @@ const buildCharacterCreationPrompt = (professionName, motivation, startingLocati
 ### 지시사항
 1. 위 플레이어 정보를 바탕으로, 플레이어가 자신의 캐릭터에 즉시 몰입할 수 있는 짧고 강렬한 1인칭 또는 2인칭 프롤로그 장면을 작성해주십시오. 이 내용은 반드시 'personalStory' 필드에 포함되어야 합니다.
 2. 이 프롤로그 장면에 이어지는 3가지의 논리적인 행동 선택지를 'choices' 필드에 제공해주십시오.
-3. 플레이어의 초기 상태를 설정하기 위해, 'privateStateUpdates' 필드에 'initialMotivation', 'currentLocation', 그리고 'status' 필드를 'alive'로 포함해주십시오.
+3. 플레이어의 초기 상태를 설정하기 위해, 'privateStateUpdates' 필드에 'initialMotivation', 'currentLocation', 그리고 'status' 필드를 '${CONSTANTS.PLAYER_STATUS.ALIVE}'로 포함해주십시오.
 ### JSON 출력 구조 (이 구조를 반드시 따르세요)
-{"personalStory": "플레이어를 위한 고유한 프롤로그 장면 서사.","choices": ["프롤로그 장면에 이어서 할 수 있는 첫 번째 행동","두 번째 행동","세 번째 행동"],"privateStateUpdates": {"initialMotivation": "${motivation}","currentLocation": "${startingLocation}", "status": "alive"}}`;
+{"personalStory": "플레이어를 위한 고유한 프롤로그 장면 서사.","choices": ["프롤로그 장면에 이어서 할 수 있는 첫 번째 행동","두 번째 행동","세 번째 행동"],"privateStateUpdates": {"initialMotivation": "${motivation}","currentLocation": "${startingLocation}", "status": "${CONSTANTS.PLAYER_STATUS.ALIVE}"}}`;
 };
 
 const buildFixJsonPrompt = (malformedJsonString) => {
@@ -130,7 +169,7 @@ const generateWorldCreationPrompt = (theme) => {
 };
 
 function App() {
-    const [worldId, setWorldId] = useState(null);
+    const [worldId, setWorldId] = useState(() => localStorage.getItem('worldId') || null);
     const [gameState, setGameState] = useState(getDefaultGameState());
     const [personalStoryLog, setPersonalStoryLog] = useState([]);
     const [privatePlayerState, setPrivatePlayerState] = useState(null);
@@ -162,6 +201,22 @@ function App() {
     const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
+    const [fatalError, setFatalError] = useState(null);
+    // lease 타이머 상태 추가
+    const [leaseTimeLeft, setLeaseTimeLeft] = useState(null);
+    const [leaseStatusMsg, setLeaseStatusMsg] = useState('');
+    // 이벤트 실패 재시도 카운트 관리용 (메모리)
+    const failedEventRetryCount = useRef({});
+    const MAX_EVENT_RETRY = 3;
+    // 캐릭터 생성 fallback 상태
+    const [characterCreationFailed, setCharacterCreationFailed] = useState(false);
+    // 닉네임 중복 체크 상태
+    const [nicknameError, setNicknameError] = useState('');
+    const [checkingNickname, setCheckingNickname] = useState(false);
+    // 네트워크 상태
+    const [isOffline, setIsOffline] = useState(!navigator.onLine);
+    // 닉네임으로 이어하기를 위한 상태 추가
+    const [existingUserIdForNickname, setExistingUserIdForNickname] = useState(null);
 
     const isTextLoading = isLlmApiLoading || (privatePlayerState?.isProcessingAction ?? false);
 
@@ -187,115 +242,168 @@ function App() {
         return [...chatFeed, ...publicLogFeed].sort((a, b) => a.date.getTime() - b.date.getTime());
     }, [chatMessages, gameState.publicLog]);
 
-    const handleNicknameSubmit = () => {
-        if (nicknameInput.trim()) {
-            const finalNickname = nicknameInput.trim();
+    const handleNicknameSubmit = async () => {
+        let finalNickname = nicknameInput.trim();
+        if (!finalNickname) {
+            finalNickname = `플레이어${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+        setCheckingNickname(true);
+        setNicknameError('');
+        setExistingUserIdForNickname(null);
+        try {
+            if (db && worldId) {
+                const usersRef = getActiveUsersCollectionRef(db, worldId);
+                const q = query(usersRef, where('nickname', '==', finalNickname));
+                const querySnapshot = await getDocs(q);
+                if (!querySnapshot.empty) {
+                    // 이미 등록된 닉네임이 있음
+                    const existingDoc = querySnapshot.docs[0];
+                    setNicknameError('이미 등록된 닉네임입니다. 이어하기를 누르세요.');
+                    setExistingUserIdForNickname(existingDoc.id);
+                    setCheckingNickname(false);
+                    return;
+                }
+            }
             setNickname(finalNickname);
             localStorage.setItem('nickname', finalNickname);
             setShowNicknameModal(false);
             if (userId && db && worldId) {
-                setDoc(doc(getActiveUsersCollectionRef(db, worldId), userId), { nickname: finalNickname }, { merge: true });
+                const usersRef = getActiveUsersCollectionRef(db, worldId);
+                await setDoc(doc(usersRef, userId), { nickname: finalNickname }, { merge: true });
+                // userId를 로컬스토리지에 저장(새 유저)
+                localStorage.setItem('userId', userId);
             }
+        } catch (e) {
+            console.error("닉네임 저장 실패: ", e);
+            setNicknameError('닉네임 저장 중 오류가 발생했습니다. 다시 시도해주세요.');
+        } finally {
+            setCheckingNickname(false);
+        }
+    };
+
+    // 이어하기 버튼 클릭 시 기존 userId로 세션 전환
+    const handleContinueWithExistingNickname = async () => {
+        if (existingUserIdForNickname) {
+            setUserId(existingUserIdForNickname);
+            localStorage.setItem('userId', existingUserIdForNickname);
+            setNickname(nicknameInput.trim());
+            localStorage.setItem('nickname', nicknameInput.trim());
+            setShowNicknameModal(false);
+            setExistingUserIdForNickname(null);
+            setNicknameError('');
         }
     };
 
     const getDisplayName = useCallback(
-        (uid) => {
+        (uid, users = activeUsers) => {
             if (uid === userId) return nickname || `플레이어 ${String(uid || '').substring(0, 4)}`;
-            const user = activeUsers.find((u) => u.id === uid);
+            const user = users.find((u) => u.id === uid);
             return user?.nickname || `플레이어 ${String(uid || '').substring(0, 4)}`;
         },
         [activeUsers, userId, nickname]
     );
 
+    const deleteCollection = useCallback(async (collectionRef, batchSize = 100) => {
+        if (!db) return;
+        const q = query(collectionRef, limit(batchSize));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.size === 0) {
+            return;
+        }
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+
+        await deleteCollection(collectionRef, batchSize);
+    }, [db]);
+
+
     const deleteCurrentWorld = async () => {
         if (!db || !worldId) return;
         setIsResetting(true);
-        console.log(`월드 삭제 시작: ${worldId}`);
-
+        setLlmError(null);
         try {
             const worldRef = getWorldMetaRef(db, worldId);
-            const usersCollectionRef = collection(worldRef, 'users');
+
+            // 1. 모든 유저의 하위 컬렉션 삭제
+            const usersCollectionRef = collection(worldRef, CONSTANTS.COLLECTIONS.USERS);
             const usersSnapshot = await getDocs(usersCollectionRef);
+            for (const userDoc of usersSnapshot.docs) {
+                await deleteCollection(collection(userDoc.ref, CONSTANTS.COLLECTIONS.PERSONAL_STORY_LOG));
+                await deleteCollection(collection(userDoc.ref, CONSTANTS.COLLECTIONS.PLAYER_STATE));
+                await deleteDoc(userDoc.ref); // 유저 문서 자체도 삭제
+            }
+            await deleteCollection(usersCollectionRef);
 
-            if (!usersSnapshot.empty) {
-                console.log(`${usersSnapshot.size}명의 플레이어 하위 데이터 삭제 중...`);
-                const userDeletionPromises = usersSnapshot.docs.map(async (userDoc) => {
-                    const userId = userDoc.id;
-                    const personalStoryLogRef = collection(userDoc.ref, 'personalStoryLog');
-                    const personalStoryLogSnapshot = await getDocs(personalStoryLogRef);
-                    if (!personalStoryLogSnapshot.empty) {
-                        const batch = writeBatch(db);
-                        personalStoryLogSnapshot.docs.forEach(doc => batch.delete(doc.ref));
-                        await batch.commit();
-                        console.log(`- ${userId}의 personalStoryLog 삭제 완료`);
-                    }
 
-                    const playerStateRef = collection(userDoc.ref, 'playerState');
-                    const playerStateSnapshot = await getDocs(playerStateRef);
-                    if (!playerStateSnapshot.empty) {
-                        const batch = writeBatch(db);
-                        playerStateSnapshot.docs.forEach(doc => batch.delete(doc.ref));
-                        await batch.commit();
-                        console.log(`- ${userId}의 playerState 삭제 완료`);
-                    }
-                });
-                await Promise.all(userDeletionPromises);
+            // 2. 최상위 주요 컬렉션들 삭제
+            const collectionsToDelete = [CONSTANTS.COLLECTIONS.EVENTS, CONSTANTS.COLLECTIONS.SYSTEM];
+            for (const coll of collectionsToDelete) {
+                await deleteCollection(collection(worldRef, coll));
             }
 
-            console.log("플레이어 문서 및 공용 컬렉션 삭제 중...");
-            const collectionsToDelete = [
-                'users', 'events', 'system',
-                'public/data/activeUsers', 'public/data/chatMessages',
-                'public/data/majorEvents', 'public/data/npcs', 'public/data/turningPoints'
+            // 3. public/data 하위의 컬렉션들 삭제
+            const publicDataRef = doc(worldRef, CONSTANTS.COLLECTIONS.PUBLIC, CONSTANTS.COLLECTIONS.DATA);
+            const publicDataCollections = [
+                CONSTANTS.COLLECTIONS.ACTIVE_USERS,
+                CONSTANTS.COLLECTIONS.CHAT_MESSAGES,
+                CONSTANTS.COLLECTIONS.MAJOR_EVENTS,
+                CONSTANTS.COLLECTIONS.NPCS,
+                CONSTANTS.COLLECTIONS.TURNING_POINTS,
             ];
+            for (const coll of publicDataCollections) {
+                await deleteCollection(collection(publicDataRef, coll));
+            }
 
-            const collectionDeletionPromises = collectionsToDelete.map(async (path) => {
-                const collRef = collection(db, 'worlds', worldId, ...path.split('/'));
-                const snapshot = await getDocs(collRef);
-                if (!snapshot.empty) {
-                    const batch = writeBatch(db);
-                    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-                    await batch.commit();
-                    console.log(`- 컬렉션 '${path}' 삭제 완료`);
-                }
-            });
-            await Promise.all(collectionDeletionPromises);
+            // 4. public/data 하위의 단일 문서들 삭제
+            const batch = writeBatch(db);
+            batch.delete(getThemePacksRef(db, worldId));
+            batch.delete(getWorldviewRef(db, worldId));
+            batch.delete(getMainScenarioRef(db, worldId));
+            batch.delete(getActiveTurningPointRef(db, worldId));
 
-            console.log("월드 루트 문서 삭제 중...");
-            const finalBatch = writeBatch(db);
-            finalBatch.delete(getThemePacksRef(db, worldId));
-            finalBatch.delete(getWorldviewRef(db, worldId));
-            finalBatch.delete(getMainScenarioRef(db, worldId));
-            finalBatch.delete(worldRef);
-            await finalBatch.commit();
-            console.log("월드 삭제 완료!");
+            // 5. 시스템 및 프로세서 관련 문서 삭제
+            batch.delete(getProcessorLeaseRef(db, worldId));
+
+            // 6. 마지막으로 월드 루트 문서 삭제
+            batch.delete(worldRef);
+
+            await batch.commit();
             setWorldId(null);
-
+            setLlmError(null);
         } catch (e) {
             console.error('월드 데이터 삭제 중 오류 발생:', e);
-            setLlmError('월드 삭제에 실패했습니다. 콘솔 로그를 확인해주세요.');
+            setLlmError('월드 삭제에 실패했습니다. 일부 데이터가 남아있을 수 있습니다. 재시도하거나, 문제가 지속되면 관리자에게 문의하세요.');
         } finally {
             setIsResetting(false);
+            setShowResetModal(false);
         }
     };
 
     const callGeminiTextLLM = useCallback(
         async (userPrompt, systemPromptToUse) => {
             setIsLlmApiLoading(true);
+
+            // [보안 경고] API 키를 클라이언트 코드에 직접 노출하는 것은 매우 위험합니다.
+            // 실제 프로덕션 환경에서는 이 키를 서버 측(예: Firebase Functions)으로 옮겨야 합니다.
+            // 이 프로젝트의 제약 조건에 따라 클라이언트에 유지합니다.
             const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
             const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
-            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`;
+
+            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
             const payload = {
-                contents: [
-                    { role: 'user', parts: [{ text: systemPromptToUse }] },
-                    { role: 'model', parts: [{ text: '{"response_format": "json"}' }] },
-                    { role: 'user', parts: [{ text: userPrompt }] }
-                ],
+                contents: [{
+                    parts: [{ text: systemPromptToUse }, { text: userPrompt }]
+                }],
                 generationConfig: {
                     responseMimeType: "application/json",
                 }
             };
+
             const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             try {
                 let response = await tryGeminiCall(mainApiKey);
@@ -311,12 +419,12 @@ function App() {
                         return JSON.parse(jsonMatch[0]);
                     } catch (e) {
                         console.warn('JSON 파싱 실패, 원본 텍스트를 반환하여 재시도 로직에서 처리합니다.', e);
-                        return llmOutputText;
+                        return llmOutputText; // Return malformed string for fixing
                     }
                 }
 
                 console.warn('LLM 응답에서 유효한 JSON 객체나 배열을 찾지 못했습니다.');
-                return llmOutputText;
+                return llmOutputText; // Return raw output for fixing
 
             } catch (error) {
                 console.error('LLM API 호출 중 치명적 오류 발생:', error);
@@ -346,41 +454,23 @@ function App() {
             return llmResponse;
         }
 
-        console.warn(`LLM 초기 응답이 기대 타입('${expectedType}')과 다릅니다. 자동 복구를 시도합니다.`, llmResponse);
         const rawOutput = typeof llmResponse === 'string' ? llmResponse : JSON.stringify(llmResponse);
+        console.warn('LLM 응답 형식이 올바르지 않아 수정을 시도합니다. 원본:', rawOutput);
 
         if (!rawOutput || rawOutput.trim().length < 2) {
-             console.error('LLM 응답이 비어있어 복구할 수 없습니다.');
-             throw new Error('LLM 응답 오류');
+            console.error('LLM 응답이 비어있어 수정할 수 없습니다.');
+            throw new Error('LLM이 비어있는 응답을 반환했습니다.');
         }
 
         const fixPrompt = buildFixJsonPrompt(rawOutput);
-        llmResponse = await callGeminiTextLLM(fixPrompt, fixPrompt);
+        llmResponse = await callGeminiTextLLM(fixPrompt, "You are a JSON repair expert. Your only output is the corrected JSON.");
 
         if (isResponseTypeValid(llmResponse)) {
-            console.log('LLM 응답 자동 복구에 성공했습니다!');
+            console.log('JSON 수정에 성공했습니다.');
             return llmResponse;
         }
 
-        console.warn('LLM 응답 자동 복구 실패. 강제 형 변환을 시도합니다.');
-        if (expectedType === 'object') {
-            if (Array.isArray(llmResponse) && llmResponse.length > 0) {
-                console.warn('배열을 객체로 변환합니다 (첫 번째 요소 사용).');
-                return llmResponse[0];
-            }
-            console.error('객체 변환 최종 실패. 빈 객체를 반환합니다.');
-            return {};
-        }
-
-        if (expectedType === 'array') {
-            if (llmResponse && typeof llmResponse === 'object' && !Array.isArray(llmResponse)) {
-                console.warn('객체를 배열로 변환합니다.');
-                return [llmResponse];
-            }
-            console.error('배열 변환 최종 실패. 빈 배열을 반환합니다.');
-            return [];
-        }
-
+        console.error('LLM 응답 자동 수정에 최종적으로 실패했습니다.');
         throw new Error('LLM 응답 오류: 기대하는 타입으로 변환할 수 없습니다.');
     }, [callGeminiTextLLM]);
 
@@ -393,24 +483,24 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
 ### 중요 규칙
 - **단서(Clue) 생성 규칙:** 'personalStory' 내용 중에 플레이어가 기억해야 할 중요한 정보(인물, 장소, 물건, 사건, 비밀 등)가 있다면, 해당 부분을 반드시 \`<clue>\` 태그로 감싸주십시오. 예: "당신은 낡은 책상 위에서 <clue>피로 얼룩진 양피지 지도</clue>를 발견했습니다." 이 규칙은 매우 중요합니다.
-- 모든 플레이어는 'status' 필드를 가집니다. 만약 플레이어가 행동의 결과로 사망(death)하거나, 행동 불능(incapacitated) 상태가 되면 status를 'dead'로 설정하십시오.
-- 'dead' 상태가 된 플레이어의 'choices'는 반드시 그의 마지막을 나타내는 단 하나의 선택지(예: '나의 이야기는 여기서 끝났다.')여야 합니다.
-- ❗️ **대상(Target)이 있는 경우 \`targetPersonalStory\`는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, \`targetPersonalStory\` 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다.
+- **선택지(choices) 생성 규칙:** 생성되는 모든 'choices' 배열은 반드시 3개의 문자열 요소를 포함해야 합니다. null이나 빈 배열은 절대 허용되지 않습니다.
+- **죽음(death) 처리 규칙:** 플레이어의 'status'가 '${CONSTANTS.PLAYER_STATUS.DEAD}'로 변경될 경우, 그의 'choices'는 반드시 그의 마지막을 기리는 단 하나의 서사적 선택지(예: '나의 이야기는 여기서 끝났다.')를 담은 배열이어야 합니다.
+- ❗️ **대상(Target)이 있는 경우 \`targetPersonalStory\`는 필수입니다.** 만약 행동의 대상이 된 다른 플레이어가 있다면, \`targetPersonalStory\` 필드는 **절대** null이 될 수 없습니다. 대상에게 아무런 영향이 없더라도 '당신은 [Actor]의 행동을 목격했지만 별다른 영향을 받지 않았습니다.'와 같이 반드시 그 상황을 묘사하는 서사를 생성해야 합니다. 대상이 사망한 경우, 그의 죽음을 묘사하고 그에 맞는 마지막 선택지를 'choicesForTarget'에 제공해야 합니다.
 
 ### JSON 출력 구조 (반드시 이 구조를 따르십시오)
 {
   "publicLogEntry": "주변의 다른 플레이어나 NPC가 명백히 인지할 수 있는 '공개적인 사건'이라면, 3인칭 시점의 객관적인 기록을 한 문장으로 작성. 그렇지 않으면 null.",
   "personalStory": "행동을 한 플레이어(Actor)의 관점에서 진행되는 1인칭 또는 2인칭 서사. 중요한 정보는 <clue>태그</clue>로 감싸야 합니다.",
-  "choices": ["'personalStory'의 결과에 따라 행동 유발자(Actor)가 할 수 있는 논리적인 다음 행동들."],
+  "choices": ["'personalStory'의 결과에 따라 행동 유발자(Actor)가 할 수 있는 논리적인 다음 행동들 (항상 3개)."],
   "privateStateUpdates": { 
-    "status": "행동 유발자(Actor)의 생존 상태. 'alive' 또는 'dead'. 필수 필드.",
+    "status": "행동 유발자(Actor)의 생존 상태. '${CONSTANTS.PLAYER_STATUS.ALIVE}' 또는 '${CONSTANTS.PLAYER_STATUS.DEAD}'. 필수 필드.",
     "...": "그 외 'stats', 'inventory', 'currentLocation' 등 변경이 필요한 다른 모든 상태 필드"
   },
  
   "targetPersonalStory": "만약 행동의 '대상'(Target)이 된 다른 플레이어가 있다면, 그 대상의 관점에서 겪는 일을 2인칭 서사('당신은...')로 작성. 대상에게 특별한 일이 없다면 '당신은 그 행동을 목격했지만 아무런 영향을 받지 않았다.' 와 같이 반드시 서술해야 합니다. 대상이 없다면 null.",
   "choicesForTarget": ["'targetPersonalStory'가 존재한다면, 그 대상(Target)을 위한 새로운 선택지. 대상이 사망했다면, 그의 마지막을 나타내는 단 하나의 선택지를 제공해야 합니다. 없다면 null."],
   "targetStateUpdates": {
-    "status": "대상의 생존 상태. 'alive' 또는 'dead'. 대상이 있을 경우 필수 필드.",
+    "status": "대상의 생존 상태. '${CONSTANTS.PLAYER_STATUS.ALIVE}' 또는 '${CONSTANTS.PLAYER_STATUS.DEAD}'. 대상이 있을 경우 필수 필드.",
     "...": "그 외 대상의 변경이 필요한 모든 상태 필드. 없다면 null."
   },
 
@@ -422,9 +512,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     );
 
     const buildLlmPrompt = useCallback(
-        async (eventData, actorState, targetState, worldState, conflictContext = null) => {
+        (eventData, actorState, targetState, worldState, currentActiveUsers, conflictContext = null) => {
             if (conflictContext) {
-                return `[상황 충돌 발생!] - 내가 하려던 행동: "${conflictContext.originalChoice}" - 하지만 그 직전에 벌어진 실제 사건: "${conflictContext.interveningEvent}" [지시] 위 상황을 바탕으로, 나의 행동이 실패하고 실제 사건을 목격하는 장면을 1인칭 또는 2인칭 시점에서 극적으로 묘사해주십시오. 이 묘사는 반드시 'personalStory' 필드에 포함되어야 합니다. 그리고 현재 바뀐 상황에 맞는 새로운 'choices'를 반드시 제공해주십시오. JSON 형식으로만 응답해야 합니다. 아래는 반드시 지켜야 할 JSON 출력 형식입니다: {"personalStory": "플레이어가 겪는 충돌 상황에 대한 1인칭 또는 2인칭 묘사","choices": ["바뀐 상황에 맞는 새로운 선택지 1", "새로운 선택지 2"]}`;
+                return `[상황 충돌 발생!] - 내가 하려던 행동: "${conflictContext.originalChoice}" - 하지만 그 직전에 벌어진 실제 사건: "${conflictContext.interveningEvent}" [지시] 위 상황을 바탕으로, 나의 행동이 실패하고 실제 사건을 목격하는 장면을 1인칭 또는 2인칭 시점에서 극적으로 묘사해주십시오. 이 묘사는 반드시 'personalStory' 필드에 포함되어야 합니다. 그리고 현재 바뀐 상황에 맞는 새로운 'choices'를 반드시 3개 제공해주십시오. JSON 형식으로만 응답해야 합니다. 아래는 반드시 지켜야 할 JSON 출력 형식입니다: {"personalStory": "플레이어가 겪는 충돌 상황에 대한 1인칭 또는 2인칭 묘사","choices": ["바뀐 상황에 맞는 새로운 선택지 1", "새로운 선택지 2", "새로운 선택지 3"]}`;
             }
 
             if (eventData.payload.isCreationAction) {
@@ -434,17 +524,28 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             }
 
             const { choice } = eventData.payload;
-            const actorDisplayName = getDisplayName(eventData.userId);
+            const actorDisplayName = getDisplayName(eventData.userId, currentActiveUsers);
             const personalLogSummary = summarizeLogs(worldState.personalLog.map(doc => doc.data()), 1000, true);
             const publicLogSummary = summarizeLogs(worldState.publicLog, 500, false);
             const actorKnownEvents = worldState.allMajorEvents.filter((doc) => (actorState.knownEventIds || []).includes(doc.id)).map((doc) => `- ${doc.data().summary}`).join('\n') || '아직 기록된 역사가 없음';
+            const activeMemoryPrompt = (actorState.activeMemories || []).length > 0 ?
+                `\n[현재 집중하고 있는 기억 (Active Memories)]\n- ${actorState.activeMemories.join('\n- ')}\n` :
+                '';
 
             let targetSection = '';
             if (targetState) {
-                const targetDisplayName = getDisplayName(eventData.payload.targetUserId);
+                const targetDisplayName = getDisplayName(eventData.payload.targetUserId, currentActiveUsers);
+                // 프롬프트 최적화: 전체 상태를 stringify하는 대신 핵심 정보만 요약
+                const targetStateSummary = {
+                    name: targetDisplayName,
+                    profession: targetState.profession,
+                    status: targetState.status,
+                    currentLocation: targetState.currentLocation,
+                    inventory: targetState.inventory,
+                };
                 targetSection = `\n[이번 행동의 대상 (Target)]
 - 이름: ${targetDisplayName}
-- 현재 상태: ${JSON.stringify(targetState)}
+- 현재 상태 요약: ${JSON.stringify(targetStateSummary)}
 - 지시: 이 대상이 겪게 될 일을 "targetPersonalStory" 필드에 2인칭 시점으로 묘사하고, 그를 위한 새로운 선택지를 "choicesForTarget"에, 상태 변화를 "targetStateUpdates"에 제공해주십시오.`
             }
 
@@ -452,7 +553,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 - 이름: ${actorDisplayName}
 - 개인 여정록 요약: \n${personalLogSummary}
 - 현재 상태: ${JSON.stringify(actorState)}
-
+${activeMemoryPrompt}
 [행동 (Action)]
 - 위 모든 상황 속에서, 행동 유발자(${actorDisplayName})가 다음 행동을 선택했습니다.
 - "${choice}"
@@ -465,16 +566,20 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     const turningPointCreationPrompt = `당신은 역사의 흐름을 읽는 '운명' 그 자체입니다. 최근 세상에서 벌어진 다음 사건들을 보고, 이 흐름이 하나의 거대한 '전환점(Turning Point)'으로 수렴될 수 있는지 판단하십시오. 현재 활성화된 전환점은 없습니다. 만약 중대한 갈등의 씨앗이나, 거대한 위협, 혹은 새로운 시대의 서막이 보인다면, 그에 맞는 전환점을 아래 JSON 형식으로 생성해주십시오. 아직 시기가 아니라면 'create' 값을 false로 설정하십시오. ### 최근 사건들 {event_summary} ### JSON 출력 구조 {"create": true,"turningPoint": {"title": "전환점의 제목 (예: '수도에 창궐한 역병')","description": "전환점에 대한 흥미로운 설명","status": "active","objectives": [{ "id": "objective_1", "description": "첫 번째 목표 (예: 역병의 근원 찾기)", "progress": 0, "goal": 100 },{ "id": "objective_2", "description": "두 번째 목표 (예: 치료제 개발 지원)", "progress": 0, "goal": 100 }]}}`;
 
     const checkAndCreateTurningPoint = useCallback(async () => {
-        if (!db || !worldId) return;
+        if (!db || !worldId || !isProcessor) return;
+
         const activeTpDoc = await getDoc(getActiveTurningPointRef(db, worldId));
         if (activeTpDoc.exists()) return;
 
-        const publicLog = (await getDoc(getMainScenarioRef(db, worldId))).data()?.publicLog || [];
-        const majorEvents = (await getDocs(getMajorEventsRef(db, worldId))).docs.map((d) => d.data());
+        const mainScenarioSnap = await getDoc(getMainScenarioRef(db, worldId));
+        const majorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
+
+        const publicLog = mainScenarioSnap.data()?.publicLog || [];
+        const majorEvents = majorEventsSnap.docs.map((d) => d.data());
 
         const publicLogSummary = publicLog.slice(-20).map((e) => e.log).join('\n');
         const majorEventsSummary = majorEvents.slice(-10).map((e) => e.summary).join('\n');
-        if (majorEventsSummary.length < 10) return;
+        if (publicLogSummary.length < 50 && majorEventsSummary.length < 50) return;
 
         const eventSummary = `[최근 공개 사건들]\n${publicLogSummary}\n\n[최근 주요 역사]\n${majorEventsSummary}`;
         const prompt = turningPointCreationPrompt.replace('{event_summary}', eventSummary);
@@ -483,179 +588,245 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         if (llmResponse && llmResponse.create && llmResponse.turningPoint) {
             await setDoc(getActiveTurningPointRef(db, worldId), { ...llmResponse.turningPoint, startTimestamp: serverTimestamp() });
         }
-    }, [db, worldId, callLlmWithAutoFix, buildSystemPrompt, worldview]);
+    }, [db, worldId, callLlmWithAutoFix, buildSystemPrompt, worldview, isProcessor]);
 
-    const findTargetInText = (text, users, actorId) => {
-        const mentionRegex = /@(\S+)/;
-        const match = text.match(mentionRegex);
+    const findTargetInText = (actionText, users, actorId) => {
+        if (!actionText.startsWith('@')) return null;
 
-        if (!match) return null;
+        const parts = actionText.split(/(\s+)/);
+        const mentionedNicknameWithAt = parts[0];
+        const mentionedNickname = mentionedNicknameWithAt.substring(1);
 
-        const mentionedNickname = match[1];
+        if (!mentionedNickname) return null;
 
-        for (const user of users) {
-            if (user.id !== actorId && user.nickname === mentionedNickname) {
-                return {
-                    targetUserId: user.id,
-                    targetDisplayName: user.nickname,
-                };
-            }
+        const targetUser = users.find(user => user.id !== actorId && user.nickname === mentionedNickname);
+
+        if (targetUser) {
+            const choiceTextForLlm = actionText.substring(mentionedNicknameWithAt.length).trim();
+            return {
+                targetUserId: targetUser.id,
+                targetDisplayName: targetUser.nickname,
+                actionTextForLlm: choiceTextForLlm || `${targetUser.nickname}을(를) 바라본다.`
+            };
         }
 
         return null;
     };
 
+
     const processEvent = useCallback(
         async (eventId, eventData) => {
             if (!db || !worldId) return;
-            const eventRef = doc(db, 'worlds', worldId, 'events', eventId);
-            await setDoc(eventRef, { status: 'processing' }, { merge: true });
+
+            const eventRef = doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.EVENTS, eventId);
+            await setDoc(eventRef, { status: CONSTANTS.EVENT_STATUS.PROCESSING }, { merge: true });
 
             try {
                 const worldviewDoc = await getDoc(getWorldviewRef(db, worldId));
                 if (!worldviewDoc.exists()) throw new Error("Worldview not found!");
                 const systemPromptToUse = buildSystemPrompt(worldviewDoc.data());
+                const currentWorldview = worldviewDoc.data();
 
-                if (eventData.type === 'PLAYER_ACTION') {
-                    const eventUserId = eventData.userId;
+                // Character Creation Action
+                if (eventData.type === CONSTANTS.EVENT_TYPES.PLAYER_ACTION && eventData.payload.isCreationAction) {
+                    const userPromptText = buildLlmPrompt(eventData, null, null, { worldview: currentWorldview }, []);
+                    const llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
 
-                    if (eventData.payload.isCreationAction) {
-                        const userPromptText = await buildLlmPrompt(eventData, null, null, { worldview: worldviewDoc.data() });
-                        const llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
-                        
-                        const updates = {
-                            ...getDefaultPrivatePlayerState(),
-                            ...llmResponse.privateStateUpdates,
-                            characterCreated: true,
-                            profession: eventData.payload.choice,
-                            choices: llmResponse.choices || [],
-                            choicesTimestamp: serverTimestamp(),
-                            isProcessingAction: false,
+                    const updates = {
+                        ...getDefaultPrivatePlayerState(),
+                        ...llmResponse.privateStateUpdates,
+                        characterCreated: true,
+                        profession: eventData.payload.choice,
+                        choices: llmResponse.choices || ['상황을 살핀다.', '다음 행동을 고심한다.', '주변의 기척에 귀 기울인다.'],
+                        choicesTimestamp: serverTimestamp(),
+                        isProcessingAction: false,
+                    };
+                    await setDoc(getPrivatePlayerStateRef(db, worldId, eventData.userId), updates, { merge: true });
+                    await addDoc(getPersonalStoryLogRef(db, worldId, eventData.userId), {
+                        action: `[직업 선택: ${eventData.payload.choice}]`, story: llmResponse.personalStory || '운명의 길이 열렸다.', timestamp: serverTimestamp()
+                    });
+
+                } else if (eventData.type === CONSTANTS.EVENT_TYPES.PLAYER_ACTION) {
+                    // Regular Player Action (Refactored Logic)
+                    // 1. Read volatile data and check for conflicts in a transaction
+                    const readResult = await runTransaction(db, async (transaction) => {
+                        const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventData.userId);
+                        const mainScenarioRef = getMainScenarioRef(db, worldId);
+
+                        const actorStateDoc = await transaction.get(actorStateRef);
+                        const mainScenarioDoc = await transaction.get(mainScenarioRef);
+
+                        if (!actorStateDoc.exists()) throw new Error("Actor state not found!");
+
+                        let targetState = null;
+                        if (eventData.payload.targetUserId) {
+                            const targetStateRef = getPrivatePlayerStateRef(db, worldId, eventData.payload.targetUserId);
+                            const targetStateDoc = await transaction.get(targetStateRef);
+                            if (targetStateDoc.exists()) {
+                                targetState = targetStateDoc.data();
+                            }
+                        }
+
+                        const eventTimestamp = eventData.payload.choicesTimestamp?.toMillis();
+                        const scenarioTimestamp = mainScenarioDoc.exists() ? mainScenarioDoc.data().lastUpdate?.toMillis() : null;
+
+                        if (eventTimestamp && scenarioTimestamp && eventTimestamp < scenarioTimestamp) {
+                            const conflictLog = (mainScenarioDoc.data().publicLog || []).find(log => log.timestamp.toMillis() > eventTimestamp);
+                            const interveningEvent = conflictLog ? `[${conflictLog.actor.displayName}] ${conflictLog.log}` : '알 수 없는 사건';
+                            return { hasConflict: true, interveningEvent };
+                        }
+
+                        return {
+                            hasConflict: false,
+                            actorState: actorStateDoc.data(),
+                            targetState,
+                            mainScenario: mainScenarioDoc.exists() ? mainScenarioDoc.data() : getDefaultGameState(),
                         };
-                        await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), updates, { merge: true });
-                        await addDoc(getPersonalStoryLogRef(db, worldId, eventUserId), {
-                            action: `[직업 선택: ${eventData.payload.choice}]`, story: llmResponse.personalStory || '운명의 길이 열렸다.', timestamp: serverTimestamp()
+                    });
+
+                    // 2. Perform LLM call outside the transaction
+                    let llmResponse;
+                    if (readResult.hasConflict) {
+                        const conflictPrompt = buildLlmPrompt(null, null, null, null, [], {
+                            originalChoice: eventData.payload.choice,
+                            interveningEvent: readResult.interveningEvent,
+                        });
+                        llmResponse = await callLlmWithAutoFix(conflictPrompt, systemPromptToUse, 'object');
+                    } else {
+                        const [allMajorEventsSnap, activeUsersSnap, personalLogSnap] = await Promise.all([
+                            getDocs(getMajorEventsRef(db, worldId)),
+                            getDocs(getActiveUsersCollectionRef(db, worldId)),
+                            getDocs(query(getPersonalStoryLogRef(db, worldId, eventData.userId), orderBy('timestamp', 'desc'), limit(10)))
+                        ]);
+                        const worldState = {
+                            publicLog: readResult.mainScenario.publicLog,
+                            allMajorEvents: allMajorEventsSnap.docs,
+                            personalLog: personalLogSnap.docs
+                        };
+                        const currentActiveUsers = activeUsersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                        const userPromptText = buildLlmPrompt(eventData, readResult.actorState, readResult.targetState, worldState, currentActiveUsers);
+                        llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
+                    }
+
+                    // 3. Write all results in a single batch
+                    const batch = writeBatch(db);
+                    const newTimestamp = serverTimestamp();
+                    const newDate = new Date();
+                    const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventData.userId);
+
+                    if (readResult.hasConflict) {
+                        const newLogRef = doc(getPersonalStoryLogRef(db, worldId, eventData.userId));
+                        batch.set(newLogRef, { action: '나의 선택이 현실과 충돌함', story: llmResponse.personalStory, timestamp: newTimestamp });
+                        batch.update(actorStateRef, {
+                            choices: llmResponse.choices || ['상황을 다시 파악한다.', '예상치 못한 상황에 잠시 숨을 고른다.', '새로운 변수에 대해 고민한다.'],
+                            choicesTimestamp: readResult.mainScenario.lastUpdate || newTimestamp,
+                            isProcessingAction: false,
                         });
                     } else {
-                        await runTransaction(db, async (transaction) => {
-                            const actorStateRef = getPrivatePlayerStateRef(db, worldId, eventUserId);
-                            const mainScenarioRef = getMainScenarioRef(db, worldId);
+                        // All other updates
+                        const mainScenarioRef = getMainScenarioRef(db, worldId);
+                        const currentPublicLog = readResult.mainScenario.publicLog || [];
+                        const actorDisplayName = getDisplayName(eventData.userId, activeUsers);
 
-                            const actorStateDoc = await transaction.get(actorStateRef);
-                            const mainScenarioDoc = await transaction.get(mainScenarioRef);
+                        if (eventData.payload.isDeclarative) {
+                            currentPublicLog.push({ actor: { id: eventData.userId, displayName: actorDisplayName }, log: `❗ ${eventData.payload.choice}`, isDeclaration: true, timestamp: new Date(newDate.getTime() - 1) });
+                        }
+                        if (llmResponse.publicLogEntry) {
+                            currentPublicLog.push({ actor: { id: eventData.userId, displayName: actorDisplayName }, log: llmResponse.publicLogEntry, timestamp: newDate });
+                        }
+                        batch.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
 
-                            if (!actorStateDoc.exists()) throw new Error("Actor state not found!");
+                        const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventData.userId));
+                        batch.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
 
-                            const currentActorState = actorStateDoc.data();
-                            const currentScenario = mainScenarioDoc.exists() ? mainScenarioDoc.data() : getDefaultGameState();
+                        const actorUpdates = {
+                            choices: llmResponse.choices || ['다음 행동을 고민한다.', '주변을 살핀다.', '숨을 고른다.'],
+                            choicesTimestamp: newTimestamp,
+                            ...llmResponse.privateStateUpdates,
+                            isProcessingAction: false,
+                        };
+                        batch.set(actorStateRef, actorUpdates, { merge: true });
 
-                            const eventTimestamp = eventData.payload.choicesTimestamp?.toMillis();
-                            const scenarioTimestamp = currentScenario.lastUpdate?.toMillis();
-                            if (eventTimestamp && scenarioTimestamp && eventTimestamp < scenarioTimestamp) {
-                                const conflictLog = (currentScenario.publicLog || []).find((log) => log.timestamp.toMillis() > eventTimestamp);
-                                const interveningEvent = conflictLog ? `[${conflictLog.actor.displayName}] ${conflictLog.log}` : '알 수 없는 사건';
-                                const conflictPrompt = await buildLlmPrompt(null, null, null, null, { originalChoice: eventData.payload.choice, interveningEvent });
-                                const llmResponse = await callLlmWithAutoFix(conflictPrompt, systemPromptToUse, 'object');
-                                const newLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
-                                transaction.set(newLogRef, { action: '나의 선택이 현실과 충돌함', story: llmResponse.personalStory, timestamp: serverTimestamp() });
-                                transaction.update(actorStateRef, {
-                                    choices: llmResponse.choices || [],
-                                    choicesTimestamp: currentScenario.lastUpdate,
-                                    isProcessingAction: false,
-                                });
-                                return;
-                            }
+                        if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
+                            const targetId = eventData.payload.targetUserId;
+                            const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
+                            const newTargetLogRef = doc(getPersonalStoryLogRef(db, worldId, targetId));
+                            batch.set(newTargetLogRef, {
+                                action: `[${actorDisplayName}의 행동에 휘말림]`, story: llmResponse.targetPersonalStory, timestamp: newTimestamp,
+                            });
 
-                            let targetState = null;
-                            if (eventData.payload.targetUserId) {
-                                const targetStateDoc = await transaction.get(getPrivatePlayerStateRef(db, worldId, eventData.payload.targetUserId));
-                                if (targetStateDoc.exists()) {
-                                    targetState = targetStateDoc.data();
-                                }
-                            }
-
-                            const allMajorEventsSnap = await getDocs(getMajorEventsRef(db, worldId));
-                            const activeUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
-                            const personalLogSnap = await getDocs(query(getPersonalStoryLogRef(db, worldId, eventUserId), orderBy('timestamp', 'desc'), limit(10)));
-                            const worldState = { publicLog: currentScenario.publicLog, allMajorEvents: allMajorEventsSnap.docs, activeUsers: activeUsersSnap.docs.map((d) => ({ id: d.id, ...d.data() })), personalLog: personalLogSnap.docs };
-                            const userPromptText = await buildLlmPrompt(eventData, currentActorState, targetState, worldState);
-                            const llmResponse = await callLlmWithAutoFix(userPromptText, systemPromptToUse, 'object');
-
-                            const newTimestamp = serverTimestamp();
-                            let currentPublicLog = currentScenario.publicLog || [];
-                            if (eventData.payload.isDeclarative) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: `❗ ${eventData.payload.choice}`, isDeclaration: true, timestamp: new Date(Date.now() - 1) }); }
-                            if (llmResponse.publicLogEntry) { currentPublicLog.push({ actor: { id: eventUserId, displayName: getDisplayName(eventUserId) }, log: llmResponse.publicLogEntry, timestamp: new Date() }); }
-                            transaction.set(mainScenarioRef, { publicLog: currentPublicLog, lastUpdate: newTimestamp }, { merge: true });
-                            const newPersonalLogRef = doc(getPersonalStoryLogRef(db, worldId, eventUserId));
-                            transaction.set(newPersonalLogRef, { action: eventData.payload.choice, story: llmResponse.personalStory || '특별한 일은 일어나지 않았다.', timestamp: newTimestamp });
-                            
-                            const actorUpdates = {
-                                choices: llmResponse.choices || [],
-                                choicesTimestamp: newTimestamp,
-                                ...llmResponse.privateStateUpdates,
-                                isProcessingAction: false,
+                            const interruptionData = {
+                                story: `[${actorDisplayName}의 행동] ${llmResponse.targetPersonalStory}`,
+                                choices: llmResponse.choicesForTarget || ['상황을 파악한다.'],
                             };
-                            transaction.set(actorStateRef, actorUpdates, { merge: true });
 
-                            if (eventData.payload.targetUserId && llmResponse.targetPersonalStory) {
-                                const targetId = eventData.payload.targetUserId;
-                                const targetStateRef = getPrivatePlayerStateRef(db, worldId, targetId);
-                                const newTargetLogRef = doc(getPersonalStoryLogRef(db, worldId, targetId));
-                                transaction.set(newTargetLogRef, {
-                                    action: `[${getDisplayName(eventUserId)}의 행동에 휘말림]`, story: llmResponse.targetPersonalStory, timestamp: newTimestamp,
-                                });
-                                const interruptionData = {
-                                    story: `[${getDisplayName(eventUserId)}의 행동] ${llmResponse.targetPersonalStory}`,
-                                    choices: llmResponse.choicesForTarget || ['상황을 파악한다.'],
-                                };
-                                const targetUpdates = {
-                                    choicesTimestamp: newTimestamp,
-                                    ...llmResponse.targetStateUpdates,
-                                    interruption: interruptionData
-                                };
-                                transaction.set(targetStateRef, targetUpdates, { merge: true });
-                            }
-                        });
+                            const targetUpdates = {
+                                choicesTimestamp: newTimestamp,
+                                ...llmResponse.targetStateUpdates,
+                                interruption: interruptionData,
+                            };
+                            batch.set(targetStateRef, targetUpdates, { merge: true });
+                        }
                     }
-                } else if (eventData.type === 'CHAT_MESSAGE') {
+                    await batch.commit();
+                } else if (eventData.type === CONSTANTS.EVENT_TYPES.CHAT_MESSAGE) {
                     const { message, userId: chatUserId } = eventData.payload;
                     const isAction = message.startsWith('!');
-                    await addDoc(getChatMessagesCollectionRef(db, worldId), { userId: chatUserId, displayName: getDisplayName(chatUserId), message: isAction ? `${message.substring(1).trim()}` : message, isAction, timestamp: serverTimestamp() });
+                    const displayName = getDisplayName(chatUserId, activeUsers);
+                    await addDoc(getChatMessagesCollectionRef(db, worldId), { userId: chatUserId, displayName, message: isAction ? `${message.substring(1).trim()}` : message, isAction, timestamp: serverTimestamp() });
                     if (isAction) {
                         const actionText = message.substring(1).trim();
                         const allUsersSnap = await getDocs(getActiveUsersCollectionRef(db, worldId));
                         const allUsers = allUsersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
                         const targetInfo = findTargetInText(actionText, allUsers, chatUserId);
+
                         const newActionEvent = {
-                            type: 'PLAYER_ACTION', userId: chatUserId, payload: { choice: actionText, isDeclarative: true, targetUserId: targetInfo?.targetUserId || null, targetDisplayName: targetInfo?.targetDisplayName || null }, timestamp: serverTimestamp(), status: 'pending',
+                            type: CONSTANTS.EVENT_TYPES.PLAYER_ACTION,
+                            userId: chatUserId,
+                            payload: {
+                                choice: targetInfo ? targetInfo.actionTextForLlm : actionText,
+                                isDeclarative: true,
+                                choicesTimestamp: serverTimestamp(),
+                                targetUserId: targetInfo?.targetUserId || null,
+                                targetDisplayName: targetInfo?.targetDisplayName || null
+                            },
+                            timestamp: serverTimestamp(),
+                            status: CONSTANTS.EVENT_STATUS.PENDING,
                         };
                         await addDoc(getEventsCollectionRef(db, worldId), newActionEvent);
+                        await setDoc(getPrivatePlayerStateRef(db, worldId, chatUserId), { isProcessingAction: true }, { merge: true });
                     }
                 }
-                await setDoc(eventRef, { status: 'processed' }, { merge: true });
+                await setDoc(eventRef, { status: CONSTANTS.EVENT_STATUS.PROCESSED }, { merge: true });
+
             } catch (error) {
                 console.error(`이벤트 처리 실패 (ID: ${eventId}):`, error);
-                const eventUserId = eventData.userId;
-                if (eventUserId) {
-                    await setDoc(getPrivatePlayerStateRef(db, worldId, eventUserId), { isProcessingAction: false }, { merge: true });
+                if (eventData.userId) {
+                    await setDoc(getPrivatePlayerStateRef(db, worldId, eventData.userId), { isProcessingAction: false }, { merge: true });
                 }
                 setLlmError(`이벤트 처리 중 오류 발생: ${error.message}`);
                 setLlmRetryEvent({ id: eventId, data: eventData });
-                await setDoc(eventRef, { status: 'failed', error: error.message }, { merge: true });
+                await setDoc(eventRef, { status: CONSTANTS.EVENT_STATUS.FAILED, error: error.message }, { merge: true });
             }
         },
-        [db, worldId, callLlmWithAutoFix, getDisplayName, buildSystemPrompt]
+        [db, worldId, callLlmWithAutoFix, getDisplayName, buildSystemPrompt, buildLlmPrompt, activeUsers]
     );
 
+
     useEffect(() => {
-        const app = initializeApp(firebaseConfig);
-        const firestoreDb = getFirestore(app);
-        const firebaseAuth = getAuth(app);
-        setDb(firestoreDb); setAuth(firebaseAuth);
-        const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
-            if (user) { setUserId(user.uid); setIsAuthReady(true); } else { await signInAnonymously(firebaseAuth); }
-        });
-        return () => unsub();
+        try {
+            const app = initializeApp(firebaseConfig);
+            const firestoreDb = getFirestore(app);
+            const firebaseAuth = getAuth(app);
+            setDb(firestoreDb); setAuth(firebaseAuth);
+            const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
+                if (user) { setUserId(user.uid); setIsAuthReady(true); } else { await signInAnonymously(firebaseAuth); }
+            });
+            return () => unsub();
+        } catch (e) {
+            setFatalError('Firebase 초기화 중 치명적인 오류가 발생했습니다.');
+        }
     }, []);
 
     useEffect(() => {
@@ -669,89 +840,183 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     useEffect(() => {
         if (!db || !isAuthReady) return;
         setIsLoading(true);
-        const q = query(collection(db, 'worlds'), orderBy('createdAt', 'desc'));
-        const unsub = onSnapshot(q, (snap) => {
-            setWorlds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            setIsLoading(false);
-        }, (err) => { console.error(err); setIsLoading(false); });
-        return () => unsub();
+        try {
+            const q = query(collection(db, CONSTANTS.COLLECTIONS.WORLDS), orderBy('createdAt', 'desc'));
+            const unsub = onSnapshot(q, (snap) => {
+                setWorlds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setIsLoading(false);
+            }, (err) => { console.error(err); setIsLoading(false); setFatalError('월드 목록을 불러오는 중 오류가 발생했습니다.'); });
+            return () => unsub();
+        } catch (e) {
+            setFatalError('월드 목록을 불러오는 중 치명적인 오류가 발생했습니다.');
+        }
     }, [db, isAuthReady]);
 
     useEffect(() => {
-        if (!worldId || !db || !userId) return;
-        setIsLoading(true);
-        const unsubs = [
-            onSnapshot(getWorldviewRef(db, worldId), (s) => setWorldview(s.exists() ? s.data() : null)),
-            onSnapshot(getPrivatePlayerStateRef(db, worldId, userId), (s) => {
-                if (s.exists()) {
-                    const data = s.data();
-                    setPrivatePlayerState(data);
-                    if (data.interruption) {
-                        setShowInterruptionModal(true);
-                    }
-                }
-                else { setPrivatePlayerState(getDefaultPrivatePlayerState()); }
-            }),
-            onSnapshot(query(getPersonalStoryLogRef(db, worldId, userId), orderBy('timestamp', 'desc'), limit(50)), (s) => setPersonalStoryLog(s.docs.map(d => ({ id: d.id, ...d.data() })).reverse())),
-            onSnapshot(getMainScenarioRef(db, worldId), (s) => setGameState(s.exists() ? s.data() : getDefaultGameState())),
-            onSnapshot(query(getChatMessagesCollectionRef(db, worldId), orderBy('timestamp')), (s) => setChatMessages(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-            onSnapshot(query(getActiveUsersCollectionRef(db, worldId)), (s) => setActiveUsers(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-            onSnapshot(query(getMajorEventsRef(db, worldId), orderBy('timestamp')), (s) => setAllMajorEvents(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-            onSnapshot(getActiveTurningPointRef(db, worldId), (s) => setActiveTurningPoint(s.exists() ? { id: s.id, ...s.data() } : null)),
-        ];
-        const initPlayer = async () => {
-            const playerDoc = await getDoc(getPrivatePlayerStateRef(db, worldId, userId));
-            if (!playerDoc.exists()) {
-                await setDoc(getPrivatePlayerStateRef(db, worldId, userId), getDefaultPrivatePlayerState());
-            }
+        if (!worldId || !db || !userId) {
             setIsLoading(false);
-        };
-        initPlayer();
-        return () => unsubs.forEach(unsub => unsub());
+            return;
+        }
+        setIsLoading(true);
+        try {
+            const unsubs = [
+                onSnapshot(getWorldviewRef(db, worldId), (s) => setWorldview(s.exists() ? s.data() : null)),
+                onSnapshot(getPrivatePlayerStateRef(db, worldId, userId), (s) => {
+                    if (s.exists()) {
+                        const data = s.data();
+                        setPrivatePlayerState(data);
+                        if (data.interruption) {
+                            setShowInterruptionModal(true);
+                        }
+                    }
+                    else { setPrivatePlayerState(getDefaultPrivatePlayerState()); }
+                }),
+                onSnapshot(query(getPersonalStoryLogRef(db, worldId, userId), orderBy('timestamp', 'desc'), limit(50)), (s) => setPersonalStoryLog(s.docs.map(d => ({ id: d.id, ...d.data() })).reverse())),
+                onSnapshot(getMainScenarioRef(db, worldId), (s) => setGameState(s.exists() ? s.data() : getDefaultGameState())),
+                onSnapshot(query(getChatMessagesCollectionRef(db, worldId), orderBy('timestamp')), (s) => setChatMessages(s.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => setFatalError('채팅 데이터를 불러오는 중 오류가 발생했습니다.')),
+                onSnapshot(query(getActiveUsersCollectionRef(db, worldId)), (s) => setActiveUsers(s.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => setFatalError('플레이어 목록을 불러오는 중 오류가 발생했습니다.')),
+                onSnapshot(query(getMajorEventsRef(db, worldId), orderBy('timestamp')), (s) => setAllMajorEvents(s.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => setFatalError('주요 사건 데이터를 불러오는 중 오류가 발생했습니다.')),
+                onSnapshot(getActiveTurningPointRef(db, worldId), (s) => setActiveTurningPoint(s.exists() ? { id: s.id, ...s.data() } : null)),
+            ];
+            const initPlayer = async () => {
+                try {
+                    const playerDoc = await getDoc(getPrivatePlayerStateRef(db, worldId, userId));
+                    if (!playerDoc.exists()) {
+                        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), getDefaultPrivatePlayerState());
+                    }
+                    setIsLoading(false);
+                } catch (e) {
+                    setFatalError('플레이어 데이터를 불러오는 중 오류가 발생했습니다.');
+                }
+            };
+            initPlayer();
+            return () => unsubs.forEach(unsub => unsub());
+        } catch (e) {
+            setFatalError('월드 데이터 구독 중 치명적인 오류가 발생했습니다.');
+        }
     }, [worldId, db, userId]);
 
     useEffect(() => {
         if (!worldId || !db || !userId) return;
         const leaseRef = getProcessorLeaseRef(db, worldId);
-        const leaseDuration = 30000;
+        const leaseDuration = 10000;
+        let intervalId;
+        let timerId;
+        let leaseExpireAt = null;
+
         const tryAcquireLease = async () => {
             try {
                 await runTransaction(db, async (t) => {
                     const leaseDoc = await t.get(leaseRef);
-                    if (!leaseDoc.exists() || leaseDoc.data().timestamp.toMillis() < Date.now() - leaseDuration) {
+                    const leaseData = leaseDoc.data();
+                    const now = Date.now();
+                    if (!leaseDoc.exists() || !leaseData?.timestamp || leaseData.timestamp.toMillis() < now - leaseDuration) {
                         t.set(leaseRef, { owner: userId, timestamp: serverTimestamp() });
                         setIsProcessor(true);
+                        setLeaseStatusMsg('이벤트 처리 프로세서 권한을 획득했습니다.');
+                        leaseExpireAt = now + leaseDuration;
+                    } else if (leaseData.owner === userId) {
+                        t.set(leaseRef, { timestamp: serverTimestamp() }, { merge: true });
+                        setIsProcessor(true);
+                        setLeaseStatusMsg('이벤트 처리 프로세서 유지 중...');
+                        leaseExpireAt = now + leaseDuration;
+                    } else {
+                        setIsProcessor(false);
+                        setLeaseStatusMsg('다른 사용자가 이벤트를 처리하고 있습니다.');
+                        leaseExpireAt = leaseData.timestamp.toMillis() + leaseDuration;
                     }
                 });
-            } catch (e) { /* Lease acquisition failed */ }
-        };
-        tryAcquireLease();
-        const intervalId = setInterval(async () => {
-            const leaseDoc = await getDoc(leaseRef);
-            if (leaseDoc.exists() && leaseDoc.data().owner === userId) {
-                await setDoc(leaseRef, { owner: userId, timestamp: serverTimestamp() }, { merge: true });
-                setIsProcessor(true);
-            } else {
+            } catch (e) {
                 setIsProcessor(false);
-                tryAcquireLease();
+                setLeaseStatusMsg('프로세서 권한 획득 실패: ' + e.message);
             }
-        }, leaseDuration / 2);
-        return () => clearInterval(intervalId);
+        };
+
+        tryAcquireLease();
+        intervalId = setInterval(tryAcquireLease, leaseDuration / 2);
+
+        timerId = setInterval(() => {
+            if (leaseExpireAt) {
+                const left = Math.max(0, Math.floor((leaseExpireAt - Date.now()) / 1000));
+                setLeaseTimeLeft(left);
+            }
+        }, 1000);
+
+        return () => {
+            clearInterval(intervalId);
+            clearInterval(timerId);
+        };
     }, [worldId, db, userId]);
 
     useEffect(() => {
         if (!isProcessor || !worldId || !db) return;
-        const q = query(getEventsCollectionRef(db, worldId), where('status', '==', 'pending'), orderBy('timestamp'), limit(1));
-        const unsub = onSnapshot(q, (s) => { if (!s.empty) processEvent(s.docs[0].id, s.docs[0].data()); });
-        return () => unsub();
+        const q = query(getEventsCollectionRef(db, worldId), where('status', '==', CONSTANTS.EVENT_STATUS.PENDING), orderBy('timestamp'), limit(1));
+        const unsubPending = onSnapshot(q, (s) => { if (!s.empty) processEvent(s.docs[0].id, s.docs[0].data()); });
+        const qFailed = query(getEventsCollectionRef(db, worldId), where('status', '==', CONSTANTS.EVENT_STATUS.FAILED), orderBy('timestamp'), limit(1));
+        const unsubFailed = onSnapshot(qFailed, (s) => {
+            if (!s.empty) {
+                const docSnap = s.docs[0];
+                const eventId = docSnap.id;
+                const eventData = docSnap.data();
+                failedEventRetryCount.current[eventId] = (failedEventRetryCount.current[eventId] || 0) + 1;
+                if (failedEventRetryCount.current[eventId] > MAX_EVENT_RETRY) {
+                    fallbackProcessFailedEvent(eventId, eventData);
+                } else {
+                    processEvent(eventId, eventData);
+                }
+            }
+        });
+        return () => { unsubPending(); unsubFailed(); };
     }, [isProcessor, worldId, db, processEvent]);
+
+    const fallbackProcessFailedEvent = useCallback(async (eventId, eventData) => {
+        if (!db || !worldId) return;
+        const eventRef = doc(db, CONSTANTS.COLLECTIONS.WORLDS, worldId, CONSTANTS.COLLECTIONS.EVENTS, eventId);
+        try {
+            if (eventData.type === CONSTANTS.EVENT_TYPES.PLAYER_ACTION) {
+                const userId = eventData.userId;
+                const playerStateRef = getPrivatePlayerStateRef(db, worldId, userId);
+                await setDoc(playerStateRef, {
+                    isProcessingAction: false,
+                    choices: ['상황을 다시 파악한다.', '주변을 살핀다.', '숨을 고른다.'],
+                    choicesTimestamp: serverTimestamp(),
+                }, { merge: true });
+                await addDoc(getPersonalStoryLogRef(db, worldId, userId), {
+                    action: eventData.payload?.choice || '알 수 없음',
+                    story: '예상치 못한 오류가 발생했지만, 당신은 다시 상황을 파악할 수 있습니다.',
+                    timestamp: serverTimestamp(),
+                });
+            }
+            await setDoc(eventRef, { status: CONSTANTS.EVENT_STATUS.PROCESSED, error: 'Fallback 처리됨' }, { merge: true });
+        } catch (e) {
+            console.error('Fallback 처리 중 오류:', e);
+        }
+    }, [db, worldId]);
+
+    useEffect(() => {
+        if (isProcessor) {
+            checkAndCreateTurningPoint();
+        }
+    }, [isProcessor, gameState.publicLog, allMajorEvents, checkAndCreateTurningPoint]);
+
 
     useEffect(() => {
         if (!db || !userId || !nickname || !privatePlayerState || !worldId) return;
         const userDocRef = doc(getActiveUsersCollectionRef(db, worldId), userId);
-        setDoc(userDocRef, { lastActive: serverTimestamp(), nickname: nickname || `플레이어 ${userId.substring(0, 4)}`, profession: privatePlayerState.profession }, { merge: true });
+        const updateUserData = {
+            lastActive: serverTimestamp(),
+            nickname: nickname || `플레이어 ${userId.substring(0, 4)}`,
+        };
+        if (privatePlayerState.profession) {
+            updateUserData.profession = privatePlayerState.profession;
+        }
+
+        setDoc(userDocRef, updateUserData, { merge: true });
+
         const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible') setDoc(userDocRef, { lastActive: serverTimestamp() }, { merge: true });
+            if (document.visibilityState === 'visible') {
+                setDoc(userDocRef, { lastActive: serverTimestamp() }, { merge: true });
+            }
         };
         document.addEventListener('visibilitychange', handleVisibilityChange);
         return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -769,8 +1034,11 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         if (!privatePlayerState || !db || !userId || allMajorEvents.length === 0 || !worldId) return;
         const currentKnownIds = privatePlayerState.knownEventIds || [];
         const newDiscoveredEvents = allMajorEvents.filter((event) => event?.location === privatePlayerState.currentLocation && !currentKnownIds.includes(event.id)).map((event) => event.id);
-        if (newDiscoveredEvents.length > 0) setDoc(getPrivatePlayerStateRef(db, worldId, userId), { knownEventIds: arrayUnion(...newDiscoveredEvents) }, { merge: true });
+        if (newDiscoveredEvents.length > 0) {
+            setDoc(getPrivatePlayerStateRef(db, worldId, userId), { knownEventIds: arrayUnion(...newDiscoveredEvents) }, { merge: true });
+        }
     }, [privatePlayerState?.currentLocation, allMajorEvents, privatePlayerState?.knownEventIds, worldId, db, userId]);
+
 
     useEffect(() => {
         if (!privatePlayerState) return;
@@ -778,9 +1046,9 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     }, [privatePlayerState?.knownEventIds, allMajorEvents]);
 
     const sendChatMessage = async () => {
-        if (!db || !userId || !isAuthReady || !currentChatMessage.trim() || !worldId || privatePlayerState?.status === 'dead') return;
+        if (!db || !userId || !isAuthReady || !currentChatMessage.trim() || !worldId || privatePlayerState?.status === CONSTANTS.PLAYER_STATUS.DEAD) return;
         const messageText = currentChatMessage.trim();
-        const eventPayload = { type: 'CHAT_MESSAGE', payload: { message: messageText, userId: userId }, timestamp: serverTimestamp(), status: 'pending' };
+        const eventPayload = { type: CONSTANTS.EVENT_TYPES.CHAT_MESSAGE, payload: { message: messageText, userId: userId }, timestamp: serverTimestamp(), status: CONSTANTS.EVENT_STATUS.PENDING };
         setCurrentChatMessage('');
         await addDoc(getEventsCollectionRef(db, worldId), eventPayload);
     };
@@ -791,7 +1059,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         setLlmError(null);
         try {
             const themePacksPrompt = masterPromptForThemeGeneration;
-            const generatedPacks = await callLlmWithAutoFix(themePacksPrompt, themePacksPrompt, 'array');
+            const generatedPacks = await callLlmWithAutoFix(themePacksPrompt, "You are a JSON array generator.", 'array');
 
             if (!generatedPacks || generatedPacks.length === 0) {
                 throw new Error('테마 팩 생성에 최종적으로 실패했습니다. LLM이 유효한 데이터를 반환하지 않습니다.');
@@ -801,7 +1069,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             const worldCreationPrompt = generateWorldCreationPrompt(randomTheme)
             const llmResponse = await callLlmWithAutoFix(worldCreationPrompt, worldCreationPrompt, 'object');
 
-            const newWorldRef = doc(collection(db, 'worlds'));
+            const newWorldRef = doc(collection(db, CONSTANTS.COLLECTIONS.WORLDS));
             const batch = writeBatch(db);
             batch.set(newWorldRef, { name: newWorldName, createdAt: serverTimestamp() });
             batch.set(getThemePacksRef(db, newWorldRef.id), { packs: generatedPacks });
@@ -820,27 +1088,29 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const handleChoiceClick = async (choice, motivation = null) => {
-        if (isTextLoading || !privatePlayerState || privatePlayerState.status === 'dead' || !worldId || !userId) return;
+        if (isTextLoading || !privatePlayerState || privatePlayerState.status === CONSTANTS.PLAYER_STATUS.DEAD || !worldId || !userId) return;
 
         try {
+            setCharacterCreationFailed(false);
             const playerStateRef = getPrivatePlayerStateRef(db, worldId, userId);
             await setDoc(playerStateRef, { isProcessingAction: true }, { merge: true });
 
             const isCreation = !privatePlayerState.characterCreated;
             const event = {
-                type: 'PLAYER_ACTION',
+                type: CONSTANTS.EVENT_TYPES.PLAYER_ACTION,
                 userId: userId,
                 payload: {
                     choice,
-                    choicesTimestamp: privatePlayerState.choicesTimestamp || null,
+                    choicesTimestamp: privatePlayerState.choicesTimestamp || serverTimestamp(),
                     isCreationAction: isCreation,
                     motivation: motivation,
                 },
                 timestamp: serverTimestamp(),
-                status: 'pending',
+                status: CONSTANTS.EVENT_STATUS.PENDING,
             };
             await addDoc(getEventsCollectionRef(db, worldId), event);
         } catch (e) {
+            setCharacterCreationFailed(true);
             console.error('이벤트 제출 실패:', e);
             setLlmError('선택을 제출하는 데 실패했습니다.');
             const playerStateRef = getPrivatePlayerStateRef(db, worldId, userId);
@@ -851,16 +1121,16 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     const handleInterruptionAcknowledge = async () => {
         if (!db || !userId || !worldId || !privatePlayerState?.interruption) return;
         const newChoices = privatePlayerState.interruption.choices;
-        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), { 
-            interruption: null, 
+        await setDoc(getPrivatePlayerStateRef(db, worldId, userId), {
+            interruption: null,
             choices: newChoices,
             choicesTimestamp: serverTimestamp()
         }, { merge: true });
-        setShowInterruptionModal(false); 
+        setShowInterruptionModal(false);
     };
 
     const toggleAccordion = (key) => setAccordion((prev) => ({ ...prev, [key]: !prev[key] }));
-    
+
     const handleClueClick = async (clue) => {
         if (!db || !userId || !worldId || !clue || isTextLoading) return;
 
@@ -876,7 +1146,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             knownClues: arrayUnion(clue)
         }, { merge: true });
     };
-    
+
     const toggleActiveMemory = async (clue, activate) => {
         if (!db || !userId || !worldId) return;
         const privateStateRef = getPrivatePlayerStateRef(db, worldId, userId);
@@ -888,7 +1158,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         }
         await setDoc(privateStateRef, { activeMemories: currentMemories }, { merge: true });
     };
-    
+
     const LlmErrorModal = () => (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
             <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md space-y-4 text-center">
@@ -906,6 +1176,15 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             재시도
                         </button>
                     )}
+                    {llmError && llmError.includes('월드 삭제') && (
+                        <button
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-md"
+                            onClick={deleteCurrentWorld}
+                            disabled={isResetting}
+                        >
+                            {isResetting ? '삭제 재시도 중...' : '월드 삭제 재시도'}
+                        </button>
+                    )}
                     <button
                         className="px-4 py-2 bg-gray-600 hover:bg-gray-700 font-bold rounded-md"
                         onClick={() => {
@@ -915,11 +1194,20 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     >
                         닫기
                     </button>
+                    <button
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
+                        onClick={() => window.location.reload()}
+                    >
+                        새로고침
+                    </button>
                 </div>
+                {llmError && llmError.includes('월드 삭제') && (
+                    <div className="mt-4 text-yellow-300 text-sm">일부 데이터가 완전히 삭제되지 않았을 수 있습니다. 문제가 지속되면 관리자에게 문의하세요.</div>
+                )}
             </div>
         </div>
     );
-    
+
     const InterruptionModal = () => {
         if (!showInterruptionModal || !privatePlayerState?.interruption) return null;
         return (
@@ -928,7 +1216,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     <h3 className="text-2xl font-bold text-yellow-300">! 상황 개입 !</h3>
                     <div className="bg-gray-900 p-4 rounded-md">
                         <p className="text-gray-200 whitespace-pre-wrap text-lg leading-relaxed">
-                           {privatePlayerState.interruption.story}
+                            {privatePlayerState.interruption.story}
                         </p>
                     </div>
                     <p className="text-sm text-gray-400">당신의 선택지가 변경되었습니다.</p>
@@ -944,6 +1232,32 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         );
     };
 
+    useEffect(() => {
+        if (!nickname && localStorage.getItem('nickname')) {
+            setNickname(localStorage.getItem('nickname'));
+            setShowNicknameModal(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const handleOnline = () => setIsOffline(false);
+        const handleOffline = () => setIsOffline(true);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // App 시작 시 로컬스토리지에 userId가 있으면 해당 userId로 세션 복원
+    useEffect(() => {
+        const storedUserId = localStorage.getItem('userId');
+        if (storedUserId) {
+            setUserId(storedUserId);
+        }
+    }, []);
+
     if (showNicknameModal) {
         return (
             <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -953,15 +1267,22 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                         className="w-full p-3 rounded-md bg-gray-700 border border-gray-600 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-lg"
                         placeholder="닉네임"
                         value={nicknameInput}
-                        onChange={(e) => setNicknameInput(e.target.value)}
+                        onChange={(e) => { setNicknameInput(e.target.value); setNicknameError(''); setExistingUserIdForNickname(null); }}
                         onKeyDown={(e) => {
                             if (e.key === 'Enter') handleNicknameSubmit();
                         }}
                         autoFocus
+                        disabled={checkingNickname}
                     />
-                    <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim()}>
-                        시작하기
+                    {nicknameError && <p className="text-red-400 text-sm mt-1">{nicknameError}</p>}
+                    <button className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md transition duration-300 disabled:opacity-50" onClick={handleNicknameSubmit} disabled={!nicknameInput.trim() || checkingNickname}>
+                        {checkingNickname ? '확인 중...' : '시작하기'}
                     </button>
+                    {existingUserIdForNickname && (
+                        <button className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-md transition duration-300 mt-2" onClick={handleContinueWithExistingNickname}>
+                            이어하기 (기존 닉네임 사용)
+                        </button>
+                    )}
                 </div>
             </div>
         );
@@ -1010,11 +1331,26 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         );
     }
 
+    if (fatalError) {
+        return (
+            <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center">
+                <h2 className="text-2xl text-red-400 font-bold mb-4">⚠️ 오류 발생</h2>
+                <p className="mb-4">{fatalError}</p>
+                <button
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md"
+                    onClick={() => window.location.reload()}
+                >
+                    새로고침
+                </button>
+            </div>
+        );
+    }
+
     if (isLoading || !privatePlayerState) {
         return (
-            <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center">
+            <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center">
                 <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-300"></div>
-                <span className="ml-4 text-xl">월드 데이터를 불러오는 중...</span>
+                <span className="ml-4 text-xl">월드 데이터를 불러오는 중...<br />문제가 지속되면 <button onClick={() => window.location.reload()} className="underline text-blue-400">새로고침</button> 해주세요.</span>
             </div>
         );
     }
@@ -1025,7 +1361,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
             const parts = storyText.split(/<\/?clue>/g);
             return parts.map((part, index) => {
-                if (index % 2 === 1) { 
+                if (index % 2 === 1) {
                     const isKnown = (privatePlayerState?.knownClues || []).includes(part);
                     return (
                         <span
@@ -1078,7 +1414,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             </div>
         );
     };
-    
+
     const ChoicesDisplay = () => {
         const areChoicesStale = useMemo(() => {
             const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
@@ -1086,13 +1422,21 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             return pTs && gTs && pTs < gTs;
         }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
 
-        if (privatePlayerState?.status === 'dead') {
+        const isStateMismatch = privatePlayerState?.status === CONSTANTS.PLAYER_STATUS.DEAD && (privatePlayerState.choices && privatePlayerState.choices.some(c => c && c !== '나의 이야기는 여기서 끝났다.'));
+
+        // 사망 상태에서 버튼 비활성화 보강
+        if (privatePlayerState?.status === CONSTANTS.PLAYER_STATUS.DEAD) {
             return (
                 <div className="flex flex-col gap-3">
                     <div className="p-4 text-center bg-red-900/70 border border-red-600 rounded-md text-red-300 text-lg font-bold">
                         ☠️ 당신의 여정은 끝났습니다.
                     </div>
-                    {(privatePlayerState.choices || []).map((choice, index) => (
+                    {isStateMismatch && (
+                        <div className="p-2 text-center bg-yellow-900/70 border border-yellow-600 rounded-md text-yellow-300 text-sm">
+                            상태 불일치 감지: 사망 상태에서 선택지가 남아 있습니다. 새로고침하거나 관리자에게 문의하세요.
+                        </div>
+                    )}
+                    {(privatePlayerState.choices || ['상황을 다시 파악한다.']).map((choice, index) => (
                         <button key={index} className="px-6 py-3 font-bold rounded-md shadow-lg bg-gray-800 text-gray-500 cursor-not-allowed" disabled>
                             {choice}
                         </button>
@@ -1102,9 +1446,34 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
         }
 
         if (privatePlayerState && !privatePlayerState.characterCreated) {
+            const fallbackProfessions = [
+                { name: '기본 모험가', motivation: '세상을 탐험하고 싶다.' },
+                { name: '방랑자', motivation: '과거를 잊고 새로운 삶을 시작하고 싶다.' },
+                { name: '수습 마법사', motivation: '진정한 힘을 얻고 싶다.' },
+                { name: '기사', motivation: '명예를 되찾고 싶다.' },
+            ];
+            const professions = worldview?.professions && worldview.professions.length > 0 ? worldview.professions : fallbackProfessions;
+            // 캐릭터 생성 실패 시 fallback 자동 재시도 보강
+            useEffect(() => {
+                if (characterCreationFailed && professions.length > 0 && !isTextLoading) {
+                    // 1초 후 자동 재시도
+                    const timer = setTimeout(() => {
+                        handleChoiceClick(professions[0].name, professions[0].motivation);
+                    }, 1000);
+                    return () => clearTimeout(timer);
+                }
+            }, [characterCreationFailed, professions, isTextLoading]);
             return (
                 <div className="flex flex-col gap-3">
-                    {(worldview?.professions || []).map((profession, index) => (
+                    {characterCreationFailed && (
+                        <div className="p-2 text-center bg-red-900/70 border border-red-600 rounded-md text-red-300 text-sm mb-2">
+                            캐릭터 생성에 실패했습니다. 네트워크 또는 AI 서버 문제일 수 있습니다.<br />
+                            <button className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-md" onClick={() => handleChoiceClick(professions[0].name, professions[0].motivation)}>
+                                다시 시도 (기본 직업으로 시작)
+                            </button>
+                        </div>
+                    )}
+                    {professions.map((profession, index) => (
                         <button key={index} onClick={() => handleChoiceClick(profession.name, profession.motivation)} disabled={isTextLoading} className="px-6 py-4 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-bold rounded-md shadow-lg transition duration-300 disabled:opacity-50 disabled:cursor-wait text-left">
                             <p className="text-lg text-blue-300">{profession.name}</p>
                             <p className="text-sm font-normal text-gray-300 mt-1">{profession.motivation}</p>
@@ -1114,6 +1483,10 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
             );
         }
 
+        const choices = (privatePlayerState?.choices && privatePlayerState.choices.length > 0)
+            ? privatePlayerState.choices
+            : ['상황을 다시 파악한다.', '주변을 살핀다.', '숨을 고른다.'];
+
         return (
             <div className="flex flex-col gap-3">
                 {areChoicesStale && (
@@ -1121,7 +1494,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                         상황이 변경되었습니다! 선택이 실패할 수 있습니다.
                     </div>
                 )}
-                {(privatePlayerState?.choices || []).map((choice, index) => {
+                {choices.map((choice, index) => {
                     if (!choice) return null;
                     return (
                         <button
@@ -1139,23 +1512,23 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     };
 
     const renderSidebar = () => {
-        const isPlayerDead = privatePlayerState?.status === 'dead';
+        const isPlayerDead = privatePlayerState?.status === CONSTANTS.PLAYER_STATUS.DEAD;
         return (
             <div className="w-full lg:w-1/3 flex flex-col space-y-6 bg-gray-700 p-4 rounded-lg shadow-inner">
                 {worldview && (
                     <div className="mb-2">
                         <div className="flex items-center justify-between mb-2">
                             <h4 className="text-md font-semibold text-gray-200">
-                                 현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
-                             </h4>
+                                현재 세계관 <span className="text-xs font-normal text-yellow-300">{isProcessor ? '[프로세서]' : ''}</span>
+                            </h4>
                             <div className="flex gap-2">
                                 <button className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded-md" onClick={() => setWorldId(null)}>
-                                  로비로
-                                 </button>
-                                 <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
+                                    로비로
+                                </button>
+                                <button className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-md" onClick={() => setShowResetModal(true)}>
                                     월드 삭제
-                                 </button>
-                             </div>
+                                </button>
+                            </div>
                         </div>
                         <div className="bg-gray-900/50 p-3 rounded-md text-xs md:text-sm text-gray-300 space-y-2">
                             <p className="font-bold text-yellow-200">
@@ -1348,7 +1721,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                             <div className="flex">
                                 <input
                                     type="text"
-                                    placeholder={isPlayerDead ? "당신은 더 이상 말할 수 없습니다." : "! 행동 또는 !@대상 행동 선언"}
+                                    placeholder={isPlayerDead ? "당신은 더 이상 말할 수 없습니다." : "채팅 또는 !행동, !@닉네임 행동"}
                                     className="flex-grow p-2 rounded-l-md bg-gray-700 border border-gray-600 text-white placeholder-gray-500 disabled:bg-gray-800 disabled:cursor-not-allowed"
                                     value={currentChatMessage}
                                     onChange={(e) => setCurrentChatMessage(e.target.value)}
@@ -1372,6 +1745,18 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4 font-sans">
+            {isOffline && (
+                <div className="fixed top-0 left-0 w-full z-[60] flex justify-center items-center bg-red-900 py-2 border-b border-red-700">
+                    <span className="text-sm text-yellow-200 font-bold">네트워크 연결이 끊어졌습니다. 인터넷을 확인하세요.</span>
+                </div>
+            )}
+            <div className={`fixed top-0 left-0 w-full z-50 flex justify-center items-center bg-gray-950 bg-opacity-90 py-2 border-b border-gray-700 ${isOffline ? 'pt-10' : ''}`}>
+                <span className="text-sm text-yellow-300 font-bold mr-4">프로세서 상태: {leaseStatusMsg}</span>
+                {leaseTimeLeft !== null && (
+                    <span className="text-sm text-blue-300">권한 갱신까지: {leaseTimeLeft}초</span>
+                )}
+            </div>
+
             {llmError && <LlmErrorModal />}
             <InterruptionModal />
             {showResetModal && (
@@ -1390,7 +1775,7 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
                     </div>
                 </div>
             )}
-            <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6">
+            <div className="w-full max-w-5xl bg-gray-800 rounded-lg shadow-xl p-6 md:p-8 flex flex-col lg:flex-row space-y-6 lg:space-y-0 lg:space-x-6 mt-12">
                 <div className="flex flex-col w-full lg:w-2/3 space-y-6">
                     {renderGameLog()}
                     <ChoicesDisplay />
