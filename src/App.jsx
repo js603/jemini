@@ -306,6 +306,18 @@ function AppLite() {
             return;
         }
 
+        // 월드 문서 리스너 추가 (gameStarted 등 실시간 반영)
+        const worldDocRef = doc(db, 'worlds', currentWorld.id);
+        const unsubscribeWorld = onSnapshot(worldDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setCurrentWorld(prev => ({
+                    ...prev,
+                    ...docSnap.data(),
+                    id: docSnap.id, // id 유지
+                }));
+            }
+        });
+
         const messagesQuery = query(collection(db, `worlds/${currentWorld.id}/messages`), orderBy('timestamp'));
         const messagesUnsub = onSnapshot(messagesQuery, (snapshot) => {
             setMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -317,10 +329,11 @@ function AppLite() {
         });
 
         return () => {
+            unsubscribeWorld();
             messagesUnsub();
             playersUnsub();
         };
-    }, [db, currentWorld]);
+    }, [db, currentWorld && currentWorld.id]);
 
     // 채팅 스크롤 맨 아래로
     useEffect(() => {
@@ -358,6 +371,7 @@ function AppLite() {
                 systemPrompt: generateSystemPrompt(newWorldName),
             });
             setCurrentWorld({ id: newWorldRef.id, name: newWorldName, systemPrompt: generateSystemPrompt(newWorldName) });
+            setShowLogin(true); // 월드 생성 후 바로 로그인 모달 띄우기
         } catch (e) {
             console.error("월드 생성 오류:", e);
         } finally {
@@ -852,3 +866,4 @@ function AppLiteWithStyles() {
 }
 
 export default AppLiteWithStyles;
+
