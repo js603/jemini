@@ -123,7 +123,7 @@ const generateWorldCreationPrompt = (theme) => {
     const professionsString = JSON.stringify(theme.professions, null, 2);
     return `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다.
 전통적인 판타지나 SF에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오.
-애니메이션 스타일, 열혈 스포츠, 사이버펑크, 무협, 스팀펑크, 코스믹 호러, 포스트 아포칼립스, 느와르 등 어떤 것이든 좋습니다.
+애니메이션 스타일, 열혈 스포츠, 무협, 코스믹 호러, 포스트 아포칼립스, 느와르, 정통판타지, 정통무협, 현실판 등 어떤 것이든 좋습니다.
 아래 JSON 구조와 예시를 '참고'하여, 완전히 새롭고 창의적인 세계관을 생성해주십시오. 예시와 똑같이 만들지 마십시오.
 ### JSON 출력 구조 (이 구조를 반드시 따르세요)
 {"title": "세계관의 이름 (예: '${theme.title}')","genre": "세계관의 장르 (예: '${theme.genre}')","atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글","background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사 또는 이야기의 시작점","startingLocation": "플레이어가 처음 눈을 뜨게 될 시작 장소의 이름 (예: '${theme.location}')","professions": ${professionsString},"startingChoices": ["주변을 둘러보며 현재 상황을 파악한다.","가장 가까운 사람에게 말을 걸어본다.","조용히 마음을 가다듬는다."]}`;
@@ -285,7 +285,7 @@ function App() {
             setIsLlmApiLoading(true);
             const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
             const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
-            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`;
             const payload = {
                 contents: [
                     { role: 'user', parts: [{ text: systemPromptToUse }] },
