@@ -208,7 +208,7 @@ function cleanLlmOutput(llmOutputText) {
         .replace(/```json[\s\S]*?```/g, '') // 마크다운 블록 제거
         .replace(/```[\s\S]*?```/g, '')
         .replace(/^[^\[{]*([\[{])/m, '$1') // 앞쪽 설명문 제거
-        .replace(/(알겠습니다|다음은 결과입니다|생성해 드립니다|아래는|Here is|Below is|Output:|Result:)[^\[{]*([\[{])/gi, '$2')
+        .replace(/(알겠습니다|다음은 결과입니다|생성해 드립니다|아래는|Here is|Below is|Output:|Result:)[^\[{]*([[{])/gi, '$2')
         .replace(/^[^\[{]*/g, '') // 시작 전 설명문 제거
         .replace(/\n{2,}/g, '\n')
         .trim();
