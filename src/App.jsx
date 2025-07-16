@@ -159,6 +159,7 @@ function App() {
     const [worldview, setWorldview] = useState(null);
     const [worlds, setWorlds] = useState([]);
     const [isCreatingWorld, setIsCreatingWorld] = useState(false);
+    const [newWorldName, setNewWorldName] = useState('');
     const [isProcessor, setIsProcessor] = useState(false);
     const [showInterruptionModal, setShowInterruptionModal] = useState(false);
 
