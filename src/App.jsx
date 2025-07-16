@@ -130,6 +130,10 @@ const summarizeLogs = (logs, maxLength, isPersonal) => {
 const buildCharacterCreationPrompt = (professionName, motivation, startingLocation) => {
     return `### 페르소나 (Persona)
 당신은 한 개인의 운명이 시작되는 순간을 연출하는 '운명의 서기'입니다.
+### 절대적 지시사항 (Absolute Instructions)
+1. 오직 JSON만 출력. 설명, 마크다운, 기타 텍스트 금지.
+2. 예시와 구조가 완전히 일치해야 함. 불필요한 필드/설명 추가 금지.
+3. 반드시 {로 시작, }로 끝나야 함.
 ### 플레이어 정보
 - **직업**: ${professionName}
 - **핵심 동기**: ${motivation}
@@ -161,12 +165,25 @@ ${malformedJsonString}
 const generateWorldCreationPrompt = (theme) => {
     const professionsString = JSON.stringify(theme.professions, null, 2);
     return `당신은 천재적인 스토리 작가이자 '세계 창조자'입니다. 지금부터 플레이어들이 모험할 새로운 세계의 핵심 설정을 만들어야 합니다.
+### 절대적 지시사항 (Absolute Instructions)
+1. 오직 JSON만 출력. 설명, 마크다운, 기타 텍스트 금지.
+2. 예시와 구조가 완전히 일치해야 함. 불필요한 필드/설명 추가 금지.
+3. 반드시 {로 시작, }로 끝나야 함.
 전통적인 판타지나 SF에 얽매이지 말고, 영화, 애니메이션, 소설, 신화 등 모든 장르를 아우르는 독창적이고 매력적인 세계관을 창조하십시오.
 애니메이션 스타일, 열혈 스포츠, 무협, 코스믹 호러, 포스트 아포칼립스, 느와르, 정통판타지, 정통무협, 현실판 등 어떤 것이든 좋습니다.
 아래 JSON 구조와 예시를 '참고'하여, 완전히 새롭고 창의적인 세계관을 생성해주십시오. 예시와 똑같이 만들지 마십시오.
 ### JSON 출력 구조 (이 구조를 반드시 따르세요)
 {"title": "세계관의 이름 (예: '${theme.title}')","genre": "세계관의 장르 (예: '${theme.genre}')","atmosphere": "세계의 전체적인 분위기를 묘사하는 2~3 문장의 글","background_story": "플레이어가 모험을 시작하기 직전까지의 간략한 배경 역사 또는 이야기의 시작점","startingLocation": "플레이어가 처음 눈을 뜨게 될 시작 장소의 이름 (예: '${theme.location}')","professions": ${professionsString},"startingChoices": ["주변을 둘러보며 현재 상황을 파악한다.","가장 가까운 사람에게 말을 걸어본다.","조용히 마음을 가다듬는다."]}`;
 };
+
+// 1. Timestamp 안전 변환 함수 추가 (파일 상단)
+function getMillis(ts) {
+    if (!ts) return null;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (ts instanceof Date) return ts.getTime();
+    if (typeof ts === 'number') return ts;
+    return null;
+}
 
 function App() {
     const [worldId, setWorldId] = useState(() => localStorage.getItem('worldId') || null);
@@ -221,19 +238,44 @@ function App() {
     const isTextLoading = isLlmApiLoading || (privatePlayerState?.isProcessingAction ?? false);
 
     const masterPromptForThemeGeneration = `
-# 페르소나 (Persona)
-당신은 상상력이 풍부한 TRPG 게임 시나리오 작가이자, 다양한 세계관을 기획하는 콘텐츠 전략가입니다.
-# 임무 (Task)
-당신의 임무는 아래의 'JSON 스키마'와 '좋은 예시'를 참고하여, 플레이어들에게 다채로운 경험을 제공할 수 있는 새로운 '테마 팩'을 10개 생성하는 것입니다.
-# JSON 스키마 (JSON Schema) - 각 테마 팩은 반드시 이 구조를 따라야 합니다.
-{ "name": "테마의 이름 (예: 판타지, 스포츠)", "title": "세계관의 제목", "genre": "세계관의 구체적인 장르", "location": "시작 장소", "professions": [ { "name": "역할 1의 이름", "motivation": "역할 1의 동기" }, { "name": "역할 2의 이름", "motivation": "역할 2의 동기" }, { "name": "역할 3의 이름", "motivation": "역할 3의 동기" }, { "name": "역할 4의 이름", "motivation": "역할 4의 동기" } ] }
-# 좋은 예시 (Good Examples) - 이런 스타일과 품질로 생성해주세요.
-[ { "name": "판타지", "title": "고대 용의 마지막 눈물", "genre": "에픽 판타지 어드벤처", "location": "세상 끝에 있는 잊혀진 신전", "professions": [{ "name": "그림자 속 암살자", "motivation": "왕국을 배신한 옛 스승에게 복수하기 위해 어둠 속에서 힘을 길렀습니다." }] }, { "name": "사이버펑크/SF", "title": "네온 비가 내리는 2242년", "genre": "사이버펑크 느와르", "location": "거대 기업의 그림자 아래 있는 뒷골목", "professions": [{ "name": "기억을 거래하는 정보상", "motivation": "도시의 모든 비밀을 알고 있지만, 정작 자신의 과거는 돈을 주고 사야만 합니다." }] } ]
-# 절대적 지시사항 (Absolute Instructions) - 가장 중요합니다!
+# 절대적 지시사항 (Absolute Instructions) - 반드시 지켜야 함!
 1. **오직 JSON 배열만 출력:** 당신의 응답은 다른 어떤 텍스트도 포함해서는 안 됩니다. 오직 하나의 완벽한 JSON 배열 \`[ ... ]\` 형식이어야 합니다.
 2. **어떠한 설명도 금지:** "알겠습니다", "생성해 드립니다", "다음은 결과입니다" 와 같은 서두나, \`\`\`json 같은 마크다운 태그를 절대 포함하지 마십시오.
 3. **시작과 끝:** 당신의 응답은 반드시 \`[\` 문자로 시작해서 \`]\` 문자로 끝나야 합니다. 그 외의 모든 것은 금지됩니다.
-4. **규칙 준수:** 이 규칙을 어길 경우, 시스템 전체에 치명적인 오류가 발생합니다. 반드시, 반드시 규칙을 지켜주십시오.
+4. **예시와 구조 일치:** 예시와 실제 구조가 완전히 일치해야 하며, 불필요한 필드나 설명을 추가하지 마십시오.
+5. **규칙 준수:** 이 규칙을 어길 경우, 시스템 전체에 치명적인 오류가 발생합니다. 반드시, 반드시 규칙을 지켜주십시오.
+
+# JSON 스키마 (JSON Schema) - 각 테마 팩은 반드시 이 구조를 따라야 합니다.
+{ "name": "테마의 이름 (예: 판타지, 스포츠)", "title": "세계관의 제목", "genre": "세계관의 구체적인 장르", "location": "시작 장소", "professions": [ { "name": "역할 1의 이름", "motivation": "역할 1의 동기" }, { "name": "역할 2의 이름", "motivation": "역할 2의 동기" }, { "name": "역할 3의 이름", "motivation": "역할 3의 동기" }, { "name": "역할 4의 이름", "motivation": "역할 4의 동기" } ] }
+
+# 반드시 아래 예시와 구조가 완전히 일치해야 합니다!
+[
+  {
+    "name": "판타지",
+    "title": "고대 용의 마지막 눈물",
+    "genre": "에픽 판타지 어드벤처",
+    "location": "세상 끝에 있는 잊혀진 신전",
+    "professions": [
+      { "name": "그림자 속 암살자", "motivation": "왕국을 배신한 옛 스승에게 복수하기 위해 어둠 속에서 힘을 길렀습니다." },
+      { "name": "빛의 기사", "motivation": "몰락한 왕국의 명예를 되찾기 위해 모험을 떠났습니다." },
+      { "name": "수습 마법사", "motivation": "잃어버린 고대 마법의 비밀을 찾고 싶습니다." },
+      { "name": "방랑 상인", "motivation": "전설의 보물을 찾아 부와 명예를 얻고 싶습니다." }
+    ]
+  },
+  {
+    "name": "사이버펑크/SF",
+    "title": "네온 비가 내리는 2242년",
+    "genre": "사이버펑크 느와르",
+    "location": "거대 기업의 그림자 아래 있는 뒷골목",
+    "professions": [
+      { "name": "기억을 거래하는 정보상", "motivation": "도시의 모든 비밀을 알고 있지만, 정작 자신의 과거는 돈을 주고 사야만 합니다." },
+      { "name": "사이버 해커", "motivation": "거대 기업의 시스템을 뚫고 진실을 밝히고 싶습니다." },
+      { "name": "강화인간 경호원", "motivation": "잃어버린 가족을 찾기 위해 위험한 임무를 맡습니다." },
+      { "name": "거리의 예술가", "motivation": "억압된 도시에서 자유와 예술을 외치고 싶습니다." }
+    ]
+  }
+]
+# 반드시 위 예시와 구조가 완전히 일치해야 합니다!
 `;
 
     const combinedFeed = useMemo(() => {
@@ -413,18 +455,19 @@ function App() {
                 const result = await response.json();
                 const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-                const jsonMatch = llmOutputText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+                const cleanedOutput = cleanLlmOutput(llmOutputText);
+                const jsonMatch = cleanedOutput.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
                 if (jsonMatch && jsonMatch[0]) {
                     try {
                         return JSON.parse(jsonMatch[0]);
                     } catch (e) {
                         console.warn('JSON 파싱 실패, 원본 텍스트를 반환하여 재시도 로직에서 처리합니다.', e);
-                        return llmOutputText; // Return malformed string for fixing
+                        return cleanedOutput; // Return malformed string for fixing
                     }
                 }
 
                 console.warn('LLM 응답에서 유효한 JSON 객체나 배열을 찾지 못했습니다.');
-                return llmOutputText; // Return raw output for fixing
+                return cleanedOutput; // Return raw output for fixing
 
             } catch (error) {
                 console.error('LLM API 호출 중 치명적 오류 발생:', error);
@@ -1417,8 +1460,8 @@ ${activeMemoryPrompt}
 
     const ChoicesDisplay = () => {
         const areChoicesStale = useMemo(() => {
-            const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
-            const gTs = gameState.lastUpdate?.toMillis();
+            const pTs = getMillis(privatePlayerState?.choicesTimestamp);
+            const gTs = getMillis(gameState.lastUpdate);
             return pTs && gTs && pTs < gTs;
         }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
 
