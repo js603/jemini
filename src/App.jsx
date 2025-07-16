@@ -704,10 +704,18 @@ ${worldviewData ? `### 세계관 설정: [${worldviewData.genre}] ${worldviewDat
     }, [privatePlayerState?.knownEventIds, allMajorEvents]);
 
     useEffect(() => {
-        // privatePlayerState의 choicesTimestamp가 바뀌면(즉, 내 선택이 처리되어 Firestore에 반영되면)
-        // isTextLoading을 무조건 false로 해제한다.
+        // 기존 로직
         setIsTextLoading(false);
     }, [privatePlayerState?.choicesTimestamp, privatePlayerState?.choices, personalStoryLog]);
+
+    // 추가: 내 선택이 stale(실패) 상태일 때도 강제 해제
+    useEffect(() => {
+        const pTs = privatePlayerState?.choicesTimestamp?.toMillis();
+        const gTs = gameState.lastUpdate?.toMillis();
+        if (pTs && gTs && pTs < gTs) {
+            setIsTextLoading(false);
+        }
+    }, [privatePlayerState?.choicesTimestamp, gameState.lastUpdate]);
 
     const sendChatMessage = async () => {
         if (!db || !userId || !isAuthReady || !currentChatMessage.trim() || !worldId || privatePlayerState?.status === 'dead') return;
