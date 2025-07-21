@@ -18,6 +18,7 @@ import {
   getDocs,
   deleteDoc,
 } from 'firebase/firestore';
+import { HfInference } from '@huggingface/inference';
 
 // ====================================================================
 // Firebase 설정
@@ -52,49 +53,60 @@ function extractRelevantPlayers(players, lastUserId) {
 
 // === Hugging Face LLM 연동 함수 ===
 const callHuggingFaceLlmApi = async (prompt, systemPrompt) => {
-  const HF_TOKEN = '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';
-  // 원하는 모델로 변경 가능 (예: meta-llama/Llama-2-70b-chat-hf)
-  const modelId = 'beomi/KoAlpaca-Polyglot-5.8B';
-  const url = `https://api-inference.huggingface.co/models/${modelId}`;
+  // 환경변수에서 토큰을 가져오거나 기본값 사용 (실제 운영시에는 환경변수 사용 권장)
+  const HF_TOKEN = process.env.REACT_APP_HUGGING_FACE_TOKEN || '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';
+  // 환경변수에서 모델 ID를 가져오거나 기본값 사용
+  // 여러 모델이 Inference API에서 사용 불가(404 에러)
+  // - beomi/KoAlpaca-Polyglot-5.8B: 404 에러
+  // - EleutherAI/polyglot-ko-1.3b: 404 에러
+  // - skt/ko-gpt-trinity-1.2B-v0.5: 404 에러
+  // - gpt2: 404 에러
+  // 기본 모델로 gpt2 사용 (404 에러 발생 시 Groq API로 자동 전환)
+  const modelId = process.env.REACT_APP_HUGGING_FACE_MODEL || 'gpt2';
+  
+  // 토큰 유효성 기본 검사
+  if (!HF_TOKEN || HF_TOKEN.length < 10) {
+    console.error('Hugging Face API 토큰이 설정되지 않았습니다.');
+    return {
+      chatMessage: '[시스템 오류: Hugging Face API 토큰이 설정되지 않았습니다. 관리자에게 문의하세요.]',
+      playerUpdates: []
+    };
+  }
+  
   // Hugging Face Inference API는 system prompt를 지원하지 않으므로 합쳐서 전달
   const fullPrompt = systemPrompt ? `${systemPrompt}\n${prompt}` : prompt;
-  const payload = {
-    inputs: fullPrompt,
-    parameters: {
-      max_new_tokens: 1024,
-      return_full_text: false,
-      do_sample: true,
-      temperature: 0.7
-    }
+  
+  // HuggingFace Inference 클라이언트 초기화
+  const inference = new HfInference(HF_TOKEN);
+  
+  // 파라미터 설정
+  const parameters = {
+    max_new_tokens: 1024,
+    return_full_text: false,
+    do_sample: true,
+    temperature: 0.7
   };
+  
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${HF_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(payload),
+    // HuggingFace Inference 클라이언트를 사용하여 API 호출
+    const result = await inference.textGeneration({
+      model: modelId,
+      inputs: fullPrompt,
+      parameters: parameters
     });
-    if (!response.ok) {
-      console.error(`Hugging Face API 호출 실패 (상태: ${response.status})`);
-      return {
-        chatMessage: `[시스템 오류: Hugging Face API 호출 실패 (상태: ${response.status})]`,
-        playerUpdates: []
-      };
-    }
-    const result = await response.json();
-    // output 형식: [{ generated_text: ... }]
-    let output = Array.isArray(result) && result[0]?.generated_text ? result[0].generated_text : '';
-    if (!output) {
+    
+    // 응답 처리
+    if (!result || !result.generated_text) {
+      // 응답이 없거나 생성된 텍스트가 없는 경우
       console.error("Hugging Face API 응답에 텍스트가 없음:", result);
       return {
         chatMessage: "[시스템 오류: Hugging Face API 응답에 텍스트가 없습니다]",
         playerUpdates: []
       };
     }
-
+    
+    const output = result.generated_text;
+    
     try {
       const cleanedOutput = output.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanedOutput);
@@ -117,8 +129,32 @@ const callHuggingFaceLlmApi = async (prompt, systemPrompt) => {
     }
   } catch (error) {
     console.error("Hugging Face API 호출 중 오류:", error);
+    
+    // 에러 메시지 처리
+    let errorMessage = `Hugging Face API 호출 실패: ${error.message}`;
+    
+    // 404 에러 특별 처리 (Not Found)
+    if (error.message && error.message.includes('404')) {
+      errorMessage = '모델을 찾을 수 없습니다. 모델이 Hugging Face Inference API에서 제거되었거나 접근할 수 없는 상태입니다.';
+      
+      // 404 에러 발생 시 Groq API로 자동 전환 시도
+      console.log('Hugging Face API 404 에러 발생, Groq API로 자동 전환 시도...');
+      try {
+        // Groq API 호출
+        return await callGroqLlmApi(prompt, systemPrompt, "llama3-70b-8192");
+      } catch (groqError) {
+        console.error("Groq API 자동 전환 중 오류:", groqError);
+        // Groq API도 실패한 경우 원래 에러 메시지 유지
+      }
+    }
+    
+    // 토큰 만료 특별 처리
+    if (error.message && (error.message.includes('expired') || error.message.includes('Token') || error.message.includes('401'))) {
+      errorMessage = 'Hugging Face API 토큰이 만료되었거나 유효하지 않습니다. 새로운 토큰으로 교체가 필요합니다.';
+    }
+    
     return {
-      chatMessage: `[시스템 오류: Hugging Face API 호출 중 오류: ${error.message}]`,
+      chatMessage: `[시스템 오류: ${errorMessage}]`,
       playerUpdates: []
     };
   }
@@ -262,6 +298,7 @@ function AppLite() {
   const [freeChatInput, setFreeChatInput] = useState('');
   const freeChatEndRef = useRef(null);
 
+  // 기본 LLM 제공자를 Groq로 설정 (Hugging Face API에서 404 에러 발생 문제로 인해)
   const [llmProvider, setLlmProvider] = useState('groq'); // 'groq' 또는 'huggingface'
 
   function generateUUID() {
@@ -448,8 +485,10 @@ function AppLite() {
   // === LLM dispatcher ===
   const callSelectedLlmApi = async (prompt, systemPrompt, model = "llama3-70b-8192") => {
     if (llmProvider === 'huggingface') {
+      // Hugging Face API 호출 (404 에러 시 자동으로 Groq API로 전환됨)
       return await callHuggingFaceLlmApi(prompt, systemPrompt);
     } else {
+      // Groq API 직접 호출
       return await callGroqLlmApi(prompt, systemPrompt, model);
     }
   };
