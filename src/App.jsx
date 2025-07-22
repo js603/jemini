@@ -735,7 +735,7 @@ const GameProvider = ({ children }) => {
   };
 
   return (
-    <GameContext.Provider value={{ playerStats, setPlayerStats, saveData, gameLog, choices, isLoading, loadingMessage, handleMenuAction, handleChoiceAction, storyLogEndRef, activeTab, setActiveTab, isDuelModalOpen, setIsDuelModalOpen, currentScenario }}>
+    <GameContext.Provider value={{ playerStats, setPlayerStats, saveData, gameLog, choices, isLoading, loadingMessage, handleMenuAction, handleChoiceAction, storyLogEndRef, activeTab, setActiveTab, isDuelModalOpen, setIsDuelModalOpen, currentScenario, addToLog, recalculateStats }}>
       {children}
     </GameContext.Provider>
   );
@@ -746,10 +746,106 @@ GameProvider.propTypes = {
 };
 
 // UI Components
+// Item Modal Component
+const ItemModal = ({ item, onClose, onUse, onEquip, onUnequip }) => {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md flex flex-col">
+        <h2 className="text-2xl font-bold text-purple-400 mb-2">{item.name}</h2>
+        <div className="mb-4">
+          <p className="text-gray-300 mb-2">
+            <span className="font-semibold">종류:</span> {item.type === 'weapon' ? '무기' : item.type === 'armor' ? '방어구' : '소모품'}
+          </p>
+          {item.quantity > 1 && (
+            <p className="text-gray-300 mb-2">
+              <span className="font-semibold">수량:</span> {item.quantity}
+            </p>
+          )}
+          <p className="text-gray-300 mb-2">
+            <span className="font-semibold">가치:</span> {item.price} G
+          </p>
+          <div className="text-gray-300 mb-2">
+            <span className="font-semibold">효과:</span>
+            <ul className="ml-4">
+              {item.effects.map((effect, index) => (
+                <li key={index}>
+                  {effect.stat === 'str' ? '힘' : 
+                   effect.stat === 'int' ? '지능' : 
+                   effect.stat === 'hp' ? '체력' : 
+                   effect.stat === 'maxHp' ? '최대 체력' : 
+                   effect.stat} +{effect.value}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="text-gray-300 mt-4 italic">
+            {item.description || `${item.name}은(는) ${item.type === 'weapon' ? '적에게 피해를 줄 수 있는 무기입니다.' : 
+                                                     item.type === 'armor' ? '당신을 보호해주는 방어구입니다.' : 
+                                                     '사용하면 특별한 효과를 발휘하는 아이템입니다.'}`}
+          </p>
+        </div>
+        <div className="flex flex-col space-y-2">
+          {item.type === 'weapon' || item.type === 'armor' ? (
+            <button 
+              onClick={onEquip} 
+              className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+            >
+              장착하기
+            </button>
+          ) : (
+            <button 
+              onClick={onUse} 
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+            >
+              사용하기
+            </button>
+          )}
+          {(item.type === 'weapon' || item.type === 'armor') && (
+            <button 
+              onClick={onUnequip} 
+              className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+            >
+              장착 해제
+            </button>
+          )}
+          <button 
+            onClick={onClose} 
+            className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+          >
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// PropTypes for ItemModal
+ItemModal.propTypes = {
+  item: PropTypes.shape({
+    name: PropTypes.string.isRequired,
+    type: PropTypes.string.isRequired,
+    price: PropTypes.number.isRequired,
+    quantity: PropTypes.number,
+    effects: PropTypes.arrayOf(
+      PropTypes.shape({
+        stat: PropTypes.string.isRequired,
+        value: PropTypes.number.isRequired
+      })
+    ).isRequired,
+    description: PropTypes.string
+  }).isRequired,
+  onClose: PropTypes.func.isRequired,
+  onUse: PropTypes.func.isRequired,
+  onEquip: PropTypes.func.isRequired,
+  onUnequip: PropTypes.func.isRequired
+};
+
 const StatusWindow = () => {
-  const { playerStats, setPlayerStats, saveData } = useGame();
+  const { playerStats, setPlayerStats, saveData, addToLog, recalculateStats } = useGame();
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState(playerStats.info.name);
+  const [selectedItem, setSelectedItem] = useState(null);
   
   const statTranslations = { hp: '체력', maxHp: '최대 체력', str: '힘', int: '지능' };
   
@@ -767,6 +863,137 @@ const StatusWindow = () => {
     setPlayerStats(updatedStats);
     saveData(updatedStats);
     setIsEditingName(false);
+  };
+
+  const handleItemClick = (item) => {
+    setSelectedItem(item);
+  };
+
+  const handleCloseItemModal = () => {
+    setSelectedItem(null);
+  };
+
+  const handleUseItem = async () => {
+    if (!selectedItem) return;
+
+    // 아이템 사용 로직
+    const newStats = JSON.parse(JSON.stringify(playerStats));
+    let itemUsed = false;
+
+    // 아이템 효과 적용
+    if (selectedItem.effects) {
+      selectedItem.effects.forEach(effect => {
+        if (effect.stat === 'hp') {
+          newStats.stats.hp = Math.min(newStats.stats.hp + effect.value, newStats.stats.maxHp);
+          itemUsed = true;
+        }
+      });
+    }
+
+    // 아이템 수량 감소
+    if (itemUsed) {
+      const itemIndex = newStats.inventory.findIndex(i => i.name === selectedItem.name);
+      if (itemIndex > -1) {
+        if (newStats.inventory[itemIndex].quantity > 1) {
+          newStats.inventory[itemIndex].quantity -= 1;
+        } else {
+          newStats.inventory.splice(itemIndex, 1);
+        }
+      }
+
+      // 아이템 사용 로그 추가
+      addToLog(`${selectedItem.name}을(를) 사용했습니다.`, 'system');
+
+      // LLM에 아이템 사용 정보 전달
+      const itemUsePrompt = `플레이어가 ${selectedItem.name}을(를) 사용했습니다. 이 아이템은 ${selectedItem.effects.map(e => `${e.stat === 'hp' ? '체력' : e.stat}을(를) ${e.value} 회복시킵니다`).join(', ')}. 이 상황을 간략하게 묘사해주세요.`;
+      
+      try {
+        const itemUseDescription = await LlmApi.callApiForText(itemUsePrompt);
+        addToLog(itemUseDescription, 'story');
+      } catch (error) {
+        console.error("아이템 사용 설명 생성 오류:", error);
+      }
+
+      setPlayerStats(newStats);
+      saveData(newStats);
+    }
+
+    setSelectedItem(null);
+  };
+
+  const handleEquipItem = () => {
+    if (!selectedItem || (selectedItem.type !== 'weapon' && selectedItem.type !== 'armor')) return;
+
+    const newStats = JSON.parse(JSON.stringify(playerStats));
+    
+    // 현재 장착된 아이템 인벤토리로 이동
+    const currentEquipment = newStats.equipment[selectedItem.type];
+    if (currentEquipment && currentEquipment.name) {
+      const existingItemIndex = newStats.inventory.findIndex(i => i.name === currentEquipment.name);
+      if (existingItemIndex > -1) {
+        newStats.inventory[existingItemIndex].quantity = (newStats.inventory[existingItemIndex].quantity || 1) + 1;
+      } else {
+        newStats.inventory.push({ ...currentEquipment, quantity: 1 });
+      }
+    }
+    
+    // 새 아이템 장착
+    newStats.equipment[selectedItem.type] = { ...selectedItem };
+    
+    // 인벤토리에서 아이템 제거
+    const itemIndex = newStats.inventory.findIndex(i => i.name === selectedItem.name);
+    if (itemIndex > -1) {
+      if (newStats.inventory[itemIndex].quantity > 1) {
+        newStats.inventory[itemIndex].quantity -= 1;
+      } else {
+        newStats.inventory.splice(itemIndex, 1);
+      }
+    }
+    
+    // 능력치 재계산
+    const recalculatedStats = recalculateStats(newStats);
+    
+    addToLog(`${selectedItem.name}을(를) 장착했습니다.`, 'system');
+    setPlayerStats(recalculatedStats);
+    saveData(recalculatedStats);
+    setSelectedItem(null);
+  };
+
+  const handleUnequipItem = () => {
+    if (!selectedItem || (selectedItem.type !== 'weapon' && selectedItem.type !== 'armor')) return;
+
+    const newStats = JSON.parse(JSON.stringify(playerStats));
+    
+    // 장착된 아이템 확인
+    const currentEquipment = newStats.equipment[selectedItem.type];
+    if (!currentEquipment || currentEquipment.name !== selectedItem.name) {
+      addToLog(`${selectedItem.name}은(는) 현재 장착되어 있지 않습니다.`, 'system');
+      setSelectedItem(null);
+      return;
+    }
+    
+    // 장착 해제된 아이템을 인벤토리로 이동
+    const existingItemIndex = newStats.inventory.findIndex(i => i.name === currentEquipment.name);
+    if (existingItemIndex > -1) {
+      newStats.inventory[existingItemIndex].quantity = (newStats.inventory[existingItemIndex].quantity || 1) + 1;
+    } else {
+      newStats.inventory.push({ ...currentEquipment, quantity: 1 });
+    }
+    
+    // 기본 장비로 대체
+    if (selectedItem.type === 'weapon') {
+      newStats.equipment.weapon = { name: '낡은 주먹', type: 'weapon', price: 0, effects: [{ stat: 'str', value: 1 }] };
+    } else {
+      newStats.equipment.armor = { name: '허름한 옷', type: 'armor', price: 0, effects: [{ stat: 'maxHp', value: 5 }] };
+    }
+    
+    // 능력치 재계산
+    const recalculatedStats = recalculateStats(newStats);
+    
+    addToLog(`${selectedItem.name}을(를) 장착 해제했습니다.`, 'system');
+    setPlayerStats(recalculatedStats);
+    saveData(recalculatedStats);
+    setSelectedItem(null);
   };
   
   const renderSection = (title, data, renderItem) => (
@@ -821,10 +1048,40 @@ const StatusWindow = () => {
           return (<li key={key} className="flex justify-between"><span>{keyMap[key] || key}:</span> <span className="text-right">{value}</span></li>);
         })}
         {renderSection("능력치", Object.entries(playerStats.stats).filter(([key]) => key !== 'maxHp'), ([key, value]) => (<li key={key} className="flex justify-between"><span>{statTranslations[key] || key}:</span> <span>{value}{key === 'hp' ? ` / ${playerStats.stats.maxHp}` : ''}</span></li>))}
-        {renderSection("장비", Object.entries(playerStats.equipment), ([key, item]) => (<li key={key} className="flex justify-between"><span>{key === 'weapon' ? '무기' : '방어구'}:</span> <span>{item.name}</span></li>))}
-        {renderSection("소지품", playerStats.inventory, (item, i) => (<li key={i} className="flex justify-between"><span>{item.name}</span> <span>x{item.quantity}</span></li>))}
+        {renderSection("장비", Object.entries(playerStats.equipment), ([key, item]) => (
+          <li key={key} className="flex justify-between">
+            <span>{key === 'weapon' ? '무기' : '방어구'}:</span> 
+            <button 
+              className="text-right text-blue-400 hover:underline"
+              onClick={() => handleItemClick(item)}
+            >
+              {item.name}
+            </button>
+          </li>
+        ))}
+        {renderSection("소지품", playerStats.inventory, (item, i) => (
+          <li key={i} className="flex justify-between">
+            <button 
+              className="text-left text-blue-400 hover:underline"
+              onClick={() => handleItemClick(item)}
+            >
+              {item.name}
+            </button> 
+            <span>x{item.quantity}</span>
+          </li>
+        ))}
         <div className="flex justify-between font-bold text-yellow-400 mt-4"><span>골드:</span> <span>{playerStats.gold} G</span></div>
       </div>
+      
+      {selectedItem && (
+        <ItemModal 
+          item={selectedItem} 
+          onClose={handleCloseItemModal}
+          onUse={handleUseItem}
+          onEquip={handleEquipItem}
+          onUnequip={handleUnequipItem}
+        />
+      )}
     </div>
   );
 };
