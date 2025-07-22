@@ -886,6 +886,10 @@ const StatusWindow = () => {
         if (effect.stat === 'hp') {
           newStats.stats.hp = Math.min(newStats.stats.hp + effect.value, newStats.stats.maxHp);
           itemUsed = true;
+        } else if (['str', 'int', 'maxHp'].includes(effect.stat)) {
+          // 다른 스탯(힘, 지능, 최대 체력 등) 효과 적용
+          newStats.stats[effect.stat] += effect.value;
+          itemUsed = true;
         }
       });
     }
@@ -905,17 +909,58 @@ const StatusWindow = () => {
       addToLog(`${selectedItem.name}을(를) 사용했습니다.`, 'system');
 
       // LLM에 아이템 사용 정보 전달
-      const itemUsePrompt = `플레이어가 ${selectedItem.name}을(를) 사용했습니다. 이 아이템은 ${selectedItem.effects.map(e => `${e.stat === 'hp' ? '체력' : e.stat}을(를) ${e.value} 회복시킵니다`).join(', ')}. 이 상황을 간략하게 묘사해주세요.`;
+      const itemUsePrompt = `플레이어가 ${selectedItem.name}을(를) 사용했습니다. 이 아이템은 ${selectedItem.effects.map(e => {
+        const statName = statTranslations[e.stat] || e.stat;
+        const action = e.stat === 'hp' ? '회복시킵니다' : '증가시킵니다';
+        return `${statName}을(를) ${e.value} ${action}`;
+      }).join(', ')}. 이 상황을 간략하게 묘사해주세요.`;
       
+      // LLM 호출 및 응답 처리
+      let itemUseDescription = "";
       try {
-        const itemUseDescription = await LlmApi.callApiForText(itemUsePrompt);
+        // LLM API 호출 시도
+        itemUseDescription = await LlmApi.callApiForText(itemUsePrompt);
+        
+        // 응답이 비어있는지 확인
+        if (!itemUseDescription || itemUseDescription.trim() === '') {
+          throw new Error("빈 응답이 반환되었습니다");
+        }
+        
+        // 응답을 스토리 로그에 추가
         addToLog(itemUseDescription, 'story');
       } catch (error) {
         console.error("아이템 사용 설명 생성 오류:", error);
+        // 사용자에게 오류 메시지 표시
+        addToLog(`[시스템] 아이템 사용 효과를 설명하는 중 오류가 발생했습니다: ${error.message || "알 수 없는 오류"}`, 'system');
+        
+        // 기본 메시지 추가 (아이템 효과에 따라 다른 메시지 표시)
+        const mainEffect = selectedItem.effects[0]; // 첫 번째 효과 사용
+        if (mainEffect) {
+          const statName = statTranslations[mainEffect.stat] || mainEffect.stat;
+          const action = mainEffect.stat === 'hp' ? '회복되었습니다' : '증가되었습니다';
+          addToLog(`${selectedItem.name}의 효과로 ${statName}이(가) ${action}.`, 'story');
+        } else {
+          addToLog(`${selectedItem.name}을(를) 사용했습니다.`, 'story');
+        }
       }
 
+      // 플레이어 상태 업데이트 및 저장
       setPlayerStats(newStats);
       saveData(newStats);
+      
+      // 상태 변화 로그 추가 - 모든 스탯 변화 표시
+      selectedItem.effects.forEach(effect => {
+        const statName = statTranslations[effect.stat] || effect.stat;
+        const oldValue = effect.stat === 'hp' ? playerStats.stats.hp : playerStats.stats[effect.stat] || 0;
+        const newValue = effect.stat === 'hp' 
+          ? Math.min(newStats.stats.hp, newStats.stats.maxHp) 
+          : newStats.stats[effect.stat] || 0;
+        
+        if (effect.value > 0) {
+          const action = effect.stat === 'hp' ? '회복되었습니다' : '증가되었습니다';
+          addToLog(`${statName}이(가) ${effect.value} ${action}. (${oldValue} → ${newValue})`, 'system');
+        }
+      });
     }
 
     setSelectedItem(null);
