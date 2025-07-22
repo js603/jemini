@@ -5,7 +5,7 @@ import PropTypes from 'prop-types';
 
 // Import Firebase
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -735,7 +735,7 @@ const GameProvider = ({ children }) => {
   };
 
   return (
-    <GameContext.Provider value={{ playerStats, setPlayerStats, saveData, gameLog, choices, isLoading, loadingMessage, handleMenuAction, handleChoiceAction, storyLogEndRef, activeTab, setActiveTab, isDuelModalOpen, setIsDuelModalOpen, currentScenario, addToLog, recalculateStats }}>
+    <GameContext.Provider value={{ playerStats, setPlayerStats, saveData, gameLog, choices, isLoading, loadingMessage, handleMenuAction, handleChoiceAction, storyLogEndRef, activeTab, setActiveTab, isDuelModalOpen, setIsDuelModalOpen, currentScenario, addToLog, recalculateStats, playerId }}>
       {children}
     </GameContext.Provider>
   );
@@ -1155,7 +1155,7 @@ const ChoiceWindow = () => {
 };
 
 const DuelModal = () => {
-  const { playerStats, setPlayerStats, saveData, setIsDuelModalOpen } = useGame();
+  const { playerStats, setPlayerStats, saveData, setIsDuelModalOpen, playerId, addToLog } = useGame();
   const [opponents, setOpponents] = useState([]);
   const [selectedOpponent, setSelectedOpponent] = useState(null);
   const [duelLog, setDuelLog] = useState([]);
@@ -1164,28 +1164,187 @@ const DuelModal = () => {
   const [isFighting, setIsFighting] = useState(false);
   const [isDuelOver, setIsDuelOver] = useState(false);
   const [duelResult, setDuelResult] = useState("");
+  const [playerAction, setPlayerAction] = useState(null);
+  const [opponentAction, setOpponentAction] = useState(null);
+  const [duelId, setDuelId] = useState(null);
+  const [isWaitingForOpponent, setIsWaitingForOpponent] = useState(false);
 
   useEffect(() => {
     const fetchOpponents = async () => {
       const querySnapshot = await getDocs(collection(db, "players"));
-      const playersList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setOpponents(playersList);
+      const playersList = querySnapshot.docs
+        .map(doc => ({ 
+          id: doc.id, 
+          ...doc.data(),
+          isAI: doc.id === "player01" // 자기 자신과의 결투는 AI로 처리
+        }))
+        .filter(player => player.id !== playerId); // 자기 자신은 제외
+      
+      // AI 상대 추가 (실제 DB에 저장되지 않는 가상의 상대)
+      const aiOpponents = [
+        {
+          id: "ai_opponent_1",
+          isAI: true,
+          info: { name: "연습용 허수아비", level: 1, wins: 0, losses: 0 },
+          stats: { hp: 80, maxHp: 80, str: 8, int: 5 },
+          baseStats: { hp: 80, maxHp: 80, str: 8, int: 5 },
+          equipment: {},
+          inventory: []
+        }
+      ];
+      
+      setOpponents([...playersList, ...aiOpponents]);
     };
     fetchOpponents();
   }, []);
 
-  const startDuel = (opponent) => {
+  const startDuel = async (opponent) => {
     setSelectedOpponent(opponent);
     setPlayerHp(playerStats.stats.hp);
     setOpponentHp(opponent.stats.hp);
     setIsFighting(true);
-    // 결투 시작 메시지를 설정 (로그는 하나만 유지되는 방식으로 변경됨)
+    
+    // 결투 시작 메시지를 설정
     setDuelLog([`'${opponent.info.name}'(와)과의 결투가 시작되었습니다! 행동을 선택하세요.`]);
+    
+    // AI 상대가 아닌 경우 실시간 결투 문서 생성
+    if (!opponent.isAI) {
+      try {
+        // 결투 문서 생성
+        const duelRef = doc(collection(db, "duels"));
+        const duelData = {
+          player1: {
+            id: playerId,
+            name: playerStats.info.name,
+            hp: playerStats.stats.hp,
+            maxHp: playerStats.stats.hp,
+            action: null
+          },
+          player2: {
+            id: opponent.id,
+            name: opponent.info.name,
+            hp: opponent.stats.hp,
+            maxHp: opponent.stats.hp,
+            action: null
+          },
+          status: "in_progress",
+          createdAt: new Date(),
+          log: [`'${opponent.info.name}'(와)과의 결투가 시작되었습니다! 행동을 선택하세요.`]
+        };
+        
+        await setDoc(duelRef, duelData);
+        setDuelId(duelRef.id);
+        
+        // 결투 문서 변경 감지 리스너 설정
+        const unsubscribe = onSnapshot(duelRef, (docSnapshot) => {
+          if (docSnapshot.exists()) {
+            const duelData = docSnapshot.data();
+            
+            // 상대방이 행동을 선택했는지 확인
+            const isPlayer1 = playerId === duelData.player1.id;
+            const player = isPlayer1 ? duelData.player1 : duelData.player2;
+            const opponent = isPlayer1 ? duelData.player2 : duelData.player1;
+            
+            // 로그 업데이트
+            if (duelData.log && duelData.log.length > 0) {
+              setDuelLog(duelData.log);
+            }
+            
+            // HP 업데이트
+            if (isPlayer1) {
+              setPlayerHp(duelData.player1.hp);
+              setOpponentHp(duelData.player2.hp);
+            } else {
+              setPlayerHp(duelData.player2.hp);
+              setOpponentHp(duelData.player1.hp);
+            }
+            
+            // 상대방이 행동을 선택했고, 자신도 행동을 선택한 경우 결투 진행
+            if (player.action && opponent.action) {
+              // 결투 진행 로직은 handleAction에서 처리
+            } else if (opponent.action && !player.action) {
+              // 상대방은 선택했지만 자신은 아직 선택하지 않은 경우
+              setIsWaitingForOpponent(false);
+            }
+            
+            // 결투가 종료된 경우
+            if (duelData.status === "completed") {
+              setIsFighting(false);
+              setIsDuelOver(true);
+              setDuelResult(duelData.result || "결투가 종료되었습니다.");
+            }
+          }
+        });
+        
+        // 컴포넌트 언마운트 시 리스너 해제
+        return () => unsubscribe();
+      } catch (error) {
+        console.error("실시간 결투 설정 오류:", error);
+        addToLog("실시간 결투 설정 중 오류가 발생했습니다.", "system");
+      }
+    }
   };
 
   const handleAction = async (playerAction) => {
-    const actions = ['공격', '방어', '특수행동'];
-    const opponentAction = actions[Math.floor(Math.random() * actions.length)];
+    // 플레이어 행동 저장
+    setPlayerAction(playerAction);
+    
+    if (selectedOpponent.isAI) {
+      // AI 상대인 경우 기존 로직 사용
+      const actions = ['공격', '방어', '특수행동'];
+      const opponentAction = actions[Math.floor(Math.random() * actions.length)];
+      await processDuelTurn(playerAction, opponentAction);
+    } else {
+      // 실제 사용자 상대인 경우 Firestore에 행동 저장
+      if (!duelId) {
+        addToLog("결투 정보를 찾을 수 없습니다.", "system");
+        return;
+      }
+      
+      try {
+        // 결투 문서 참조
+        const duelRef = doc(db, "duels", duelId);
+        const duelSnapshot = await getDoc(duelRef);
+        
+        if (!duelSnapshot.exists()) {
+          addToLog("결투 정보를 찾을 수 없습니다.", "system");
+          return;
+        }
+        
+        const duelData = duelSnapshot.data();
+        const isPlayer1 = playerId === duelData.player1.id;
+        
+        // 플레이어 행동 업데이트
+        if (isPlayer1) {
+          await setDoc(duelRef, {
+            player1: { ...duelData.player1, action: playerAction }
+          }, { merge: true });
+        } else {
+          await setDoc(duelRef, {
+            player2: { ...duelData.player2, action: playerAction }
+          }, { merge: true });
+        }
+        
+        // 상대방의 행동 확인
+        const opponentAction = isPlayer1 ? duelData.player2.action : duelData.player1.action;
+        
+        if (opponentAction) {
+          // 상대방이 이미 행동을 선택한 경우 결투 진행
+          await processDuelTurn(playerAction, opponentAction, duelRef, duelData);
+        } else {
+          // 상대방이 아직 행동을 선택하지 않은 경우 대기 상태로 전환
+          setIsWaitingForOpponent(true);
+          setDuelLog([...duelLog, "상대방의 선택을 기다리고 있습니다..."]);
+        }
+      } catch (error) {
+        console.error("결투 행동 처리 오류:", error);
+        addToLog("결투 행동 처리 중 오류가 발생했습니다.", "system");
+      }
+    }
+  };
+  
+  // 결투 턴 처리 함수
+  const processDuelTurn = async (playerAction, opponentAction, duelRef = null, duelData = null) => {
     let playerDamage = 0;
     let opponentDamage = 0;
     let isCritical = false;
@@ -1193,33 +1352,95 @@ const DuelModal = () => {
     const resultMatrix = [[0, -1, 1], [1, 0, -1], [-1, 1, 0]];
     const result = resultMatrix[actionMap[playerAction]][actionMap[opponentAction]];
     const criticalChance = 0.15 + (playerStats.stats.int * 0.001);
+    
     if (result === -1 && Math.random() < criticalChance) isCritical = true;
-    if (isCritical) opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
-    else {
-      if (result === 1) opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
-      else if (result === -1) playerDamage = Math.max(1, selectedOpponent.stats.str - Math.floor(playerStats.stats.str / 3));
-      else {
+    
+    if (isCritical) {
+      opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
+    } else {
+      if (result === 1) {
+        opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
+      } else if (result === -1) {
+        playerDamage = Math.max(1, selectedOpponent.stats.str - Math.floor(playerStats.stats.str / 3));
+      } else {
         opponentDamage = Math.max(1, Math.floor(playerStats.stats.str / 2));
         playerDamage = Math.max(1, Math.floor(selectedOpponent.stats.str / 2));
       }
     }
+    
     const newPlayerHp = playerHp - playerDamage;
     const newOpponentHp = opponentHp - opponentDamage;
-    const descriptionPrompt = `다음 결투 상황을 한국어로 생생하고 박진감 넘치게 묘사해줘: 플레이어(체력:${playerHp})는 '${playerAction}'을, 상대(체력:${opponentHp})는 '${opponentAction}'을 선택. ${isCritical ? '크리티컬 이벤트가 발생했다!' : ''} 그 결과, 플레이어는 ${playerDamage}의 피해를, 상대는 ${opponentDamage}의 피해를 입었다.`;
-    const description = await LlmApi.callApiForText(descriptionPrompt);
-    // 결투 로그는 이전 로그를 유지하지 않고 최신 로그만 표시
-    setDuelLog([description]);
+    
     // HP가 0 미만으로 내려가지 않도록 제한
     const finalPlayerHp = Math.max(0, newPlayerHp);
     const finalOpponentHp = Math.max(0, newOpponentHp);
+    
+    // 결투 상황 묘사 생성
+    const descriptionPrompt = `다음 결투 상황을 한국어로 생생하고 박진감 넘치게 묘사해줘: 플레이어(체력:${playerHp})는 '${playerAction}'을, 상대(체력:${opponentHp})는 '${opponentAction}'을 선택. ${isCritical ? '크리티컬 이벤트가 발생했다!' : ''} 그 결과, 플레이어는 ${playerDamage}의 피해를, 상대는 ${opponentDamage}의 피해를 입었다.`;
+    const description = await LlmApi.callApiForText(descriptionPrompt);
+    
+    // 결투 로그 업데이트
+    const newDuelLog = [...duelLog, description];
+    setDuelLog(newDuelLog);
+    
+    // HP 업데이트
     setPlayerHp(finalPlayerHp);
     setOpponentHp(finalOpponentHp);
-    if (finalPlayerHp <= 0 || finalOpponentHp <= 0) endDuel(finalPlayerHp, finalOpponentHp);
+    
+    // 실제 사용자 상대인 경우 Firestore 업데이트
+    if (duelRef && duelData) {
+      const isPlayer1 = playerId === duelData.player1.id;
+      const updateData = {
+        log: newDuelLog
+      };
+      
+      if (isPlayer1) {
+        updateData.player1 = {
+          ...duelData.player1,
+          hp: finalPlayerHp,
+          action: null
+        };
+        updateData.player2 = {
+          ...duelData.player2,
+          hp: finalOpponentHp,
+          action: null
+        };
+      } else {
+        updateData.player1 = {
+          ...duelData.player1,
+          hp: finalOpponentHp,
+          action: null
+        };
+        updateData.player2 = {
+          ...duelData.player2,
+          hp: finalPlayerHp,
+          action: null
+        };
+      }
+      
+      // 결투 종료 여부 확인
+      if (finalPlayerHp <= 0 || finalOpponentHp <= 0) {
+        updateData.status = "completed";
+        await setDoc(duelRef, updateData, { merge: true });
+        endDuel(finalPlayerHp, finalOpponentHp, duelRef);
+      } else {
+        // 행동 초기화 및 다음 턴 준비
+        await setDoc(duelRef, updateData, { merge: true });
+        setPlayerAction(null);
+        setOpponentAction(null);
+        setIsWaitingForOpponent(false);
+      }
+    } else if (finalPlayerHp <= 0 || finalOpponentHp <= 0) {
+      // AI 상대인 경우 결투 종료
+      endDuel(finalPlayerHp, finalOpponentHp);
+    }
   };
 
-  const endDuel = async (finalPlayerHp, finalOpponentHp) => {
+  const endDuel = async (finalPlayerHp, finalOpponentHp, duelRef = null) => {
     setIsFighting(false);
     setIsDuelOver(true);
+    setIsWaitingForOpponent(false);
+    
     const winner = finalPlayerHp > 0 ? playerStats : selectedOpponent;
     const loser = finalPlayerHp > 0 ? selectedOpponent : playerStats;
     const resultText = `${winner.info.name}의 승리!`;
@@ -1239,7 +1460,8 @@ const DuelModal = () => {
     const totalGold = baseGold + (isPlayerWinner ? randomBonus : 0);
     
     // 결과 설정
-    setDuelResult(`${resultText}\n\n${duelSummary}\n\n획득한 칭호: ${duelTitle}\n\n보상: ${totalGold} 골드${isPlayerWinner ? ` (기본 ${baseGold} + 보너스 ${randomBonus})` : ""}`);
+    const resultMessage = `${resultText}\n\n${duelSummary}\n\n획득한 칭호: ${duelTitle}\n\n보상: ${totalGold} 골드${isPlayerWinner ? ` (기본 ${baseGold} + 보너스 ${randomBonus})` : ""}`;
+    setDuelResult(resultMessage);
     
     // 플레이어 상태 업데이트
     const newPlayerStats = JSON.parse(JSON.stringify(playerStats));
@@ -1248,15 +1470,29 @@ const DuelModal = () => {
     newPlayerStats.info.lastDuelTitle = duelTitle;
     newPlayerStats.gold += totalGold;
     setPlayerStats(newPlayerStats);
-    await saveData(newPlayerStats, "player01");
+    await saveData(newPlayerStats, playerId);
     
     // 상대방 상태 업데이트 (AI가 아닌 경우)
-    if (selectedOpponent.id !== "player01") {
+    if (!selectedOpponent.isAI) {
       const newOpponentStats = JSON.parse(JSON.stringify(selectedOpponent));
       newOpponentStats.info.wins += (!isPlayerWinner ? 1 : 0);
       newOpponentStats.info.losses += (isPlayerWinner ? 1 : 0);
       await saveData(newOpponentStats, selectedOpponent.id);
+      
+      // 실시간 결투 문서 업데이트
+      if (duelRef) {
+        await setDoc(duelRef, {
+          status: "completed",
+          result: resultMessage,
+          winner: isPlayerWinner ? playerId : selectedOpponent.id,
+          completedAt: new Date()
+        }, { merge: true });
+      }
     }
+    
+    // 상태 초기화
+    setPlayerAction(null);
+    setOpponentAction(null);
   };
 
   return (
@@ -1294,7 +1530,7 @@ const DuelModal = () => {
             <div className="flex-grow bg-gray-900 p-2 rounded overflow-y-auto mb-4">
               {duelLog.map((log, i) => <p key={i} className="mb-2">{log}</p>)}
             </div>
-            {isFighting && (
+            {isFighting && !isWaitingForOpponent && (
               <div className="flex justify-around">
                 {['공격', '방어', '특수행동'].map(action => (
                   <button 
@@ -1305,6 +1541,16 @@ const DuelModal = () => {
                     {action}
                   </button>
                 ))}
+              </div>
+            )}
+            {isFighting && isWaitingForOpponent && (
+              <div className="text-center">
+                <p className="text-yellow-400 mb-4">상대방의 선택을 기다리고 있습니다...</p>
+                <div className="animate-pulse flex justify-center">
+                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1"></div>
+                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1 animate-delay-200"></div>
+                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1 animate-delay-400"></div>
+                </div>
               </div>
             )}
             {isDuelOver && (
