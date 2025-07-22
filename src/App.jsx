@@ -747,20 +747,77 @@ GameProvider.propTypes = {
 
 // UI Components
 const StatusWindow = () => {
-  const { playerStats } = useGame();
+  const { playerStats, setPlayerStats, saveData } = useGame();
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [newName, setNewName] = useState(playerStats.info.name);
+  
   const statTranslations = { hp: '체력', maxHp: '최대 체력', str: '힘', int: '지능' };
+  
+  const handleSaveName = () => {
+    if (newName.trim() === '') return;
+    
+    const updatedStats = {
+      ...playerStats,
+      info: {
+        ...playerStats.info,
+        name: newName.trim()
+      }
+    };
+    
+    setPlayerStats(updatedStats);
+    saveData(updatedStats);
+    setIsEditingName(false);
+  };
+  
   const renderSection = (title, data, renderItem) => (
     <div className="mb-4">
       <h4 className="text-lg font-semibold text-purple-300 border-b border-gray-700 pb-1 mb-2">{title}</h4>
       <ul className="space-y-1 text-sm text-gray-300">{data.map(renderItem)}</ul>
     </div>
   );
+  
   return (
     <div className="bg-gray-800 p-4 rounded-lg h-full flex flex-col">
       <h3 className="text-xl font-bold text-purple-400 border-b border-gray-600 pb-2 mb-4 flex-shrink-0">내 정보</h3>
       <div className="flex-grow overflow-y-auto pr-2">
         {renderSection("기본 정보", Object.entries(playerStats.info), ([key, value]) => {
           const keyMap = { name: '이름', level: '레벨', wins: '승리', losses: '패배', lastDuelTitle: '칭호' };
+          
+          if (key === 'name') {
+            return (
+              <li key={key} className="flex justify-between items-center">
+                <span>{keyMap[key] || key}:</span>
+                {isEditingName ? (
+                  <div className="flex items-center">
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      className="bg-gray-700 text-white px-2 py-1 rounded mr-2 text-sm"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSaveName}
+                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs"
+                    >
+                      저장
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center">
+                    <span className="text-right mr-2">{value}</span>
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs"
+                    >
+                      수정
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          }
+          
           return (<li key={key} className="flex justify-between"><span>{keyMap[key] || key}:</span> <span className="text-right">{value}</span></li>);
         })}
         {renderSection("능력치", Object.entries(playerStats.stats).filter(([key]) => key !== 'maxHp'), ([key, value]) => (<li key={key} className="flex justify-between"><span>{statTranslations[key] || key}:</span> <span>{value}{key === 'hp' ? ` / ${playerStats.stats.maxHp}` : ''}</span></li>))}
