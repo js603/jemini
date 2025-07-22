@@ -526,7 +526,10 @@ const GameProvider = ({ children }) => {
                 1.  선택지의 결과로 플레이어가 보상을 얻거나 잃을 수 있습니다. 보상은 'rewards' 객체를 사용하여 표현합니다.
                 2.  'rewards' 객체는 'gold'(골드), 'items'(아이템/장비), 'stats'(영구 능력치)를 포함할 수 있습니다.
                 3.  이야기의 흐름이 자연스럽게 끝나면, 선택지에 "endScenario": true 플래그를 포함해주세요.
-                4.  모든 응답은 반드시 아래 예시와 같은 JSON 형식이어야 합니다.
+                4.  플레이어의 인벤토리에 있는 스토리 관련 아이템('type'이 'story'인 아이템)을 확인하고, 이를 스토리에 통합하세요.
+                5.  스토리 아이템을 사용하는 선택지를 제공할 때는 "useStoryItem": "아이템이름" 속성을 포함하세요.
+                6.  장착 아이템('type'이 'weapon' 또는 'armor')도 스토리에 반영하여 장비가 스토리에 영향을 주도록 하세요.
+                7.  모든 응답은 반드시 아래 예시와 같은 JSON 형식이어야 합니다.
                 **응답 JSON 형식 예시:**
                 {
                   "chatMessage": "동굴 깊은 곳에서 반짝이는 보물 상자를 발견했습니다!",
@@ -541,32 +544,47 @@ const GameProvider = ({ children }) => {
                       },
                       "endScenario": true
                     },
-                    { "text": "함정일지 모르니 그냥 지나간다", "narration": "당신은 조심스럽게 상자를 지나쳤습니다.", "endScenario": true }
+                    { "text": "함정일지 모르니 그냥 지나간다", "narration": "당신은 조심스럽게 상자를 지나쳤습니다.", "endScenario": true },
+                    {
+                      "text": "고대의 열쇠를 사용한다",
+                      "narration": "고대의 열쇠가 상자의 자물쇠에 완벽하게 들어맞습니다. 상자가 열리자 강력한 마법 지팡이가 나타났습니다!",
+                      "useStoryItem": "고대의 열쇠",
+                      "rewards": {
+                        "items": [{ "name": "마법사의 지팡이", "type": "weapon", "price": 300, "effects": [{"stat": "int", "value": 15}] }]
+                      }
+                    }
                   ]
                 }
-                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요.
+                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요. 플레이어의 인벤토리에 있는 스토리 아이템과 장착 아이템을 확인하고, 이를 스토리에 자연스럽게 통합하세요.
             `;
 
   const getShopSystemPrompt = () => `
                 당신은 RPG 게임의 창의적이고 능숙한 상점 주인입니다. 당신은 플레이어의 현재 상태를 보고 그에게 흥미로운 물건을 '창작'하여 판매해야 합니다.
                 플레이어의 현재 상태: ${JSON.stringify(playerStats)}.
                 **매우 중요한 규칙:**
-                1.  당신은 플레이어에게 판매할 독창적인 아이템 3개를 '창작'해야 합니다.
+                1.  당신은 플레이어에게 판매할 독창적인 아이템 4개를 '창작'해야 합니다.
                 2.  각 아이템은 반드시 'name', 'type', 'price', 'effects' 속성을 가져야 합니다.
                 3.  'effects'는 반드시 [{"stat": "능력치이름", "value": 숫자}] 형식의 배열이어야 합니다.
-                4.  플레이어의 소지 골드(${playerStats.gold}G)를 고려하여, 구매 가능한 아이템과 불가능한 아이템을 섞어서 제시하세요.
-                5.  당신의 모든 응답은 반드시, 예외 없이, 아래와 같은 JSON 형식이어야 합니다. 'choices' 배열은 절대 비워두면 안 됩니다.
+                4.  아이템 타입은 다음 중 하나여야 합니다:
+                    - 'weapon': 무기 (장착 가능)
+                    - 'armor': 방어구 (장착 가능)
+                    - 'potion': 소모성 아이템 (사용 시 효과 발동)
+                    - 'story': 스토리 관련 아이템 (스토리 진행에 사용됨)
+                5.  'story' 타입 아이템은 특별한 아이템으로, 스토리 진행 중에 사용될 수 있습니다. 이 아이템은 'description' 속성을 추가로 가져야 합니다.
+                6.  플레이어의 소지 골드(${playerStats.gold}G)를 고려하여, 구매 가능한 아이템과 불가능한 아이템을 섞어서 제시하세요.
+                7.  당신의 모든 응답은 반드시, 예외 없이, 아래와 같은 JSON 형식이어야 합니다. 'choices' 배열은 절대 비워두면 안 됩니다.
                 **응답 JSON 형식 예시:**
                 {
                   "chatMessage": "어서오게, 용사여! 내게는 아주 특별한 물건들이 있지. 한번 보겠나?",
                   "choices": [
                     { "type": "buy", "item": { "name": "번개가 깃든 강철 검", "type": "weapon", "price": 120, "effects": [{"stat": "str", "value": 8}, {"stat": "int", "value": 2}] } },
                     { "type": "buy", "item": { "name": "트롤 가죽 갑옷", "type": "armor", "price": 75, "effects": [{"stat": "maxHp", "value": 30}] } },
+                    { "type": "buy", "item": { "name": "고대의 열쇠", "type": "story", "price": 50, "effects": [], "description": "오래된 던전의 비밀 문을 열 수 있는 신비한 열쇠입니다." } },
                     { "type": "event", "text": "상점 주인의 모험담을 듣는다", "narration": "주인의 이야기에 감명받자, 그는 당신의 통찰력이 늘어났다며 기뻐했습니다.", "rewards": { "stats": [{"stat": "int", "value": 1}] }, "endScenario": false },
                     { "type": "leave", "text": "상점을 나간다" }
                   ]
                 }
-                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요.
+                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요. 반드시 'story' 타입의 아이템을 하나 이상 포함시키세요. 이 아이템은 스토리 진행에 중요한 역할을 할 수 있는 흥미로운 아이템이어야 합니다.
             `;
 
   const batchEnsureKorean = async (textsToTranslate) => {
@@ -658,6 +676,29 @@ const GameProvider = ({ children }) => {
     let newStats = JSON.parse(JSON.stringify(playerStats));
     let shouldRecalculate = false;
 
+    // 스토리 아이템 사용 처리
+    if (choice.useStoryItem) {
+      const itemName = choice.useStoryItem;
+      const itemIndex = newStats.inventory.findIndex(item => item.name === itemName && item.type === 'story');
+      
+      if (itemIndex === -1) {
+        addToLog(`[오류] ${itemName}을(를) 찾을 수 없습니다.`, 'system');
+        setIsLoading(false);
+        setChoices(choices);
+        return;
+      }
+      
+      // 아이템 사용 로그 추가
+      addToLog(`${itemName}을(를) 사용했습니다.`, 'system');
+      
+      // 아이템 제거 (수량이 1 이상이면 감소, 아니면 제거)
+      if (newStats.inventory[itemIndex].quantity > 1) {
+        newStats.inventory[itemIndex].quantity -= 1;
+      } else {
+        newStats.inventory.splice(itemIndex, 1);
+      }
+    }
+
     if (choice.type === 'buy') {
       const item = choice.item;
       if (newStats.gold >= item.price) {
@@ -680,7 +721,7 @@ const GameProvider = ({ children }) => {
       }
     }
 
-    const logText = choice.text || `${choice.item.name} 구매`;
+    const logText = choice.text || `${choice.item?.name || ''} 구매`;
     addToLog(`> ${logText}`, 'choice');
     if (choice.narration) addToLog(choice.narration);
 
@@ -754,7 +795,12 @@ const ItemModal = ({ item, onClose, onUse, onEquip, onUnequip }) => {
         <h2 className="text-2xl font-bold text-purple-400 mb-2">{item.name}</h2>
         <div className="mb-4">
           <p className="text-gray-300 mb-2">
-            <span className="font-semibold">종류:</span> {item.type === 'weapon' ? '무기' : item.type === 'armor' ? '방어구' : '소모품'}
+            <span className="font-semibold">종류:</span> {
+              item.type === 'weapon' ? '무기' : 
+              item.type === 'armor' ? '방어구' : 
+              item.type === 'story' ? '스토리 아이템' : 
+              '소모품'
+            }
           </p>
           {item.quantity > 1 && (
             <p className="text-gray-300 mb-2">
@@ -791,6 +837,13 @@ const ItemModal = ({ item, onClose, onUse, onEquip, onUnequip }) => {
               className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
             >
               장착하기
+            </button>
+          ) : item.type === 'story' ? (
+            <button 
+              onClick={onUse} 
+              className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded"
+            >
+              스토리에서 사용하기
             </button>
           ) : (
             <button 
@@ -875,6 +928,14 @@ const StatusWindow = () => {
 
   const handleUseItem = async () => {
     if (!selectedItem) return;
+
+    // 스토리 아이템 처리
+    if (selectedItem.type === 'story') {
+      addToLog(`${selectedItem.name}은(는) 스토리 진행 중에만 사용할 수 있는 아이템입니다.`, 'system');
+      addToLog(`모험을 계속하면서 적절한 상황에서 사용할 수 있을 것입니다.`, 'story');
+      setSelectedItem(null);
+      return;
+    }
 
     // 아이템 사용 로직
     const newStats = JSON.parse(JSON.stringify(playerStats));
