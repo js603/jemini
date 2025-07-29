@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/gemini.iml" filepath="$PROJECT_DIR$/.idea/gemini.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/jemini.iml" filepath="$PROJECT_DIR$/.idea/jemini.iml" />
     </modules>
   </component>
 </project>

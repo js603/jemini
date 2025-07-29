@@ -1,13 +1,22 @@
-// Import React
-import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
-import ReactDOM from 'react-dom/client';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-
-// Import Firebase
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  updateDoc,
+  onSnapshot,
+  collection,
+  addDoc,
+  getDoc,
+  arrayUnion,
+  writeBatch,
+  increment
+} from 'firebase/firestore';
 
-// Firebase configuration
+// START: Firebase and LLM Configuration
+// [1-1] Firebase 연동 설정: Firebase 프로젝트의 구성 정보입니다.
 const firebaseConfig = {
   apiKey: 'AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8',
   authDomain: 'text-adventure-game-cb731.firebaseapp.com',
@@ -15,1725 +24,1549 @@ const firebaseConfig = {
   storageBucket: 'text-adventure-game-cb731.appspot.com',
   messagingSenderId: '1092941614820',
   appId: '1:1092941614820:web:5545f36014b73c268026f1',
+  measurementId: 'G-FNGF42T1FP',
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const firebase = { doc, getDoc, setDoc, collection, getDocs };
+// [1-2] LLM API 호출 함수: Groq API를 사용하여 LLM과 통신합니다.
+// 시스템 프롬프트에 'JSON'이 포함되어 있는지 여부에 따라 응답 형식을 동적으로 변경합니다.
+const callGroqLlmApi = async (prompt, systemPrompt, model = "llama-3.1-405b-reasoning") => {
+  // 주의: 실제 프로덕션 환경에서는 API 키를 클라이언트 코드에 노출하면 안 됩니다.
+  const GROQ_API_KEY = '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';
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
+  const isJsonRequest = systemPrompt.includes('JSON');
+  const payload = {
+    model,
+    messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
+    temperature: 0.8,
+    max_tokens: 1024,
+    ...(isJsonRequest && { response_format: { type: 'json_object' } }),
+  };
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      console.error(`Groq API 호출 실패 (상태: ${response.status})`);
+      return { error: `Groq API 호출 실패 (상태: ${response.status})` };
+    }
+    const result = await response.json();
+    const llmOutputText = result.choices?.[0]?.message?.content || '{}';
+    if (isJsonRequest) {
+      try { return JSON.parse(llmOutputText); }
+      catch (parseError) { return { error: "JSON 파싱 실패", content: llmOutputText }; }
+    }
+    return { content: llmOutputText };
+  } catch (error) {
+    console.error("Groq API 호출 중 오류:", error);
+    return { error: `Groq API 호출 중 오류: ${error.message}` };
+  }
+};
+// END: Firebase and LLM Configuration
 
-// LLM API module
-// 다중 API 키 관리 및 LLM 서비스 폴백 메커니즘 구현
-// 호출 시도 순서:
-// 1. Groq LLM > MAIN_GROQ_API_KEY
-// 2. Groq LLM > SUBGROQ_API_KEY
-// 3. GEMINI LLM > MAIN_GEMINI_API_KEY
-// 4. GEMINI LLM > SUB_GEMINI_API_KEY
-// 5. GEMINI LLM > THIRD_GEMINI_API_KEY
-// 
-// 각 LLM 서비스는 API 키 오류(인증, 사용량 제한 등)가 발생하면 다음 API 키로 자동 전환
-// 모든 API 키가 실패하면 다음 LLM 서비스로 전환
-// 모든 LLM 서비스와 API 키 조합이 실패하면 오류 메시지 반환
-// 한글 응답 보장을 위한 추가 방어 로직 포함
-const LlmApi = {
-  // 한글만 포함되어 있는지 확인하는 함수
-  isKoreanOnly: (text) => {
-    // 한글, 숫자, 일부 특수문자만 허용하는 정규식
-    const nonKoreanRegex = /[^가-힣ㄱ-ㅎㅏ-ㅣ\d\s.,?!()"'+-]/u;
-    return !nonKoreanRegex.test(text);
+// START: Game Data Definitions
+// [2-1] 기술 트리 정의: 게임 내 연구 가능한 기술들의 정보입니다.
+const techTree = {
+  agriculture: { 
+    name: '농업', 
+    description: '매 턴 영토당 자원 생산량 +15%', 
+    baseCost: 500,
+    effectPerLevel: 0.15, // 레벨당 15% 생산량 증가
+    maxLevel: 5
   },
-  // JSON 객체 내의 모든 문자열 값이 한글인지 확인하는 함수
-  checkKoreanInObject: (obj) => {
-    for (const key in obj) {
-      if (typeof obj[key] === 'string' && obj[key].trim() !== '') {
-        if (!LlmApi.isKoreanOnly(obj[key])) {
-          console.log(`비한글 텍스트 감지: "${key}" 필드에서 "${obj[key].substring(0, 30)}..."`);
-          return false;
-        }
-      } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-        if (Array.isArray(obj[key])) {
-          for (const item of obj[key]) {
-            if (typeof item === 'object' && item !== null) {
-              if (!LlmApi.checkKoreanInObject(item)) return false;
-            } else if (typeof item === 'string' && item.trim() !== '') {
-              if (!LlmApi.isKoreanOnly(item)) {
-                console.log(`비한글 텍스트 감지: 배열 내 "${item.substring(0, 30)}..."`);
-                return false;
-              }
-            }
-          }
-        } else {
-          if (!LlmApi.checkKoreanInObject(obj[key])) return false;
-        }
-      }
-    }
-    return true;
+  engineering: { 
+    name: '공학', 
+    description: '군사 유닛 훈련 비용 -15%, 전투 시 공격력 +10%', 
+    baseCost: 700,
+    discountPerLevel: 0.15, // 레벨당 15% 비용 감소
+    combatBonusPerLevel: 0.10, // 레벨당 10% 전투력 증가
+    maxLevel: 5
   },
-  robustJsonParse: (text) => {
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch && jsonMatch[0]) {
-        try {
-          return JSON.parse(jsonMatch[0]);
-        } catch (e2) { throw new Error("Extracted JSON is also invalid"); }
-      }
-      throw new Error("No valid JSON object found in the response");
-    }
+  espionage: { 
+    name: '첩보', 
+    description: '적국 안정도 감소 효과 +3, 상대방 정보 획득 확률 증가', 
+    baseCost: 600,
+    stabilityEffectPerLevel: 3, // 레벨당 3 안정도 감소 효과
+    infoChancePerLevel: 0.15, // 레벨당 15% 정보 획득 확률 증가
+    maxLevel: 5
   },
-  callApiForText: async (prompt) => {
-    const GROQ_API_KEY = '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';
-    const url = 'https://api.groq.com/openai/v1/chat/completions';
-    const payload = { model: "llama3-70b-8192", messages: [{ role: 'user', content: prompt }], temperature: 0.7 };
-    
-    // 한글 응답을 위한 방어 로직 구현
-    const maxRetries = 10; // 최대 재시도 횟수
-    let retryCount = 0;
-    let content = '';
-    
-    while (retryCount < maxRetries) {
-      try {
-        const response = await fetch(url, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` }, 
-          body: JSON.stringify(payload) 
-        });
-        
-        if (!response.ok) throw new Error(`Text API Error: ${response.status}`);
-        
-        const result = await response.json();
-        content = result.choices?.[0]?.message?.content || '';
-        
-        // 한글만 포함된 응답인지 확인
-        if (LlmApi.isKoreanOnly(content)) {
-          console.log(`한글 응답 성공 (시도: ${retryCount + 1}/${maxRetries})`);
-          return content;
-        }
-        
-        console.log(`비한글 응답 감지, 재시도 중... (${retryCount + 1}/${maxRetries})`);
-        retryCount++;
-        
-        // 한글 변환 요청 추가
-        if (retryCount >= 3) {
-          // 몇 번 실패하면 명시적으로 한글 변환 요청
-          payload.messages = [{ 
-            role: 'user', 
-            content: `다음 내용을 한국어로만 답변해주세요. 영어나 다른 언어는 절대 포함하지 마세요: ${prompt}` 
-          }];
-        }
-      } catch (error) {
-        console.error(`API 호출 오류 (시도: ${retryCount + 1}/${maxRetries}):`, error);
-        retryCount++;
-        // 잠시 대기 후 재시도
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    // 최대 재시도 횟수를 초과한 경우, 마지막으로 받은 응답 반환
-    console.warn(`최대 재시도 횟수(${maxRetries})를 초과했습니다. 마지막 응답을 반환합니다.`);
-    return content;
+  diplomacy: { 
+    name: '외교', 
+    description: '조약 체결 시 안정도 +5, 외교 제안 수락 확률 증가', 
+    baseCost: 550,
+    stabilityBonusPerLevel: 5, // 레벨당 5 안정도 증가
+    acceptanceChancePerLevel: 0.10, // 레벨당 10% 수락 확률 증가
+    maxLevel: 5
   },
-  callGroq: async (history, systemPrompt) => {
-    const MAIN_GROQ_API_KEY = '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';
-    const SUBGROQ_API_KEY = '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';
-    const url = 'https://api.groq.com/openai/v1/chat/completions';
-    const originalPayload = { 
-      model: "llama3-70b-8192", 
-      messages: [
-        { role: 'system', content: systemPrompt + "\n\n중요: 모든 텍스트는 반드시 한국어로만 작성해야 합니다. 영어나 다른 언어는 절대 포함하지 마세요." }, 
-        ...history
-      ], 
-      temperature: 0.8, 
-      max_tokens: 2048, 
-      response_format: { type: 'json_object' } 
-    };
-    
-    // 한글 응답을 위한 방어 로직 구현
-    const maxRetries = 10; // 최대 재시도 횟수
-    let retryCount = 0;
-    let content = '{}';
-    let parsedContent = {};
-    let currentApiKey = MAIN_GROQ_API_KEY; // 시작은 메인 API 키로
-    let isUsingMainKey = true; // 현재 메인 키 사용 여부 추적
-    
-    while (retryCount < maxRetries) {
-      try {
-        // 페이로드 복사 (수정될 수 있으므로)
-        const payload = JSON.parse(JSON.stringify(originalPayload));
-        
-        // 재시도 횟수에 따라 시스템 프롬프트 강화
-        if (retryCount > 0) {
-          payload.messages[0].content = systemPrompt + `\n\n매우 중요: 이전 응답에 한국어가 아닌 텍스트가 포함되어 있었습니다. 모든 텍스트는 반드시 한국어로만 작성해야 합니다. 영어나 다른 언어는 절대 포함하지 마세요. 이는 ${retryCount}번째 재시도입니다.`;
-        }
-        
-        const response = await fetch(url, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentApiKey}` },
-          body: JSON.stringify(payload) 
-        });
-        
-        if (!response.ok) {
-          // API 키 관련 오류 (401, 403, 429 등)인 경우 API 키 전환
-          if ([401, 403, 429].includes(response.status) && isUsingMainKey) {
-            console.warn(`Groq 메인 API 키 오류 (${response.status}), 보조 API 키로 전환합니다.`);
-            currentApiKey = SUBGROQ_API_KEY;
-            isUsingMainKey = false;
-            continue; // 재시도 카운트 증가 없이 즉시 다시 시도
-          }
-          throw new Error(`Groq API Error: ${response.status}`);
-        }
-        
-        const result = await response.json();
-        content = result.choices?.[0]?.message?.content || '{}';
-        
-        try {
-          // JSON 파싱 시도
-          parsedContent = LlmApi.robustJsonParse(content);
-          
-          // JSON 내의 모든 문자열 값이 한글인지 확인
-          let allKorean = true;
-          
-          if (LlmApi.checkKoreanInObject(parsedContent)) {
-            console.log(`한글 JSON 응답 성공 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${isUsingMainKey ? '메인' : '보조'})`);
-            return parsedContent;
-          }
-          
-          console.log(`JSON에 비한글 텍스트 포함, 재시도 중... (${retryCount + 1}/${maxRetries})`);
-        } catch (parseError) {
-          // JSON 파싱 실패 시 수정 시도
-          console.log(`JSON 파싱 실패, 수정 시도 중... (${retryCount + 1}/${maxRetries})`);
-          const fixPrompt = `다음 텍스트는 유효하지 않은 JSON입니다. 다른 설명 없이, 오직 유효한 JSON 객체만 반환하도록 수정해주세요. 모든 텍스트는 반드시 한국어로만 작성해야 합니다:\n\n${content}`;
-          const fixedContent = await LlmApi.callApiForText(fixPrompt);
-          
-          try {
-            parsedContent = LlmApi.robustJsonParse(fixedContent);
-            // 수정된 JSON도 한글인지 확인
-            if (LlmApi.checkKoreanInObject(parsedContent)) {
-              console.log(`수정된 한글 JSON 응답 성공 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${isUsingMainKey ? '메인' : '보조'})`);
-              return parsedContent;
-            }
-          } catch (e) {
-            console.error(`수정된 JSON도 파싱 실패 (시도: ${retryCount + 1}/${maxRetries})`);
-          }
-        }
-        
-        retryCount++;
-        // 잠시 대기 후 재시도
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error(`API 호출 오류 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${isUsingMainKey ? '메인' : '보조'}):`, error);
-        
-        // 메인 키 사용 중 오류 발생 시 보조 키로 전환
-        if (isUsingMainKey) {
-          console.warn(`Groq 메인 API 키 오류, 보조 API 키로 전환합니다.`);
-          currentApiKey = SUBGROQ_API_KEY;
-          isUsingMainKey = false;
-          // 키 전환 시에는 재시도 카운트를 증가시키지 않음
-          continue;
-        }
-        
-        retryCount++;
-        // 잠시 대기 후 재시도
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-    
-    // 최대 재시도 횟수를 초과한 경우, 마지막으로 받은 응답 반환
-    console.warn(`최대 재시도 횟수(${maxRetries})를 초과했습니다. 마지막 응답을 반환합니다.`);
-    
-    try {
-      return parsedContent;
-    } catch (e) {
-      // 마지막 시도로 기본 객체 반환
-      return { chatMessage: "[시스템 오류] 한글 응답을 받지 못했습니다.", choices: [] };
-    }
-  },
-  callGemini: async (history, systemPrompt) => {
-    const MAIN_GEMINI_API_KEY = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
-    const SUB_GEMINI_API_KEY = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
-    const THIRD_GEMINI_API_KEY = 'AIzaSyCH-v67rjijFO_So2mTDj_-qIy2aNJYgz0';
-    
-    const convertedHistory = history.map(item => ({ 
-      role: item.role === 'assistant' ? 'model' : 'user', 
-      parts: [{ text: item.content }] 
-    }));
-    
-    const enhancedSystemPrompt = systemPrompt + "\n\n중요: 모든 텍스트는 반드시 한국어로만 작성해야 합니다. 영어나 다른 언어는 절대 포함하지 마세요.";
-    
-    const originalPayload = { 
-      contents: convertedHistory, 
-      systemInstruction: { parts: [{ text: enhancedSystemPrompt }] }, 
-      generationConfig: { responseMimeType: "application/json", temperature: 0.8 } 
-    };
-    
-    // 한글 응답을 위한 방어 로직 구현
-    const maxRetries = 10; // 최대 재시도 횟수
-    let retryCount = 0;
-    let content = '{}';
-    let parsedContent = {};
-    
-    // API 키 관리
-    const apiKeys = [MAIN_GEMINI_API_KEY, SUB_GEMINI_API_KEY, THIRD_GEMINI_API_KEY];
-    let currentKeyIndex = 0;
-    let currentApiKey = apiKeys[currentKeyIndex];
-    
-    while (retryCount < maxRetries) {
-      try {
-        // 현재 API 키로 URL 구성
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentApiKey}`;
-        
-        // 페이로드 복사 (수정될 수 있으므로)
-        const payload = JSON.parse(JSON.stringify(originalPayload));
-        
-        // 재시도 횟수에 따라 시스템 프롬프트 강화
-        if (retryCount > 0) {
-          payload.systemInstruction.parts[0].text = enhancedSystemPrompt + 
-            `\n\n매우 중요: 이전 응답에 한국어가 아닌 텍스트가 포함되어 있었습니다. 모든 텍스트는 반드시 한국어로만 작성해야 합니다. 영어나 다른 언어는 절대 포함하지 마세요. 이는 ${retryCount}번째 재시도입니다.`;
-        }
-        
-        const response = await fetch(url, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify(payload) 
-        });
-        
-        if (!response.ok) {
-          // API 키 관련 오류 (401, 403, 429 등)인 경우 다음 API 키로 전환
-          if ([401, 403, 429].includes(response.status) && currentKeyIndex < apiKeys.length - 1) {
-            currentKeyIndex++;
-            currentApiKey = apiKeys[currentKeyIndex];
-            console.warn(`Gemini API 키 오류 (${response.status}), 다음 API 키로 전환합니다. (${currentKeyIndex + 1}/${apiKeys.length})`);
-            continue; // 재시도 카운트 증가 없이 즉시 다시 시도
-          }
-          throw new Error(`Gemini API Error: ${response.status}`);
-        }
-        
-        const result = await response.json();
-        content = result.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        
-        try {
-          // JSON 파싱 시도
-          parsedContent = LlmApi.robustJsonParse(content);
-          
-          // JSON 내의 모든 문자열 값이 한글인지 확인
-          let allKorean = true;
-          
-          if (LlmApi.checkKoreanInObject(parsedContent)) {
-            console.log(`한글 JSON 응답 성공 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${currentKeyIndex + 1}/${apiKeys.length})`);
-            return parsedContent;
-          }
-          
-          console.log(`JSON에 비한글 텍스트 포함, 재시도 중... (${retryCount + 1}/${maxRetries})`);
-        } catch (parseError) {
-          // JSON 파싱 실패 시 수정 시도
-          console.log(`JSON 파싱 실패, 수정 시도 중... (${retryCount + 1}/${maxRetries})`);
-          const fixPrompt = `다음 텍스트는 유효하지 않은 JSON입니다. 다른 설명 없이, 오직 유효한 JSON 객체만 반환하도록 수정해주세요. 모든 텍스트는 반드시 한국어로만 작성해야 합니다:\n\n${content}`;
-          const fixedContent = await LlmApi.callApiForText(fixPrompt);
-          
-          try {
-            parsedContent = LlmApi.robustJsonParse(fixedContent);
-            // 수정된 JSON도 한글인지 확인
-            if (LlmApi.checkKoreanInObject(parsedContent)) {
-              console.log(`수정된 한글 JSON 응답 성공 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${currentKeyIndex + 1}/${apiKeys.length})`);
-              return parsedContent;
-            }
-          } catch (e) {
-            console.error(`수정된 JSON도 파싱 실패 (시도: ${retryCount + 1}/${maxRetries})`);
-          }
-        }
-        
-        retryCount++;
-        // 잠시 대기 후 재시도
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error(`API 호출 오류 (시도: ${retryCount + 1}/${maxRetries}, API 키: ${currentKeyIndex + 1}/${apiKeys.length}):`, error);
-        
-        // 현재 키에서 오류 발생 시 다음 키로 전환 (마지막 키가 아닌 경우)
-        if (currentKeyIndex < apiKeys.length - 1) {
-          currentKeyIndex++;
-          currentApiKey = apiKeys[currentKeyIndex];
-          console.warn(`Gemini API 키 오류, 다음 API 키로 전환합니다. (${currentKeyIndex + 1}/${apiKeys.length})`);
-          // 키 전환 시에는 재시도 카운트를 증가시키지 않음
-          continue;
-        }
-        
-        retryCount++;
-        // 잠시 대기 후 재시도
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-    
-    // 최대 재시도 횟수를 초과한 경우, 마지막으로 받은 응답 반환
-    console.warn(`최대 재시도 횟수(${maxRetries})를 초과했습니다. 마지막 응답을 반환합니다.`);
-    
-    try {
-      return parsedContent;
-    } catch (e) {
-      // 마지막 시도로 기본 객체 반환
-      return { chatMessage: "[시스템 오류] 한글 응답을 받지 못했습니다.", choices: [] };
-    }
-  },
-  callApi: async (history, systemPrompt, setLoadingMessage) => {
-    // 메인 API 호출 함수 - 지정된 순서대로 LLM 서비스 시도
-    // 1. Groq LLM > MAIN_GROQ_API_KEY
-    // 2. Gorq LLM > SUBGROQ_API_KEY
-    // 3. GEMINI LLM > MAIN_GEMINI_API_KEY
-    // 4. GEMINI LLM > SUB_GEMINI_API_KEY
-    // 5. GEMINI LLM > THIRD_GEMINI_API_KEY
-    
-    const maxRetries = 5;
-    let delay = 1500;
-    let lastError = null;
-    let response = null;
+};
 
-    // 시스템 프롬프트에 한글 응답 요청 추가
-    const enhancedSystemPrompt = systemPrompt +
-      "\n\n중요: 모든 응답은 반드시 한국어로만 작성되어야 합니다. 영어나 다른 언어는 절대 포함하지 마세요.";
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        // 1-2. Groq API 시도 (내부적으로 MAIN_GROQ_API_KEY와 SUBGROQ_API_KEY를 순차적으로 시도)
-        setLoadingMessage(`응답을 기다리는 중... (시도 ${attempt}/${maxRetries})`);
-        console.log(`Groq API 호출 시도 중... (${attempt}/${maxRetries})`);
-        
-        try {
-          response = await LlmApi.callGroq(history, enhancedSystemPrompt);
-          // 응답이 성공적으로 반환되면 즉시 반환
-          console.log(`Groq API 호출 성공 (시도: ${attempt}/${maxRetries})`);
-          return response;
-        } catch (groqError) {
-          // Groq 실패 시 Gemini 시도
-          lastError = groqError;
-          console.error(`Groq API 완전 실패, Gemini로 전환 중... (${attempt}/${maxRetries}):`, groqError.message);
-          
-          // 3-5. Gemini API 시도 (내부적으로 세 개의 API 키를 순차적으로 시도)
-          setLoadingMessage(`다른 방법으로 시도 중... (시도 ${attempt}/${maxRetries})`);
-          console.log(`Gemini API 호출 시도 중... (${attempt}/${maxRetries})`);
-          
-          try {
-            response = await LlmApi.callGemini(history, enhancedSystemPrompt);
-            // 응답이 성공적으로 반환되면 즉시 반환
-            console.log(`Gemini API 호출 성공 (시도: ${attempt}/${maxRetries})`);
-            return response;
-          } catch (geminiError) {
-            lastError = geminiError;
-            console.error(`Gemini API 완전 실패 (시도: ${attempt}/${maxRetries}):`, geminiError.message);
-            // 모든 API 키가 실패한 경우 다음 시도로 넘어감
-          }
-        }
-      } catch (error) {
-        // 예상치 못한 오류 처리
-        lastError = error;
-        console.error(`예상치 못한 오류 발생 (시도: ${attempt}/${maxRetries}):`, error.message);
-      }
-
-      // 다음 시도 전 지수 백오프 대기
-      if (attempt < maxRetries) {
-        console.log(`재시도 대기 중... (${delay}ms)`);
-        await new Promise(res => setTimeout(res, delay *= 2));
-      }
-    }
-
-    // 모든 시도 실패 시 오류 메시지 반환
-    console.error(`모든 API 호출 시도 실패 (${maxRetries}회) - 모든 LLM 서비스와 API 키 조합이 실패했습니다.`);
-    return {
-      chatMessage: `[시스템 오류] 스토리 생성에 최종적으로 실패했습니다. (원인: ${lastError.message})`,
-      choices: []
-    };
+// [2-2] 초기 지도 데이터 정의: 게임 시작 시의 지도 상태입니다.
+const initialMapData = {
+  territories: {
+    'T1': { id: 'T1', name: '에라시아 수도', owner: '에라시아', army: 100, isCapital: true, x: 100, y: 150, neighbors: ['T2', 'T4'] },
+    'T2': { id: 'T2', name: '서부 해안', owner: '에라시아', army: 0, isCapital: false, x: 50, y: 100, neighbors: ['T1', 'T3'] },
+    'T3': { id: 'T3', name: '북부 산맥', owner: null, army: 10, isCapital: false, x: 150, y: 50, neighbors: ['T2', 'T5'] },
+    'T4': { id: 'T4', name: '중앙 평원', owner: null, army: 10, isCapital: false, x: 200, y: 150, neighbors: ['T1', 'T5', 'T6'] },
+    'T5': { id: 'T5', name: '브라카다 수도', owner: '브라카다', army: 80, isCapital: true, x: 250, y: 100, neighbors: ['T3', 'T4'] },
+    'T6': { id: 'T6', name: '아블리 수도', owner: '아블리', army: 150, isCapital: true, x: 250, y: 250, neighbors: ['T4'] },
   }
 };
 
-// Game Context
-const GameContext = createContext();
-const useGame = () => useContext(GameContext);
+// [2-3] AI 보좌관 성향 정의: 각 보좌관의 기본 성격과 야망입니다.
+const advisorPersonas = {
+  '국방': { name: "국방부 장관", persona: "당신은 '매파'이며, 군사적 해결책을 선호합니다.", ambition: '군사력 극대화' },
+  '재무': { name: "재무부 장관", persona: "당신은 신중한 '관료'이며, 경제적 안정성을 최우선으로 생각합니다.", ambition: '국고 최대화' },
+  '외교': { name: "외교부 장관", persona: "당신은 '비둘기파'이며, 대화와 협상을 선호합니다.", ambition: '모든 국가와 동맹' },
+  '정보': { name: "정보부 장관", persona: "당신은 '현실주의자'이며, 첩보와 공작을 선호합니다.", ambition: '정보망 장악' }
+};
+// END: Game Data Definitions
 
-// Game Provider Component
-const GameProvider = ({ children }) => {
-  const [playerStats, setPlayerStats] = useState({
-    info: { name: '용사', level: 1, wins: 0, losses: 0, lastDuelTitle: '신출내기' },
-    baseStats: { hp: 100, maxHp: 100, str: 10, int: 10 },
-    stats: { hp: 100, maxHp: 100, str: 10, int: 10 },
-    equipment: {
-      weapon: { name: '낡은 주먹', type: 'weapon', price: 0, effects: [{ stat: 'str', value: 1 }] },
-      armor: { name: '허름한 옷', type: 'armor', price: 0, effects: [{ stat: 'maxHp', value: 5 }] }
-    },
-    inventory: [{ name: '빨간 포션', quantity: 3, type: 'potion', price: 10, effects: [{ stat: 'hp', value: 20 }] }],
-    gold: 50,
-  });
-  const [gameLog, setGameLog] = useState([{ type: 'system', message: '오른쪽 메뉴 또는 하단 탭에서 행동을 선택하여 모험을 시작하세요.' }]);
-  const [choices, setChoices] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState("");
-  const [currentScenario, setCurrentScenario] = useState(null);
-  const [storyHistory, setStoryHistory] = useState([]);
-  const [activeTab, setActiveTab] = useState('game');
-  const [isDuelModalOpen, setIsDuelModalOpen] = useState(false);
-
-  const storyLogEndRef = useRef(null);
-  const playerId = "player01";
-
-  const recalculateStats = (currentStats) => {
-    const newStats = { ...currentStats.baseStats };
-    Object.values(currentStats.equipment).forEach(item => {
-      if (item && item.effects) {
-        item.effects.forEach(effect => {
-          newStats[effect.stat] = (newStats[effect.stat] || 0) + effect.value;
-        });
-      }
-    });
-    if (newStats.hp > newStats.maxHp) newStats.hp = newStats.maxHp;
-    return { ...currentStats, stats: newStats };
-  };
-
-  useEffect(() => {
-    const loadData = async () => {
-      if (!db) return;
-      setIsLoading(true);
-      const playerDocRef = doc(db, "players", playerId);
-      try {
-        const docSnap = await getDoc(playerDocRef);
-        if (docSnap.exists()) {
-          const loadedData = docSnap.data();
-          const initialStats = { ...playerStats, ...loadedData, info: { ...playerStats.info, ...loadedData.info }, baseStats: { ...playerStats.baseStats, ...loadedData.baseStats }, equipment: { ...playerStats.equipment, ...loadedData.equipment }, inventory: loadedData.inventory || playerStats.inventory };
-          setPlayerStats(recalculateStats(initialStats));
-        } else {
-          await saveData(recalculateStats(playerStats));
-        }
-      } catch (e) { console.error("Error loading data:", e); }
-      finally { setIsLoading(false); }
-    };
-    setTimeout(loadData, 500);
-  }, []);
-
-  const saveData = async (stats, id = playerId) => {
-    if (!db) return;
-    await setDoc(doc(db, "players", id), stats, { merge: true });
-  };
-
-  useEffect(() => {
-    storyLogEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [gameLog]);
-
-  const addToLog = (message, type = 'story') => {
-    setGameLog(prev => [...prev, { type, message }]);
-  };
-
-  const getSystemPrompt = () => `
-                당신은 한국어 전문 스토리텔러(GM)입니다. 당신은 플레이어의 선택에 따라 흥미진진한 상황과 2~3개의 선택지를 제시해야 합니다.
-                플레이어의 현재 상태: ${JSON.stringify(playerStats)}.
-                **매우 중요한 규칙:**
-                1.  선택지의 결과로 플레이어가 보상을 얻거나 잃을 수 있습니다. 보상은 'rewards' 객체를 사용하여 표현합니다.
-                2.  'rewards' 객체는 'gold'(골드), 'items'(아이템/장비), 'stats'(영구 능력치)를 포함할 수 있습니다.
-                3.  이야기의 흐름이 자연스럽게 끝나면, 선택지에 "endScenario": true 플래그를 포함해주세요.
-                4.  플레이어의 인벤토리에 있는 스토리 관련 아이템('type'이 'story'인 아이템)을 확인하고, 이를 스토리에 통합하세요.
-                5.  스토리 아이템을 사용하는 선택지를 제공할 때는 "useStoryItem": "아이템이름" 속성을 포함하세요.
-                6.  장착 아이템('type'이 'weapon' 또는 'armor')도 스토리에 반영하여 장비가 스토리에 영향을 주도록 하세요.
-                7.  모든 응답은 반드시 아래 예시와 같은 JSON 형식이어야 합니다.
-                **응답 JSON 형식 예시:**
-                {
-                  "chatMessage": "동굴 깊은 곳에서 반짝이는 보물 상자를 발견했습니다!",
-                  "choices": [
-                    {
-                      "text": "상자를 연다",
-                      "narration": "상자를 열자 눈부신 빛과 함께 강력한 검과 금화가 나타났습니다! 당신의 힘이 영구적으로 증가한 것 같습니다.",
-                      "rewards": {
-                        "gold": 100,
-                        "items": [{ "name": "빛나는 롱소드", "type": "weapon", "price": 200, "effects": [{"stat": "str", "value": 10}] }],
-                        "stats": [{"stat": "str", "value": 1}]
-                      },
-                      "endScenario": true
-                    },
-                    { "text": "함정일지 모르니 그냥 지나간다", "narration": "당신은 조심스럽게 상자를 지나쳤습니다.", "endScenario": true },
-                    {
-                      "text": "고대의 열쇠를 사용한다",
-                      "narration": "고대의 열쇠가 상자의 자물쇠에 완벽하게 들어맞습니다. 상자가 열리자 강력한 마법 지팡이가 나타났습니다!",
-                      "useStoryItem": "고대의 열쇠",
-                      "rewards": {
-                        "items": [{ "name": "마법사의 지팡이", "type": "weapon", "price": 300, "effects": [{"stat": "int", "value": 15}] }]
-                      }
-                    }
-                  ]
-                }
-                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요. 플레이어의 인벤토리에 있는 스토리 아이템과 장착 아이템을 확인하고, 이를 스토리에 자연스럽게 통합하세요.
-            `;
-
-  const getShopSystemPrompt = () => `
-                당신은 RPG 게임의 창의적이고 능숙한 상점 주인입니다. 당신은 플레이어의 현재 상태를 보고 그에게 흥미로운 물건을 '창작'하여 판매해야 합니다.
-                플레이어의 현재 상태: ${JSON.stringify(playerStats)}.
-                **매우 중요한 규칙:**
-                1.  당신은 플레이어에게 판매할 독창적인 아이템 4개를 '창작'해야 합니다.
-                2.  각 아이템은 반드시 'name', 'type', 'price', 'effects' 속성을 가져야 합니다.
-                3.  'effects'는 반드시 [{"stat": "능력치이름", "value": 숫자}] 형식의 배열이어야 합니다.
-                4.  아이템 타입은 다음 중 하나여야 합니다:
-                    - 'weapon': 무기 (장착 가능)
-                    - 'armor': 방어구 (장착 가능)
-                    - 'potion': 소모성 아이템 (사용 시 효과 발동)
-                    - 'story': 스토리 관련 아이템 (스토리 진행에 사용됨)
-                5.  'story' 타입 아이템은 특별한 아이템으로, 스토리 진행 중에 사용될 수 있습니다. 이 아이템은 'description' 속성을 추가로 가져야 합니다.
-                6.  플레이어의 소지 골드(${playerStats.gold}G)를 고려하여, 구매 가능한 아이템과 불가능한 아이템을 섞어서 제시하세요.
-                7.  당신의 모든 응답은 반드시, 예외 없이, 아래와 같은 JSON 형식이어야 합니다. 'choices' 배열은 절대 비워두면 안 됩니다.
-                **응답 JSON 형식 예시:**
-                {
-                  "chatMessage": "어서오게, 용사여! 내게는 아주 특별한 물건들이 있지. 한번 보겠나?",
-                  "choices": [
-                    { "type": "buy", "item": { "name": "번개가 깃든 강철 검", "type": "weapon", "price": 120, "effects": [{"stat": "str", "value": 8}, {"stat": "int", "value": 2}] } },
-                    { "type": "buy", "item": { "name": "트롤 가죽 갑옷", "type": "armor", "price": 75, "effects": [{"stat": "maxHp", "value": 30}] } },
-                    { "type": "buy", "item": { "name": "고대의 열쇠", "type": "story", "price": 50, "effects": [], "description": "오래된 던전의 비밀 문을 열 수 있는 신비한 열쇠입니다." } },
-                    { "type": "event", "text": "상점 주인의 모험담을 듣는다", "narration": "주인의 이야기에 감명받자, 그는 당신의 통찰력이 늘어났다며 기뻐했습니다.", "rewards": { "stats": [{"stat": "int", "value": 1}] }, "endScenario": false },
-                    { "type": "leave", "text": "상점을 나간다" }
-                  ]
-                }
-                **최종 지시:** 이제, 위 규칙과 형식을 완벽하게 준수하여 응답을 생성하세요. 반드시 'story' 타입의 아이템을 하나 이상 포함시키세요. 이 아이템은 스토리 진행에 중요한 역할을 할 수 있는 흥미로운 아이템이어야 합니다.
-            `;
-
-  const batchEnsureKorean = async (textsToTranslate) => {
-    const nonKoreanRegex = /[^가-힣ㄱ-ㅎㅏ-ㅣ\d\s.,?!()"'+-]/u;
-    const textsWithIndices = textsToTranslate.map((text, index) => ({ text, index, needsTranslation: nonKoreanRegex.test(text) }));
-    const toTranslate = textsWithIndices.filter(item => item.needsTranslation);
-
-    if (toTranslate.length === 0) return textsToTranslate;
-
-    const prompt = `다음 JSON 배열에 포함된 텍스트들을 자연스러운 한국어로 번역하고, 원래의 JSON 구조를 유지하여 응답해줘. 번역이 필요 없는 텍스트는 그대로 둬.:\n${JSON.stringify(toTranslate.map(t => t.text))}`;
-
-    try {
-      const translatedArrayStr = await LlmApi.callApiForText(prompt);
-      const translatedArray = JSON.parse(translatedArrayStr);
-
-      const finalTexts = [...textsToTranslate];
-      toTranslate.forEach((item, i) => {
-        finalTexts[item.index] = translatedArray[i] || item.text;
-      });
-      return finalTexts;
-    } catch (e) {
-      console.error("배치 번역 실패:", e);
-      return textsToTranslate;
-    }
-  };
-
-  const processLlmResponse = async (response) => {
-    if (!response || !response.chatMessage) {
-      addToLog(response.chatMessage || "[시스템 오류] 응답이 비어있습니다.", 'system');
-      setChoices([]);
-      return;
-    }
-
-    const texts = [response.chatMessage, ...(response.choices || []).map(c => c.text), ...(response.choices || []).map(c => c.narration).filter(Boolean)];
-    const translatedTexts = await batchEnsureKorean(texts);
-
-    const chatMessage = translatedTexts[0];
-    let choices = (response.choices || []).map((choice, index) => ({
-      ...choice,
-      text: translatedTexts[index + 1],
-      narration: choice.narration ? translatedTexts[index + 1 + (response.choices || []).length] : ""
-    }));
-
-    if (chatMessage) {
-      addToLog(chatMessage);
-      setStoryHistory(prev => [...prev, { role: 'assistant', content: chatMessage }]);
-    }
-
-    if (choices.length === 0) {
-      addToLog("[시스템] 다음 행동을 선택할 수 없습니다. 메뉴로 돌아갑니다.", 'system');
-      choices.push({ type: 'leave', text: '메뉴로 돌아가기', endScenario: true });
-    }
-    setChoices(choices);
-  };
-
-  const handleMenuAction = async (action) => {
-    if (action === '결투') { setIsDuelModalOpen(true); return; }
-    setIsLoading(true);
-    setChoices([]);
-    setStoryHistory([]);
-    setCurrentScenario(action);
-    setActiveTab('game');
-    addToLog(`[메뉴] ${action}(으)로 향합니다...`, 'action');
-    const isShop = action === '상점';
-    const systemPrompt = isShop ? getShopSystemPrompt() : getSystemPrompt();
-    const userPrompt = `플레이어가 '${action}'에 도착했습니다. 상황을 묘사하고 선택지를 제시해주세요.`;
-    const initialHistory = [{ role: 'user', content: userPrompt }];
-    setStoryHistory(initialHistory);
-    const response = await LlmApi.callApi(initialHistory, systemPrompt, setLoadingMessage);
-    await processLlmResponse(response);
-    setIsLoading(false);
-    setLoadingMessage("");
-  };
-
-  const addToInventory = (inventory, itemToAdd) => {
-    const existingItemIndex = inventory.findIndex(i => i.name === itemToAdd.name);
-    if (itemToAdd.type !== 'weapon' && itemToAdd.type !== 'armor' && existingItemIndex > -1) {
-      inventory[existingItemIndex].quantity = (inventory[existingItemIndex].quantity || 1) + 1;
-    } else {
-      inventory.push({ ...itemToAdd, quantity: 1 });
-    }
-    return [...inventory];
-  };
-
-  const handleChoiceAction = async (choice) => {
-    setIsLoading(true);
-    setChoices([]);
-
-    let newStats = JSON.parse(JSON.stringify(playerStats));
-    let shouldRecalculate = false;
-
-    // 스토리 아이템 사용 처리
-    if (choice.useStoryItem) {
-      const itemName = choice.useStoryItem;
-      const itemIndex = newStats.inventory.findIndex(item => item.name === itemName && item.type === 'story');
-      
-      if (itemIndex === -1) {
-        addToLog(`[오류] ${itemName}을(를) 찾을 수 없습니다.`, 'system');
-        setIsLoading(false);
-        setChoices(choices);
-        return;
-      }
-      
-      // 아이템 사용 로그 추가
-      addToLog(`${itemName}을(를) 사용했습니다.`, 'system');
-      
-      // 아이템 제거 (수량이 1 이상이면 감소, 아니면 제거)
-      if (newStats.inventory[itemIndex].quantity > 1) {
-        newStats.inventory[itemIndex].quantity -= 1;
-      } else {
-        newStats.inventory.splice(itemIndex, 1);
-      }
-    }
-
-    if (choice.type === 'buy') {
-      const item = choice.item;
-      if (newStats.gold >= item.price) {
-        newStats.gold -= item.price;
-        if (item.type === 'weapon' || item.type === 'armor') {
-          const oldItem = newStats.equipment[item.type];
-          if (oldItem) newStats.inventory = addToInventory(newStats.inventory, oldItem);
-          newStats.equipment[item.type] = item;
-          addToLog(`${item.name}을(를) 장착했습니다.`, 'system');
-        } else {
-          newStats.inventory = addToInventory(newStats.inventory, item);
-          addToLog(`${item.name}을(를) 구매했습니다.`, 'system');
-        }
-        shouldRecalculate = true;
-      } else {
-        addToLog("골드가 부족합니다.", 'system');
-        setIsLoading(false);
-        setChoices(choices);
-        return;
-      }
-    }
-
-    const logText = choice.text || `${choice.item?.name || ''} 구매`;
-    addToLog(`> ${logText}`, 'choice');
-    if (choice.narration) addToLog(choice.narration);
-
-    const rewards = choice.rewards || {};
-    if (choice.updates) {
-      rewards.stats = rewards.stats ? [...rewards.stats, ...choice.updates] : choice.updates;
-    }
-
-    if (rewards.gold) {
-      newStats.gold += rewards.gold;
-      addToLog(`${rewards.gold} 골드를 획득했습니다!`, 'system');
-    }
-    if (rewards.items) {
-      rewards.items.forEach(item => {
-        newStats.inventory = addToInventory(newStats.inventory, item);
-        addToLog(`[획득] ${item.name}`, 'system');
-      });
-    }
-    if (rewards.stats) {
-      rewards.stats.forEach(statUpdate => {
-        if (Object.prototype.hasOwnProperty.call(newStats.baseStats, statUpdate.stat)) {
-          newStats.baseStats[statUpdate.stat] += statUpdate.value;
-          shouldRecalculate = true;
-        } else if (Object.prototype.hasOwnProperty.call(newStats.stats, statUpdate.stat)) {
-          newStats.stats[statUpdate.stat] += statUpdate.value;
-        }
-        addToLog(`능력치 ${statUpdate.stat}이(가) ${statUpdate.value}만큼 변화했습니다!`, 'system');
-      });
-    }
-
-    if(shouldRecalculate) {
-      newStats = recalculateStats(newStats);
-    }
-    setPlayerStats(newStats);
-    await saveData(newStats);
-
-    if (choice.endScenario || choice.type === 'buy' || choice.type === 'leave') {
-      setCurrentScenario(null);
-      setStoryHistory([]);
-      if(choice.type !== 'leave' && !choice.endScenario) addToLog("상점 주인이 고개를 끄덕입니다.", 'story');
-      addToLog("다음엔 무엇을 할까요?", "system");
-    } else {
-      const userPrompt = `플레이어는 방금 "${choice.text}"을(를) 선택했습니다. 이어서 스토리를 진행하고 다음 선택지들을 제시해주세요.`;
-      const newHistory = [...storyHistory, { role: 'user', content: userPrompt }];
-      const systemPrompt = currentScenario === '상점' ? getShopSystemPrompt() : getSystemPrompt();
-      const response = await LlmApi.callApi(newHistory, systemPrompt, setLoadingMessage);
-      await processLlmResponse(response);
-    }
-
-    setIsLoading(false);
-    setLoadingMessage("");
+// START: MapView Component
+// [3] MapView 컴포넌트: SVG를 사용한 지도 시각화
+function MapView({ mapData, nations }) {
+  const getColorForOwner = (owner) => {
+    if (!owner) return '#cccccc';
+    const colors = { '에라시아': '#ff6b6b', '브라카다': '#4ecdc4', '아블리': '#45b7d1' };
+    return colors[owner] || '#cccccc';
   };
 
   return (
-    <GameContext.Provider value={{ playerStats, setPlayerStats, saveData, gameLog, choices, isLoading, loadingMessage, handleMenuAction, handleChoiceAction, storyLogEndRef, activeTab, setActiveTab, isDuelModalOpen, setIsDuelModalOpen, currentScenario, addToLog, recalculateStats, playerId }}>
-      {children}
-    </GameContext.Provider>
-  );
-};
-
-GameProvider.propTypes = {
-  children: PropTypes.node.isRequired
-};
-
-// UI Components
-// Item Modal Component
-const ItemModal = ({ item, onClose, onUse, onEquip, onUnequip }) => {
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md flex flex-col">
-        <h2 className="text-2xl font-bold text-purple-400 mb-2">{item.name}</h2>
-        <div className="mb-4">
-          <p className="text-gray-300 mb-2">
-            <span className="font-semibold">종류:</span> {
-              item.type === 'weapon' ? '무기' : 
-              item.type === 'armor' ? '방어구' : 
-              item.type === 'story' ? '스토리 아이템' : 
-              '소모품'
-            }
-          </p>
-          {item.quantity > 1 && (
-            <p className="text-gray-300 mb-2">
-              <span className="font-semibold">수량:</span> {item.quantity}
-            </p>
-          )}
-          <p className="text-gray-300 mb-2">
-            <span className="font-semibold">가치:</span> {item.price} G
-          </p>
-          <div className="text-gray-300 mb-2">
-            <span className="font-semibold">효과:</span>
-            <ul className="ml-4">
-              {item.effects.map((effect, index) => (
-                <li key={index}>
-                  {effect.stat === 'str' ? '힘' : 
-                   effect.stat === 'int' ? '지능' : 
-                   effect.stat === 'hp' ? '체력' : 
-                   effect.stat === 'maxHp' ? '최대 체력' : 
-                   effect.stat} +{effect.value}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <p className="text-gray-300 mt-4 italic">
-            {item.description || `${item.name}은(는) ${item.type === 'weapon' ? '적에게 피해를 줄 수 있는 무기입니다.' : 
-                                                     item.type === 'armor' ? '당신을 보호해주는 방어구입니다.' : 
-                                                     '사용하면 특별한 효과를 발휘하는 아이템입니다.'}`}
-          </p>
-        </div>
-        <div className="flex flex-col space-y-2">
-          {item.type === 'weapon' || item.type === 'armor' ? (
-            <button 
-              onClick={onEquip} 
-              className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-            >
-              장착하기
-            </button>
-          ) : item.type === 'story' ? (
-            <button 
-              onClick={onUse} 
-              className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded"
-            >
-              스토리에서 사용하기
-            </button>
-          ) : (
-            <button 
-              onClick={onUse} 
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-            >
-              사용하기
-            </button>
-          )}
-          {(item.type === 'weapon' || item.type === 'armor') && (
-            <button 
-              onClick={onUnequip} 
-              className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
-            >
-              장착 해제
-            </button>
-          )}
-          <button 
-            onClick={onClose} 
-            className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
-          >
-            닫기
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// PropTypes for ItemModal
-ItemModal.propTypes = {
-  item: PropTypes.shape({
-    name: PropTypes.string.isRequired,
-    type: PropTypes.string.isRequired,
-    price: PropTypes.number.isRequired,
-    quantity: PropTypes.number,
-    effects: PropTypes.arrayOf(
-      PropTypes.shape({
-        stat: PropTypes.string.isRequired,
-        value: PropTypes.number.isRequired
-      })
-    ).isRequired,
-    description: PropTypes.string
-  }).isRequired,
-  onClose: PropTypes.func.isRequired,
-  onUse: PropTypes.func.isRequired,
-  onEquip: PropTypes.func.isRequired,
-  onUnequip: PropTypes.func.isRequired
-};
-
-const StatusWindow = () => {
-  const { playerStats, setPlayerStats, saveData, addToLog, recalculateStats } = useGame();
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [newName, setNewName] = useState(playerStats.info.name);
-  const [selectedItem, setSelectedItem] = useState(null);
-  
-  const statTranslations = { hp: '체력', maxHp: '최대 체력', str: '힘', int: '지능' };
-  
-  const handleSaveName = () => {
-    if (newName.trim() === '') return;
-    
-    const updatedStats = {
-      ...playerStats,
-      info: {
-        ...playerStats.info,
-        name: newName.trim()
-      }
-    };
-    
-    setPlayerStats(updatedStats);
-    saveData(updatedStats);
-    setIsEditingName(false);
-  };
-
-  const handleItemClick = (item) => {
-    setSelectedItem(item);
-  };
-
-  const handleCloseItemModal = () => {
-    setSelectedItem(null);
-  };
-
-  const handleUseItem = async () => {
-    if (!selectedItem) return;
-
-    // 스토리 아이템 처리
-    if (selectedItem.type === 'story') {
-      addToLog(`${selectedItem.name}은(는) 스토리 진행 중에만 사용할 수 있는 아이템입니다.`, 'system');
-      addToLog(`모험을 계속하면서 적절한 상황에서 사용할 수 있을 것입니다.`, 'story');
-      setSelectedItem(null);
-      return;
-    }
-
-    // 아이템 사용 로직
-    const newStats = JSON.parse(JSON.stringify(playerStats));
-    let itemUsed = false;
-
-    // 아이템 효과 적용
-    if (selectedItem.effects) {
-      selectedItem.effects.forEach(effect => {
-        if (effect.stat === 'hp') {
-          newStats.stats.hp = Math.min(newStats.stats.hp + effect.value, newStats.stats.maxHp);
-          itemUsed = true;
-        } else if (['str', 'int', 'maxHp'].includes(effect.stat)) {
-          // 다른 스탯(힘, 지능, 최대 체력 등) 효과 적용
-          newStats.stats[effect.stat] += effect.value;
-          itemUsed = true;
-        }
-      });
-    }
-
-    // 아이템 수량 감소
-    if (itemUsed) {
-      const itemIndex = newStats.inventory.findIndex(i => i.name === selectedItem.name);
-      if (itemIndex > -1) {
-        if (newStats.inventory[itemIndex].quantity > 1) {
-          newStats.inventory[itemIndex].quantity -= 1;
-        } else {
-          newStats.inventory.splice(itemIndex, 1);
-        }
-      }
-
-      // 아이템 사용 로그 추가
-      addToLog(`${selectedItem.name}을(를) 사용했습니다.`, 'system');
-
-      // LLM에 아이템 사용 정보 전달
-      const itemUsePrompt = `플레이어가 ${selectedItem.name}을(를) 사용했습니다. 이 아이템은 ${selectedItem.effects.map(e => {
-        const statName = statTranslations[e.stat] || e.stat;
-        const action = e.stat === 'hp' ? '회복시킵니다' : '증가시킵니다';
-        return `${statName}을(를) ${e.value} ${action}`;
-      }).join(', ')}. 이 상황을 간략하게 묘사해주세요.`;
-      
-      // LLM 호출 및 응답 처리
-      let itemUseDescription = "";
-      try {
-        // LLM API 호출 시도
-        itemUseDescription = await LlmApi.callApiForText(itemUsePrompt);
-        
-        // 응답이 비어있는지 확인
-        if (!itemUseDescription || itemUseDescription.trim() === '') {
-          throw new Error("빈 응답이 반환되었습니다");
-        }
-        
-        // 응답을 스토리 로그에 추가
-        addToLog(itemUseDescription, 'story');
-      } catch (error) {
-        console.error("아이템 사용 설명 생성 오류:", error);
-        // 사용자에게 오류 메시지 표시
-        addToLog(`[시스템] 아이템 사용 효과를 설명하는 중 오류가 발생했습니다: ${error.message || "알 수 없는 오류"}`, 'system');
-        
-        // 기본 메시지 추가 (아이템 효과에 따라 다른 메시지 표시)
-        const mainEffect = selectedItem.effects[0]; // 첫 번째 효과 사용
-        if (mainEffect) {
-          const statName = statTranslations[mainEffect.stat] || mainEffect.stat;
-          const action = mainEffect.stat === 'hp' ? '회복되었습니다' : '증가되었습니다';
-          addToLog(`${selectedItem.name}의 효과로 ${statName}이(가) ${action}.`, 'story');
-        } else {
-          addToLog(`${selectedItem.name}을(를) 사용했습니다.`, 'story');
-        }
-      }
-
-      // 플레이어 상태 업데이트 및 저장
-      setPlayerStats(newStats);
-      saveData(newStats);
-      
-      // 상태 변화 로그 추가 - 모든 스탯 변화 표시
-      selectedItem.effects.forEach(effect => {
-        const statName = statTranslations[effect.stat] || effect.stat;
-        const oldValue = effect.stat === 'hp' ? playerStats.stats.hp : playerStats.stats[effect.stat] || 0;
-        const newValue = effect.stat === 'hp' 
-          ? Math.min(newStats.stats.hp, newStats.stats.maxHp) 
-          : newStats.stats[effect.stat] || 0;
-        
-        if (effect.value > 0) {
-          const action = effect.stat === 'hp' ? '회복되었습니다' : '증가되었습니다';
-          addToLog(`${statName}이(가) ${effect.value} ${action}. (${oldValue} → ${newValue})`, 'system');
-        }
-      });
-    }
-
-    setSelectedItem(null);
-  };
-
-  const handleEquipItem = () => {
-    if (!selectedItem || (selectedItem.type !== 'weapon' && selectedItem.type !== 'armor')) return;
-
-    const newStats = JSON.parse(JSON.stringify(playerStats));
-    
-    // 현재 장착된 아이템 인벤토리로 이동
-    const currentEquipment = newStats.equipment[selectedItem.type];
-    if (currentEquipment && currentEquipment.name) {
-      const existingItemIndex = newStats.inventory.findIndex(i => i.name === currentEquipment.name);
-      if (existingItemIndex > -1) {
-        newStats.inventory[existingItemIndex].quantity = (newStats.inventory[existingItemIndex].quantity || 1) + 1;
-      } else {
-        newStats.inventory.push({ ...currentEquipment, quantity: 1 });
-      }
-    }
-    
-    // 새 아이템 장착
-    newStats.equipment[selectedItem.type] = { ...selectedItem };
-    
-    // 인벤토리에서 아이템 제거
-    const itemIndex = newStats.inventory.findIndex(i => i.name === selectedItem.name);
-    if (itemIndex > -1) {
-      if (newStats.inventory[itemIndex].quantity > 1) {
-        newStats.inventory[itemIndex].quantity -= 1;
-      } else {
-        newStats.inventory.splice(itemIndex, 1);
-      }
-    }
-    
-    // 능력치 재계산
-    const recalculatedStats = recalculateStats(newStats);
-    
-    addToLog(`${selectedItem.name}을(를) 장착했습니다.`, 'system');
-    setPlayerStats(recalculatedStats);
-    saveData(recalculatedStats);
-    setSelectedItem(null);
-  };
-
-  const handleUnequipItem = () => {
-    if (!selectedItem || (selectedItem.type !== 'weapon' && selectedItem.type !== 'armor')) return;
-
-    const newStats = JSON.parse(JSON.stringify(playerStats));
-    
-    // 장착된 아이템 확인
-    const currentEquipment = newStats.equipment[selectedItem.type];
-    if (!currentEquipment || currentEquipment.name !== selectedItem.name) {
-      addToLog(`${selectedItem.name}은(는) 현재 장착되어 있지 않습니다.`, 'system');
-      setSelectedItem(null);
-      return;
-    }
-    
-    // 장착 해제된 아이템을 인벤토리로 이동
-    const existingItemIndex = newStats.inventory.findIndex(i => i.name === currentEquipment.name);
-    if (existingItemIndex > -1) {
-      newStats.inventory[existingItemIndex].quantity = (newStats.inventory[existingItemIndex].quantity || 1) + 1;
-    } else {
-      newStats.inventory.push({ ...currentEquipment, quantity: 1 });
-    }
-    
-    // 기본 장비로 대체
-    if (selectedItem.type === 'weapon') {
-      newStats.equipment.weapon = { name: '낡은 주먹', type: 'weapon', price: 0, effects: [{ stat: 'str', value: 1 }] };
-    } else {
-      newStats.equipment.armor = { name: '허름한 옷', type: 'armor', price: 0, effects: [{ stat: 'maxHp', value: 5 }] };
-    }
-    
-    // 능력치 재계산
-    const recalculatedStats = recalculateStats(newStats);
-    
-    addToLog(`${selectedItem.name}을(를) 장착 해제했습니다.`, 'system');
-    setPlayerStats(recalculatedStats);
-    saveData(recalculatedStats);
-    setSelectedItem(null);
-  };
-  
-  const renderSection = (title, data, renderItem) => (
-    <div className="mb-4">
-      <h4 className="text-lg font-semibold text-purple-300 border-b border-gray-700 pb-1 mb-2">{title}</h4>
-      <ul className="space-y-1 text-sm text-gray-300">{data.map(renderItem)}</ul>
-    </div>
-  );
-  
-  return (
-    <div className="bg-gray-800 p-4 rounded-lg h-full flex flex-col">
-      <h3 className="text-xl font-bold text-purple-400 border-b border-gray-600 pb-2 mb-4 flex-shrink-0">내 정보</h3>
-      <div className="flex-grow overflow-y-auto pr-2">
-        {renderSection("기본 정보", Object.entries(playerStats.info), ([key, value]) => {
-          const keyMap = { name: '이름', level: '레벨', wins: '승리', losses: '패배', lastDuelTitle: '칭호' };
-          
-          if (key === 'name') {
-            return (
-              <li key={key} className="flex justify-between items-center">
-                <span>{keyMap[key] || key}:</span>
-                {isEditingName ? (
-                  <div className="flex items-center">
-                    <input
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      className="bg-gray-700 text-white px-2 py-1 rounded mr-2 text-sm"
-                      autoFocus
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '10px', backgroundColor: '#f0f0f0' }}>
+        <h3 style={{ textAlign: 'center', marginBottom: '10px' }}>세계 지도</h3>
+        <svg width="350" height="300" style={{ border: '1px solid #999', backgroundColor: '#e8f4f8' }}>
+          {/* 연결선 먼저 그리기 (영토 뒤에 표시되도록) */}
+          {Object.values(mapData.territories).map(territory =>
+              territory.neighbors.map(neighborId => {
+                const neighbor = mapData.territories[neighborId];
+                if (!neighbor || territory.id > neighborId) return null; // 중복 방지
+                return (
+                    <line
+                        key={`${territory.id}-${neighborId}`}
+                        x1={territory.x}
+                        y1={territory.y}
+                        x2={neighbor.x}
+                        y2={neighbor.y}
+                        stroke="#666"
+                        strokeWidth="1"
+                        strokeDasharray="3,3"
                     />
-                    <button
-                      onClick={handleSaveName}
-                      className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs"
-                    >
-                      저장
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center">
-                    <span className="text-right mr-2">{value}</span>
-                    <button
-                      onClick={() => setIsEditingName(true)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs"
-                    >
-                      수정
-                    </button>
-                  </div>
+                );
+              })
+          )}
+
+          {/* 영토 원형 그리기 */}
+          {Object.values(mapData.territories).map(territory => (
+              <g key={territory.id}>
+                <circle
+                    cx={territory.x}
+                    cy={territory.y}
+                    r="25"
+                    fill={getColorForOwner(territory.owner)}
+                    stroke="#333"
+                    strokeWidth="2"
+                />
+                {territory.isCapital && (
+                    <circle
+                        cx={territory.x}
+                        cy={territory.y}
+                        r="30"
+                        fill="none"
+                        stroke="#ffd700"
+                        strokeWidth="3"
+                    />
                 )}
-              </li>
-            );
-          }
-          
-          return (<li key={key} className="flex justify-between"><span>{keyMap[key] || key}:</span> <span className="text-right">{value}</span></li>);
-        })}
-        {renderSection("능력치", Object.entries(playerStats.stats).filter(([key]) => key !== 'maxHp'), ([key, value]) => (<li key={key} className="flex justify-between"><span>{statTranslations[key] || key}:</span> <span>{value}{key === 'hp' ? ` / ${playerStats.stats.maxHp}` : ''}</span></li>))}
-        {renderSection("장비", Object.entries(playerStats.equipment), ([key, item]) => (
-          <li key={key} className="flex justify-between">
-            <span>{key === 'weapon' ? '무기' : '방어구'}:</span> 
-            <button 
-              className="text-right text-blue-400 hover:underline"
-              onClick={() => handleItemClick(item)}
-            >
-              {item.name}
-            </button>
-          </li>
-        ))}
-        {renderSection("소지품", playerStats.inventory, (item, i) => (
-          <li key={i} className="flex justify-between">
-            <button 
-              className="text-left text-blue-400 hover:underline"
-              onClick={() => handleItemClick(item)}
-            >
-              {item.name}
-            </button> 
-            <span>x{item.quantity}</span>
-          </li>
-        ))}
-        <div className="flex justify-between font-bold text-yellow-400 mt-4"><span>골드:</span> <span>{playerStats.gold} G</span></div>
-      </div>
-      
-      {selectedItem && (
-        <ItemModal 
-          item={selectedItem} 
-          onClose={handleCloseItemModal}
-          onUse={handleUseItem}
-          onEquip={handleEquipItem}
-          onUnequip={handleUnequipItem}
-        />
-      )}
-    </div>
-  );
-};
-
-const StoryWindow = () => {
-  const { gameLog, storyLogEndRef, isLoading, loadingMessage } = useGame();
-  const logColor = { story: "text-gray-200", system: "text-yellow-400 italic", action: "text-green-400 font-semibold", choice: "text-blue-400" };
-  return (
-    <div className="bg-gray-800 p-4 rounded-lg h-full flex flex-col">
-      <h3 className="text-xl font-bold text-green-400 border-b border-gray-600 pb-2 mb-4 flex-shrink-0">스토리</h3>
-      <div className="flex-grow overflow-y-auto pr-2">
-        {gameLog.map((log, i) => <p key={i} className={`mb-2 ${logColor[log.type]}`}>{log.message}</p>)}
-        {isLoading && <p className="text-cyan-400 animate-pulse">{loadingMessage || '이야기를 생성하는 중...'}</p>}
-        <div ref={storyLogEndRef} />
-      </div>
-    </div>
-  );
-};
-
-const MenuWindow = () => {
-  const { handleMenuAction, isLoading } = useGame();
-  return (
-    <div className="bg-gray-800 p-4 rounded-lg h-full flex flex-col">
-      <h3 className="text-xl font-bold text-blue-400 border-b border-gray-600 pb-2 mb-4 flex-shrink-0">메뉴</h3>
-      <div className="flex flex-col space-y-2">
-        {['여관', '상점', '던전', '결투'].map(item => (
-          <button 
-            key={item} 
-            onClick={() => handleMenuAction(item)} 
-            disabled={isLoading} 
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded transition-colors duration-200"
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const ChoiceWindow = () => {
-  const { choices, handleChoiceAction, isLoading, currentScenario, playerStats } = useGame();
-  return (
-    <div className="bg-gray-800 p-4 rounded-lg h-full flex flex-col">
-      <h3 className="text-xl font-bold text-red-400 border-b border-gray-600 pb-2 mb-4 flex-shrink-0">선택지</h3>
-      <div className="flex-grow overflow-y-auto pr-2">
-        {choices.length === 0 ? (
-          <p className="text-gray-500">...</p>
-        ) : (
-          <div className="flex flex-col space-y-2">
-            {choices.map((choice, i) => {
-              const isShopItem = currentScenario === '상점' && choice.type === 'buy';
-              const canAfford = isShopItem ? playerStats.gold >= choice.item.price : true;
-              return (
-                <button 
-                  key={i} 
-                  onClick={() => handleChoiceAction(choice)} 
-                  disabled={isLoading || !canAfford} 
-                  className={`text-white font-bold py-2 px-4 rounded transition-colors duration-200 text-left ${!canAfford ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+                <text
+                    x={territory.x}
+                    y={territory.y - 35}
+                    textAnchor="middle"
+                    fontSize="12"
+                    fontWeight="bold"
+                    fill="#333"
                 >
-                  {isShopItem ? `${choice.item.name} (${choice.item.price}G)` : choice.text}
-                  {isShopItem && !canAfford && <span className="text-xs ml-2">(골드 부족)</span>}
-                </button>
-              );
-            })}
-          </div>
+                  {territory.name}
+                </text>
+                <text
+                    x={territory.x}
+                    y={territory.y + 5}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fill="#000"
+                >
+                  {territory.army}
+                </text>
+              </g>
+          ))}
+        </svg>
+
+        {/* 범례 */}
+        <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center', gap: '15px' }}>
+          {Object.entries(nations).map(([name, nation]) => (
+              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div
+                    style={{
+                      width: '15px',
+                      height: '15px',
+                      backgroundColor: getColorForOwner(name),
+                      border: '1px solid #333',
+                      borderRadius: '50%'
+                    }}
+                />
+                <span style={{ fontSize: '12px' }}>{name}</span>
+              </div>
+          ))}
+        </div>
+      </div>
+  );
+}
+// Define PropTypes for MapView component
+MapView.propTypes = {
+  mapData: PropTypes.shape({
+    territories: PropTypes.objectOf(PropTypes.shape({
+      id: PropTypes.string,
+      name: PropTypes.string,
+      owner: PropTypes.string,
+      army: PropTypes.number,
+      isCapital: PropTypes.bool,
+      x: PropTypes.number,
+      y: PropTypes.number,
+      neighbors: PropTypes.arrayOf(PropTypes.string)
+    }))
+  }).isRequired,
+  nations: PropTypes.objectOf(PropTypes.object).isRequired
+};
+
+// END: MapView Component
+
+// START: TurnControls Component
+// [4] TurnControls 컴포넌트: 턴 진행 상태와 제어
+function TurnControls({ gameData, currentPlayer, onEndTurn }) {
+  const activePlayers = gameData.players.filter(p => p.status === 'playing');
+  const readyPlayers = activePlayers.filter(p => p.isTurnReady);
+
+  return (
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', marginBottom: '10px', backgroundColor: '#f9f9f9' }}>
+        <h3>턴 {gameData.turn} 진행 상황</h3>
+        <p>준비 완료: {readyPlayers.length}/{activePlayers.length} 플레이어</p>
+
+        <div style={{ marginBottom: '10px' }}>
+          {activePlayers.map(player => (
+              <div key={player.uid} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '5px',
+                backgroundColor: player.isTurnReady ? '#c8e6c9' : '#ffcdd2',
+                marginBottom: '2px',
+                borderRadius: '4px'
+              }}>
+                <span>{player.name} ({player.nation})</span>
+                <span>{player.isTurnReady ? '✓ 준비 완료' : '대기 중...'}</span>
+              </div>
+          ))}
+        </div>
+
+        {currentPlayer && !currentPlayer.isTurnReady && (
+            <button
+                onClick={onEndTurn}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  backgroundColor: '#4CAF50',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+            >
+              턴 종료
+            </button>
         )}
       </div>
-    </div>
   );
+}
+// Define PropTypes for TurnControls component
+TurnControls.propTypes = {
+  gameData: PropTypes.shape({
+    turn: PropTypes.number.isRequired,
+    players: PropTypes.arrayOf(PropTypes.shape({
+      status: PropTypes.string,
+      isTurnReady: PropTypes.bool
+    })).isRequired
+  }).isRequired,
+  currentPlayer: PropTypes.shape({
+    isTurnReady: PropTypes.bool
+  }),
+  onEndTurn: PropTypes.func.isRequired
 };
 
-const DuelModal = () => {
-  const { playerStats, setPlayerStats, saveData, setIsDuelModalOpen, playerId, addToLog } = useGame();
-  const [opponents, setOpponents] = useState([]);
-  const [selectedOpponent, setSelectedOpponent] = useState(null);
-  const [duelLog, setDuelLog] = useState([]);
-  const [playerHp, setPlayerHp] = useState(0);
-  const [opponentHp, setOpponentHp] = useState(0);
-  const [isFighting, setIsFighting] = useState(false);
-  const [isDuelOver, setIsDuelOver] = useState(false);
-  const [duelResult, setDuelResult] = useState("");
-  const [playerAction, setPlayerAction] = useState(null);
-  const [opponentAction, setOpponentAction] = useState(null);
-  const [duelId, setDuelId] = useState(null);
-  const [isWaitingForOpponent, setIsWaitingForOpponent] = useState(false);
+// END: TurnControls Component
 
-  useEffect(() => {
-    const fetchOpponents = async () => {
-      const querySnapshot = await getDocs(collection(db, "players"));
-      const playersList = querySnapshot.docs
-        .map(doc => ({ 
-          id: doc.id, 
-          ...doc.data(),
-          isAI: doc.id === "player01" // 자기 자신과의 결투는 AI로 처리
-        }))
-        .filter(player => player.id !== playerId); // 자기 자신은 제외
-      
-      // AI 상대 추가 (실제 DB에 저장되지 않는 가상의 상대)
-      const aiOpponents = [
-        {
-          id: "ai_opponent_1",
-          isAI: true,
-          info: { name: "연습용 허수아비", level: 1, wins: 0, losses: 0 },
-          stats: { hp: 80, maxHp: 80, str: 8, int: 5 },
-          baseStats: { hp: 80, maxHp: 80, str: 8, int: 5 },
-          equipment: {},
-          inventory: []
-        }
-      ];
-      
-      setOpponents([...playersList, ...aiOpponents]);
-    };
-    fetchOpponents();
-  }, []);
+// START: Dashboard Component
+// [5] Dashboard 컴포넌트: 국가 현황 표시
+function Dashboard({ myNation, gameData }) {
+  if (!myNation) return <div>국가를 선택해주세요.</div>;
 
-  const startDuel = async (opponent) => {
-    setSelectedOpponent(opponent);
-    setPlayerHp(playerStats.stats.hp);
-    setOpponentHp(opponent.stats.hp);
-    setIsFighting(true);
-    
-    // 결투 시작 메시지를 설정
-    setDuelLog([`'${opponent.info.name}'(와)과의 결투가 시작되었습니다! 행동을 선택하세요.`]);
-    
-    // AI 상대가 아닌 경우 실시간 결투 문서 생성
-    if (!opponent.isAI) {
-      try {
-        // 결투 문서 생성
-        const duelRef = doc(collection(db, "duels"));
-        const duelData = {
-          player1: {
-            id: playerId,
-            name: playerStats.info.name,
-            hp: playerStats.stats.hp,
-            maxHp: playerStats.stats.hp,
-            action: null
-          },
-          player2: {
-            id: opponent.id,
-            name: opponent.info.name,
-            hp: opponent.stats.hp,
-            maxHp: opponent.stats.hp,
-            action: null
-          },
-          status: "in_progress",
-          createdAt: new Date(),
-          log: [`'${opponent.info.name}'(와)과의 결투가 시작되었습니다! 행동을 선택하세요.`]
-        };
-        
-        await setDoc(duelRef, duelData);
-        setDuelId(duelRef.id);
-        
-        // 결투 문서 변경 감지 리스너 설정
-        const unsubscribe = onSnapshot(duelRef, (docSnapshot) => {
-          if (docSnapshot.exists()) {
-            const duelData = docSnapshot.data();
-            
-            // 상대방이 행동을 선택했는지 확인
-            const isPlayer1 = playerId === duelData.player1.id;
-            const player = isPlayer1 ? duelData.player1 : duelData.player2;
-            const opponent = isPlayer1 ? duelData.player2 : duelData.player1;
-            
-            // 로그 업데이트
-            if (duelData.log && duelData.log.length > 0) {
-              setDuelLog(duelData.log);
-            }
-            
-            // HP 업데이트
-            if (isPlayer1) {
-              setPlayerHp(duelData.player1.hp);
-              setOpponentHp(duelData.player2.hp);
-            } else {
-              setPlayerHp(duelData.player2.hp);
-              setOpponentHp(duelData.player1.hp);
-            }
-            
-            // 상대방이 행동을 선택했고, 자신도 행동을 선택한 경우 결투 진행
-            if (player.action && opponent.action) {
-              // 결투 진행 로직은 handleAction에서 처리
-            } else if (opponent.action && !player.action) {
-              // 상대방은 선택했지만 자신은 아직 선택하지 않은 경우
-              setIsWaitingForOpponent(false);
-            }
-            
-            // 결투가 종료된 경우
-            if (duelData.status === "completed") {
-              setIsFighting(false);
-              setIsDuelOver(true);
-              setDuelResult(duelData.result || "결투가 종료되었습니다.");
-            }
-          }
-        });
-        
-        // 컴포넌트 언마운트 시 리스너 해제
-        return () => unsubscribe();
-      } catch (error) {
-        console.error("실시간 결투 설정 오류:", error);
-        addToLog("실시간 결투 설정 중 오류가 발생했습니다.", "system");
-      }
-    }
-  };
+  const territories = Object.values(gameData.map.territories).filter(t => t.owner === myNation.name);
+  const totalArmy = territories.reduce((sum, t) => sum + t.army, 0);
 
-  const handleAction = async (playerAction) => {
-    // 플레이어 행동 저장
-    setPlayerAction(playerAction);
+  return (
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', marginBottom: '10px', backgroundColor: '#f0f8ff' }}>
+        <h3>{myNation.name} 대시보드</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <div>
+            <strong>자원:</strong> {myNation.resources}
+          </div>
+          <div>
+            <strong>안정도:</strong> {myNation.stability}%
+          </div>
+          <div>
+            <strong>영토:</strong> {territories.length}개
+          </div>
+          <div>
+            <strong>총 군사력:</strong> {totalArmy}
+          </div>
+        </div>
+
+        <div style={{ marginTop: '10px' }}>
+          <h4>보유 영토:</h4>
+          {territories.map(territory => (
+              <div key={territory.id} style={{
+                fontSize: '12px',
+                padding: '2px 5px',
+                backgroundColor: territory.isCapital ? '#ffd700' : '#e0e0e0',
+                margin: '2px 0',
+                borderRadius: '3px'
+              }}>
+                {territory.name} ({territory.army} 군대) {territory.isCapital && '👑'}
+              </div>
+          ))}
+        </div>
+      </div>
+  );
+}
+// Define PropTypes for Dashboard component
+Dashboard.propTypes = {
+  myNation: PropTypes.shape({
+    name: PropTypes.string.isRequired,
+    resources: PropTypes.number.isRequired,
+    stability: PropTypes.number.isRequired
+  }).isRequired,
+  gameData: PropTypes.shape({
+    map: PropTypes.shape({
+      territories: PropTypes.objectOf(PropTypes.shape({
+        owner: PropTypes.string,
+        army: PropTypes.number
+      }))
+    }).isRequired
+  }).isRequired
+};
+
+// END: Dashboard Component
+
+// START: AdvisorView Component
+// [6] AdvisorView 컴포넌트: AI 보좌관과의 상호작용
+function AdvisorView({ db, gameData, myNation, user, onCommand }) {
+  const [selectedAdvisor, setSelectedAdvisor] = useState('국방');
+  const [userInput, setUserInput] = useState('');
+  const [response, setResponse] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  if (!myNation) return <div>국가를 선택해주세요.</div>;
+
+  const myAdvisors = gameData.advisors[user.uid] || {};
+
+  const handleSendCommand = async () => {
+    if (!userInput.trim()) return;
+
+    setIsLoading(true);
+    setResponse('처리 중...');
+
+    // AI 보좌관에게 명령 해석 요청
+    const advisor = advisorPersonas[selectedAdvisor];
+    const systemPrompt = `${advisor.persona} 당신의 야망은 "${advisor.ambition}"입니다. 
+    사용자의 명령을 분석하고 다음 중 하나의 액션으로 변환하세요:
+    1. attack: 영토 공격 (from, to 영토명 필요)
+    2. build_military: 군사 훈련 (value: 숫자)
+    3. research: 기술 연구 (tech_name: agriculture/engineering/espionage)
+    4. move_troops: 부대 이동 (from, to 영토명, value: 이동할 병력 수)
+    5. invalid: 잘못된 명령
     
-    if (selectedOpponent.isAI) {
-      // AI 상대인 경우 기존 로직 사용
-      const actions = ['공격', '방어', '특수행동'];
-      const opponentAction = actions[Math.floor(Math.random() * actions.length)];
-      await processDuelTurn(playerAction, opponentAction);
+    JSON 형식으로 응답: {"action": "액션명", "from": "출발영토", "to": "목표영토", "value": 숫자, "tech_name": "기술명", "explanation": "설명"}`;
+
+    const territories = Object.values(gameData.map.territories)
+        .filter(t => t.owner === myNation.name)
+        .map(t => t.name);
+
+    const userPrompt = `현재 보유 영토: ${territories.join(', ')}
+    현재 자원: ${myNation.resources}
+    사용자 명령: "${userInput}"`;
+
+    const aiResponse = await callGroqLlmApi(userPrompt, systemPrompt);
+
+    if (aiResponse.error) {
+      setResponse('AI 보좌관과의 연결에 문제가 발생했습니다.');
+    } else if (aiResponse.action === 'invalid') {
+      setResponse(`${advisor.name}: ${aiResponse.explanation || '이해할 수 없는 명령입니다.'}`);
     } else {
-      // 실제 사용자 상대인 경우 Firestore에 행동 저장
-      if (!duelId) {
-        addToLog("결투 정보를 찾을 수 없습니다.", "system");
-        return;
-      }
-      
-      try {
-        // 결투 문서 참조
-        const duelRef = doc(db, "duels", duelId);
-        const duelSnapshot = await getDoc(duelRef);
-        
-        if (!duelSnapshot.exists()) {
-          addToLog("결투 정보를 찾을 수 없습니다.", "system");
-          return;
-        }
-        
-        const duelData = duelSnapshot.data();
-        const isPlayer1 = playerId === duelData.player1.id;
-        
-        // 플레이어 행동 업데이트
-        if (isPlayer1) {
-          await setDoc(duelRef, {
-            player1: { ...duelData.player1, action: playerAction }
-          }, { merge: true });
-        } else {
-          await setDoc(duelRef, {
-            player2: { ...duelData.player2, action: playerAction }
-          }, { merge: true });
-        }
-        
-        // 상대방의 행동 확인
-        const opponentAction = isPlayer1 ? duelData.player2.action : duelData.player1.action;
-        
-        if (opponentAction) {
-          // 상대방이 이미 행동을 선택한 경우 결투 진행
-          await processDuelTurn(playerAction, opponentAction, duelRef, duelData);
-        } else {
-          // 상대방이 아직 행동을 선택하지 않은 경우 대기 상태로 전환
-          setIsWaitingForOpponent(true);
-          setDuelLog([...duelLog, "상대방의 선택을 기다리고 있습니다..."]);
-        }
-      } catch (error) {
-        console.error("결투 행동 처리 오류:", error);
-        addToLog("결투 행동 처리 중 오류가 발생했습니다.", "system");
-      }
+      // 명령 실행
+      const result = await onCommand(aiResponse);
+      setResponse(`${advisor.name}: ${aiResponse.explanation || '명령을 처리했습니다.'}\n결과: ${result.message}`);
     }
-  };
-  
-  // 결투 턴 처리 함수
-  const processDuelTurn = async (playerAction, opponentAction, duelRef = null, duelData = null) => {
-    let playerDamage = 0;
-    let opponentDamage = 0;
-    let isCritical = false;
-    const actionMap = { '공격': 0, '방어': 1, '특수행동': 2 };
-    const resultMatrix = [[0, -1, 1], [1, 0, -1], [-1, 1, 0]];
-    const result = resultMatrix[actionMap[playerAction]][actionMap[opponentAction]];
-    const criticalChance = 0.15 + (playerStats.stats.int * 0.001);
-    
-    if (result === -1 && Math.random() < criticalChance) isCritical = true;
-    
-    if (isCritical) {
-      opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
-    } else {
-      if (result === 1) {
-        opponentDamage = Math.max(1, playerStats.stats.str - Math.floor(selectedOpponent.stats.str / 3));
-      } else if (result === -1) {
-        playerDamage = Math.max(1, selectedOpponent.stats.str - Math.floor(playerStats.stats.str / 3));
-      } else {
-        opponentDamage = Math.max(1, Math.floor(playerStats.stats.str / 2));
-        playerDamage = Math.max(1, Math.floor(selectedOpponent.stats.str / 2));
-      }
-    }
-    
-    const newPlayerHp = playerHp - playerDamage;
-    const newOpponentHp = opponentHp - opponentDamage;
-    
-    // HP가 0 미만으로 내려가지 않도록 제한
-    const finalPlayerHp = Math.max(0, newPlayerHp);
-    const finalOpponentHp = Math.max(0, newOpponentHp);
-    
-    // 결투 상황 묘사 생성
-    const descriptionPrompt = `다음 결투 상황을 한국어로 생생하고 박진감 넘치게 묘사해줘: 플레이어(체력:${playerHp})는 '${playerAction}'을, 상대(체력:${opponentHp})는 '${opponentAction}'을 선택. ${isCritical ? '크리티컬 이벤트가 발생했다!' : ''} 그 결과, 플레이어는 ${playerDamage}의 피해를, 상대는 ${opponentDamage}의 피해를 입었다.`;
-    const description = await LlmApi.callApiForText(descriptionPrompt);
-    
-    // 결투 로그 업데이트
-    const newDuelLog = [...duelLog, description];
-    setDuelLog(newDuelLog);
-    
-    // HP 업데이트
-    setPlayerHp(finalPlayerHp);
-    setOpponentHp(finalOpponentHp);
-    
-    // 실제 사용자 상대인 경우 Firestore 업데이트
-    if (duelRef && duelData) {
-      const isPlayer1 = playerId === duelData.player1.id;
-      const updateData = {
-        log: newDuelLog
-      };
-      
-      if (isPlayer1) {
-        updateData.player1 = {
-          ...duelData.player1,
-          hp: finalPlayerHp,
-          action: null
-        };
-        updateData.player2 = {
-          ...duelData.player2,
-          hp: finalOpponentHp,
-          action: null
-        };
-      } else {
-        updateData.player1 = {
-          ...duelData.player1,
-          hp: finalOpponentHp,
-          action: null
-        };
-        updateData.player2 = {
-          ...duelData.player2,
-          hp: finalPlayerHp,
-          action: null
-        };
-      }
-      
-      // 결투 종료 여부 확인
-      if (finalPlayerHp <= 0 || finalOpponentHp <= 0) {
-        updateData.status = "completed";
-        await setDoc(duelRef, updateData, { merge: true });
-        endDuel(finalPlayerHp, finalOpponentHp, duelRef);
-      } else {
-        // 행동 초기화 및 다음 턴 준비
-        await setDoc(duelRef, updateData, { merge: true });
-        setPlayerAction(null);
-        setOpponentAction(null);
-        setIsWaitingForOpponent(false);
-      }
-    } else if (finalPlayerHp <= 0 || finalOpponentHp <= 0) {
-      // AI 상대인 경우 결투 종료
-      endDuel(finalPlayerHp, finalOpponentHp);
-    }
-  };
 
-  const endDuel = async (finalPlayerHp, finalOpponentHp, duelRef = null) => {
-    setIsFighting(false);
-    setIsDuelOver(true);
-    setIsWaitingForOpponent(false);
-    
-    const winner = finalPlayerHp > 0 ? playerStats : selectedOpponent;
-    const loser = finalPlayerHp > 0 ? selectedOpponent : playerStats;
-    const resultText = `${winner.info.name}의 승리!`;
-    
-    // 결투 내용을 종합한 최종 평가 생성
-    const summaryPrompt = `다음은 한 결투의 기록입니다:\n---\n${duelLog.join("\n")}\n---\n이 결투의 전체 내용을 종합하여 간략하게 평가해주세요. 승자의 전략, 패자의 실수, 결정적 순간 등을 포함해서 3-4문장으로 요약해주세요.`;
-    const duelSummary = await LlmApi.callApiForText(summaryPrompt);
-    
-    // 칭호 생성
-    const titlePrompt = `다음은 한 결투의 기록입니다:\n---\n${duelLog.join("\n")}\n---\n이 전투의 가장 인상적인 순간을 요약해서, 승자와 패자가 들어간 재미있는 칭호를 딱 하나만 만들어줘. (예: "압도적인 힘으로 승리한 자", "방심하다 한 방에 역전패한 어리석은 자")`;
-    const duelTitle = await LlmApi.callApiForText(titlePrompt);
-    
-    // 랜덤 보상 생성
-    const isPlayerWinner = winner.info.name === playerStats.info.name;
-    const baseGold = isPlayerWinner ? 50 : 10;
-    const randomBonus = Math.floor(Math.random() * 30) + 1; // 1-30 사이의 랜덤 보너스
-    const totalGold = baseGold + (isPlayerWinner ? randomBonus : 0);
-    
-    // 결과 설정
-    const resultMessage = `${resultText}\n\n${duelSummary}\n\n획득한 칭호: ${duelTitle}\n\n보상: ${totalGold} 골드${isPlayerWinner ? ` (기본 ${baseGold} + 보너스 ${randomBonus})` : ""}`;
-    setDuelResult(resultMessage);
-    
-    // 플레이어 상태 업데이트
-    const newPlayerStats = JSON.parse(JSON.stringify(playerStats));
-    newPlayerStats.info.wins += (isPlayerWinner ? 1 : 0);
-    newPlayerStats.info.losses += (!isPlayerWinner ? 1 : 0);
-    newPlayerStats.info.lastDuelTitle = duelTitle;
-    newPlayerStats.gold += totalGold;
-    setPlayerStats(newPlayerStats);
-    await saveData(newPlayerStats, playerId);
-    
-    // 상대방 상태 업데이트 (AI가 아닌 경우)
-    if (!selectedOpponent.isAI) {
-      const newOpponentStats = JSON.parse(JSON.stringify(selectedOpponent));
-      newOpponentStats.info.wins += (!isPlayerWinner ? 1 : 0);
-      newOpponentStats.info.losses += (isPlayerWinner ? 1 : 0);
-      await saveData(newOpponentStats, selectedOpponent.id);
-      
-      // 실시간 결투 문서 업데이트
-      if (duelRef) {
-        await setDoc(duelRef, {
-          status: "completed",
-          result: resultMessage,
-          winner: isPlayerWinner ? playerId : selectedOpponent.id,
-          completedAt: new Date()
-        }, { merge: true });
-      }
-    }
-    
-    // 상태 초기화
-    setPlayerAction(null);
-    setOpponentAction(null);
+    setIsLoading(false);
+    setUserInput('');
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl h-4/5 flex flex-col">
-        <h2 className="text-2xl font-bold text-yellow-400 mb-4">결투장</h2>
-        {!selectedOpponent ? (
-          <>
-            <h3 className="text-lg mb-4">결투 상대를 선택하세요:</h3>
-            <ul className="space-y-2 overflow-y-auto">
-              {opponents.map(o => (
-                <li key={o.id}>
-                  <button 
-                    onClick={() => startDuel(o)} 
-                    className="w-full text-left p-2 bg-gray-700 hover:bg-gray-600 rounded"
-                  >
-                    {o.info.name} (Lv.{o.info.level})
-                  </button>
-                </li>
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', marginBottom: '10px', backgroundColor: '#fff5f5' }}>
+        <h3>AI 보좌관</h3>
+
+        {/* 보좌관 선택 */}
+        <div style={{ marginBottom: '10px' }}>
+          {Object.keys(advisorPersonas).map(advisorType => {
+            const loyalty = myAdvisors[advisorType]?.loyalty || 50;
+            return (
+                <button
+                    key={advisorType}
+                    onClick={() => setSelectedAdvisor(advisorType)}
+                    style={{
+                      margin: '2px',
+                      padding: '5px 10px',
+                      backgroundColor: selectedAdvisor === advisorType ? '#4CAF50' : '#f0f0f0',
+                      color: selectedAdvisor === advisorType ? 'white' : 'black',
+                      border: '1px solid #ccc',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '12px'
+                    }}
+                >
+                  {advisorType} (충성도: {loyalty})
+                </button>
+            );
+          })}
+        </div>
+
+        {/* 선택된 보좌관 정보 */}
+        <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+          <strong>{advisorPersonas[selectedAdvisor].name}</strong>
+          <br />
+          <small style={{ color: '#666' }}>
+            {advisorPersonas[selectedAdvisor].persona}
+          </small>
+        </div>
+
+        {/* 명령 입력 */}
+        <div style={{ marginBottom: '10px' }}>
+          <input
+              type="text"
+              value={userInput}
+              onChange={(e) => setUserInput(e.target.value)}
+              placeholder="명령을 입력하세요 (예: 북부 산맥을 공격해, 군대 50명 훈련, 농업 기술 연구)"
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                marginBottom: '5px'
+              }}
+              onKeyPress={(e) => e.key === 'Enter' && handleSendCommand()}
+          />
+          <button
+              onClick={handleSendCommand}
+              disabled={isLoading}
+              style={{
+                width: '100%',
+                padding: '8px',
+                backgroundColor: '#2196F3',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: isLoading ? 'not-allowed' : 'pointer'
+              }}
+          >
+            {isLoading ? '처리 중...' : '명령 전달'}
+          </button>
+        </div>
+
+        {/* AI 응답 */}
+        {response && (
+            <div style={{
+              padding: '10px',
+              backgroundColor: '#e3f2fd',
+              border: '1px solid #bbdefb',
+              borderRadius: '4px',
+              whiteSpace: 'pre-line',
+              fontSize: '14px'
+            }}>
+              {response}
+            </div>
+        )}
+      </div>
+  );
+}
+// Define PropTypes for AdvisorView component
+AdvisorView.propTypes = {
+  db: PropTypes.object.isRequired,
+  gameData: PropTypes.shape({
+    advisors: PropTypes.objectOf(PropTypes.object),
+    map: PropTypes.shape({
+      territories: PropTypes.objectOf(PropTypes.shape({
+        owner: PropTypes.string,
+        name: PropTypes.string
+      }))
+    }).isRequired
+  }).isRequired,
+  myNation: PropTypes.shape({
+    name: PropTypes.string.isRequired,
+    resources: PropTypes.number.isRequired
+  }),
+  user: PropTypes.shape({
+    uid: PropTypes.string.isRequired
+  }).isRequired,
+  onCommand: PropTypes.func.isRequired
+};
+
+// END: AdvisorView Component
+
+// START: DiplomacyView Component
+// [7] DiplomacyView 컴포넌트: 외교 시스템
+function DiplomacyView({ db, gameData, myNation }) {
+  const [selectedTarget, setSelectedTarget] = useState('');
+  const [proposalType, setProposalType] = useState('alliance');
+  const [proposalText, setProposalText] = useState('');
+
+  if (!myNation) return <div>국가를 선택해주세요.</div>;
+
+  const otherNations = Object.keys(gameData.nations).filter(name =>
+      name !== myNation.name && gameData.nations[name].status === 'active'
+  );
+
+  const handleSendProposal = async () => {
+    if (!selectedTarget || !proposalText.trim()) return;
+
+    const proposal = {
+      from: myNation.name,
+      to: selectedTarget,
+      type: proposalType,
+      text: proposalText,
+      turn: gameData.turn,
+      status: 'pending',
+      id: Date.now().toString()
+    };
+
+    const gameRef = doc(db, 'games', gameData.id);
+    await updateDoc(gameRef, {
+      'diplomacy.proposals': arrayUnion(proposal),
+      events: arrayUnion({
+        turn: gameData.turn,
+        type: 'diplomacy',
+        content: `${myNation.name}이 ${selectedTarget}에게 ${proposalType === 'alliance' ? '동맹' : '무역'} 제안을 했습니다.`
+      })
+    });
+
+    setProposalText('');
+  };
+
+  const handleRespondToProposal = async (proposal, accept) => {
+    const gameRef = doc(db, 'games', gameData.id);
+    const updatedProposals = gameData.diplomacy.proposals.map(p =>
+        p.id === proposal.id ? { ...p, status: accept ? 'accepted' : 'rejected' } : p
+    );
+
+    let updates = {
+      'diplomacy.proposals': updatedProposals,
+      events: arrayUnion({
+        turn: gameData.turn,
+        type: 'diplomacy',
+        content: `${myNation.name}이 ${proposal.from}의 ${proposal.type === 'alliance' ? '동맹' : '무역'} 제안을 ${accept ? '수락' : '거부'}했습니다.`
+      })
+    };
+
+    if (accept) {
+      const treaty = {
+        nations: [proposal.from, proposal.to],
+        type: proposal.type,
+        turn: gameData.turn,
+        id: Date.now().toString()
+      };
+      updates['diplomacy.treaties'] = arrayUnion(treaty);
+      
+      // 외교 기술 레벨에 따른 보너스 계산
+      const fromNation = gameData.nations[proposal.from];
+      const toNation = gameData.nations[proposal.to];
+      const fromDiplomacyLevel = fromNation?.technologies?.diplomacy?.level || 0;
+      const toDiplomacyLevel = toNation?.technologies?.diplomacy?.level || 0;
+      
+      // 양국의 외교 기술 레벨 평균에 따른 보너스 계산
+      const avgDiplomacyLevel = (fromDiplomacyLevel + toDiplomacyLevel) / 2;
+      const baseStabilityBonus = 5;
+      const diplomacyBonus = avgDiplomacyLevel > 0 ? 
+        Math.floor(avgDiplomacyLevel * techTree.diplomacy.stabilityBonusPerLevel) : 0;
+      const totalStabilityBonus = baseStabilityBonus + diplomacyBonus;
+      
+      // 조약 유형별 추가 효과 적용
+      if (proposal.type === 'trade') {
+        // 무역 협정은 양국에 자원 보너스 제공
+        const tradeBonus = 50 + (avgDiplomacyLevel * 10); // 외교 레벨당 10 자원 추가
+        updates[`nations.${proposal.from}.resources`] = increment(tradeBonus);
+        updates[`nations.${proposal.to}.resources`] = increment(tradeBonus);
+        updates.events = arrayUnion({
+          turn: gameData.turn,
+          type: 'economy',
+          content: `${proposal.from}과(와) ${proposal.to} 사이의 무역 협정으로 양국은 ${tradeBonus} 자원을 얻었습니다. (외교 기술 보너스: +${tradeBonus - 50})`
+        });
+      } else if (proposal.type === 'non_aggression') {
+        // 불가침 조약은 안정도 증가
+        updates[`nations.${proposal.from}.stability`] = increment(totalStabilityBonus);
+        updates[`nations.${proposal.to}.stability`] = increment(totalStabilityBonus);
+        updates.events = arrayUnion({
+          turn: gameData.turn,
+          type: 'diplomacy',
+          content: `${proposal.from}과(와) ${proposal.to} 사이의 불가침 조약으로 양국의 안정도가 ${totalStabilityBonus} 증가했습니다. (외교 기술 보너스: +${diplomacyBonus})`
+        });
+      } else if (proposal.type === 'alliance') {
+        // 동맹은 안정도와 군사력 증가
+        updates[`nations.${proposal.from}.stability`] = increment(totalStabilityBonus);
+        updates[`nations.${proposal.to}.stability`] = increment(totalStabilityBonus);
+        
+        // 수도에 소규모 군사력 증가
+        const fromCapitalId = Object.values(gameData.map.territories)
+          .find(t => t.owner === proposal.from && t.isCapital)?.id;
+        const toCapitalId = Object.values(gameData.map.territories)
+          .find(t => t.owner === proposal.to && t.isCapital)?.id;
+          
+        if (fromCapitalId) {
+          updates[`map.territories.${fromCapitalId}.army`] = increment(10);
+        }
+        if (toCapitalId) {
+          updates[`map.territories.${toCapitalId}.army`] = increment(10);
+        }
+        
+        updates.events = arrayUnion({
+          turn: gameData.turn,
+          type: 'diplomacy',
+          content: `${proposal.from}과(와) ${proposal.to} 사이의 동맹으로 양국의 안정도가 ${totalStabilityBonus} 증가하고 수도에 10명의 군대가 추가되었습니다.`
+        });
+      } else if (proposal.type === 'military_access') {
+        // 군사 통행권은 작은 안정도 증가와 정보 공유
+        updates[`nations.${proposal.from}.stability`] = increment(Math.floor(totalStabilityBonus / 2));
+        updates[`nations.${proposal.to}.stability`] = increment(Math.floor(totalStabilityBonus / 2));
+        
+        updates.events = arrayUnion({
+          turn: gameData.turn,
+          type: 'diplomacy',
+          content: `${proposal.from}과(와) ${proposal.to} 사이의 군사 통행권 협정이 체결되었습니다. 양국은 서로의 영토를 통과할 수 있게 되었습니다.`
+        });
+      }
+    }
+
+    await updateDoc(gameRef, updates);
+  };
+
+  const myProposals = gameData.diplomacy.proposals.filter(p => p.to === myNation.name && p.status === 'pending');
+  const sentProposals = gameData.diplomacy.proposals.filter(p => p.from === myNation.name);
+  const myTreaties = gameData.diplomacy.treaties.filter(t => t.nations.includes(myNation.name));
+
+  return (
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', marginBottom: '10px', backgroundColor: '#f0fff0' }}>
+        <h3>외교</h3>
+
+        {/* 새 제안 보내기 */}
+        <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+          <h4>새 제안</h4>
+          <select
+              value={selectedTarget}
+              onChange={(e) => setSelectedTarget(e.target.value)}
+              style={{ width: '100%', marginBottom: '5px', padding: '5px' }}
+          >
+            <option value="">대상 선택</option>
+            {otherNations.map(nation => (
+                <option key={nation} value={nation}>{nation}</option>
+            ))}
+          </select>
+
+          <select
+              value={proposalType}
+              onChange={(e) => setProposalType(e.target.value)}
+              style={{ width: '100%', marginBottom: '5px', padding: '5px' }}
+          >
+            <option value="alliance">동맹 제안</option>
+            <option value="trade">무역 협정</option>
+            <option value="non_aggression">불가침 조약</option>
+            <option value="military_access">군사 통행권</option>
+          </select>
+
+          <textarea
+              value={proposalText}
+              onChange={(e) => setProposalText(e.target.value)}
+              placeholder="제안 내용을 입력하세요..."
+              style={{ width: '100%', height: '60px', marginBottom: '5px', padding: '5px' }}
+          />
+
+          <button
+              onClick={handleSendProposal}
+              style={{
+                width: '100%',
+                padding: '8px',
+                backgroundColor: '#4CAF50',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+          >
+            제안 보내기
+          </button>
+        </div>
+
+        {/* 받은 제안 */}
+        {myProposals.length > 0 && (
+            <div style={{ marginBottom: '15px' }}>
+              <h4>받은 제안</h4>
+              {myProposals.map(proposal => (
+                  <div key={proposal.id} style={{
+                    padding: '10px',
+                    border: '1px solid #ccc',
+                    borderRadius: '4px',
+                    marginBottom: '5px',
+                    backgroundColor: '#fff'
+                  }}>
+                    <strong>{proposal.from}</strong>의 {proposal.type === 'alliance' ? '동맹' : '무역'} 제안
+                    <br />
+                    <small>{proposal.text}</small>
+                    <div style={{ marginTop: '5px' }}>
+                      <button
+                          onClick={() => handleRespondToProposal(proposal, true)}
+                          style={{ marginRight: '5px', padding: '5px 10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '3px' }}
+                      >
+                        수락
+                      </button>
+                      <button
+                          onClick={() => handleRespondToProposal(proposal, false)}
+                          style={{ padding: '5px 10px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '3px' }}
+                      >
+                        거부
+                      </button>
+                    </div>
+                  </div>
               ))}
-            </ul>
-          </>
-        ) : (
-          <div className="h-full flex flex-col">
-            <div className="grid grid-cols-2 gap-4 mb-4 text-center">
-              <div>
-                <h3 className="font-bold">{playerStats.info.name}</h3>
-                <p>HP: {playerHp}/{playerStats.stats.hp}</p>
-              </div>
-              <div>
-                <h3 className="font-bold">{selectedOpponent.info.name}</h3>
-                <p>HP: {opponentHp}/{selectedOpponent.stats.hp}</p>
-              </div>
             </div>
-            <div className="flex-grow bg-gray-900 p-2 rounded overflow-y-auto mb-4">
-              {duelLog.map((log, i) => <p key={i} className="mb-2">{log}</p>)}
+        )}
+
+        {/* 체결된 조약 */}
+        {myTreaties.length > 0 && (
+            <div style={{ marginBottom: '15px' }}>
+              <h4>체결된 조약</h4>
+              {myTreaties.map(treaty => (
+                  <div key={treaty.id} style={{
+                    padding: '8px',
+                    backgroundColor: '#e8f5e8',
+                    border: '1px solid #4CAF50',
+                    borderRadius: '4px',
+                    marginBottom: '3px',
+                    fontSize: '12px'
+                  }}>
+                    {treaty.nations.filter(n => n !== myNation.name).join(', ')}와의 {treaty.type === 'alliance' ? '동맹' : '무역협정'}
+                  </div>
+              ))}
             </div>
-            {isFighting && !isWaitingForOpponent && (
-              <div className="flex justify-around">
-                {['공격', '방어', '특수행동'].map(action => (
-                  <button 
-                    key={action} 
-                    onClick={() => handleAction(action)} 
-                    className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
-                  >
-                    {action}
-                  </button>
-                ))}
-              </div>
-            )}
-            {isFighting && isWaitingForOpponent && (
-              <div className="text-center">
-                <p className="text-yellow-400 mb-4">상대방의 선택을 기다리고 있습니다...</p>
-                <div className="animate-pulse flex justify-center">
-                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1"></div>
-                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1 animate-delay-200"></div>
-                  <div className="h-4 w-4 bg-yellow-400 rounded-full mx-1 animate-delay-400"></div>
+        )}
+
+        {/* 보낸 제안들 */}
+        {sentProposals.length > 0 && (
+            <div>
+              <h4>보낸 제안</h4>
+              {sentProposals.map(proposal => (
+                  <div key={proposal.id} style={{
+                    padding: '5px',
+                    fontSize: '12px',
+                    color: '#666',
+                    borderBottom: '1px solid #eee'
+                  }}>
+                    {proposal.to}에게: {proposal.type === 'alliance' ? '동맹' : '무역'} ({proposal.status})
+                  </div>
+              ))}
+            </div>
+        )}
+      </div>
+  );
+}
+// Define PropTypes for DiplomacyView component
+DiplomacyView.propTypes = {
+  db: PropTypes.object.isRequired,
+  gameData: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    turn: PropTypes.number.isRequired,
+    nations: PropTypes.objectOf(PropTypes.shape({
+      status: PropTypes.string
+    })).isRequired,
+    diplomacy: PropTypes.shape({
+      proposals: PropTypes.arrayOf(PropTypes.shape({
+        id: PropTypes.string,
+        status: PropTypes.string,
+        from: PropTypes.string,
+        to: PropTypes.string,
+        type: PropTypes.string
+      })),
+      treaties: PropTypes.arrayOf(PropTypes.shape({
+        nations: PropTypes.arrayOf(PropTypes.string)
+      }))
+    }).isRequired,
+    map: PropTypes.shape({
+      territories: PropTypes.objectOf(PropTypes.shape({
+        owner: PropTypes.string,
+        isCapital: PropTypes.bool
+      }))
+    }).isRequired
+  }).isRequired,
+  myNation: PropTypes.shape({
+    name: PropTypes.string.isRequired
+  })
+};
+
+// END: DiplomacyView Component
+
+// START: TechnologyView Component
+// [8] TechnologyView 컴포넌트: 기술 트리 표시
+function TechnologyView({ myNation }) {
+  if (!myNation) return <div>국가를 선택해주세요.</div>;
+
+  return (
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', marginBottom: '10px', backgroundColor: '#fff8dc' }}>
+        <h3>기술 현황</h3>
+        {Object.entries(techTree).map(([key, tech]) => {
+          const currentLevel = myNation.technologies[key].level;
+          const nextCost = tech.baseCost * (currentLevel + 1);
+
+          return (
+              <div key={key} style={{
+                marginBottom: '10px',
+                padding: '10px',
+                backgroundColor: '#f9f9f9',
+                borderRadius: '4px',
+                border: '1px solid #ddd'
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
+                  {tech.name} (레벨 {currentLevel})
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px' }}>
+                  {tech.description}
+                </div>
+                <div style={{ fontSize: '11px', color: '#888' }}>
+                  다음 레벨 비용: {nextCost} 자원
+                </div>
+                <div style={{
+                  width: '100%',
+                  height: '8px',
+                  backgroundColor: '#e0e0e0',
+                  borderRadius: '4px',
+                  marginTop: '5px'
+                }}>
+                  <div style={{
+                    width: `${Math.min(100, (currentLevel / 5) * 100)}%`,
+                    height: '100%',
+                    backgroundColor: '#4CAF50',
+                    borderRadius: '4px'
+                  }} />
                 </div>
               </div>
-            )}
-            {isDuelOver && (
-              <div className="text-center">
-                <p className="text-xl font-bold whitespace-pre-wrap">{duelResult}</p>
-                <button 
-                  onClick={() => setIsDuelModalOpen(false)} 
-                  className="mt-4 bg-blue-600 px-4 py-2 rounded"
-                >
-                  닫기
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {!isFighting && !isDuelOver && (
-          <button 
-            onClick={() => setIsDuelModalOpen(false)} 
-            className="mt-4 bg-gray-600 px-4 py-2 rounded self-start"
-          >
-            취소
-          </button>
-        )}
+          );
+        })}
       </div>
-    </div>
   );
+}
+// Define PropTypes for TechnologyView component
+TechnologyView.propTypes = {
+  myNation: PropTypes.shape({
+    technologies: PropTypes.objectOf(PropTypes.shape({
+      level: PropTypes.number.isRequired
+    })).isRequired
+  })
 };
 
-const App = () => {
-  const { isDuelModalOpen, activeTab, setActiveTab } = useGame();
+// END: TechnologyView Component
+
+// START: EventLog Component
+// [9] EventLog 컴포넌트: 게임 이벤트 히스토리
+function EventLog({ events, user }) {
+  const recentEvents = events.slice(-10).reverse(); // 최근 10개 이벤트만 표시
+
   return (
-    <div className="max-w-7xl mx-auto h-full flex flex-col">
-      {isDuelModalOpen && <DuelModal />}
-      <h1 className="text-3xl md:text-4xl font-bold text-center text-purple-300 my-4 flex-shrink-0">LLM 텍스트 어드벤처 RPG</h1>
-      <div className="md:hidden flex mb-4 rounded-lg overflow-hidden border border-gray-700">
-        <button 
-          onClick={() => setActiveTab('game')} 
-          className={`py-2 px-4 w-full font-bold transition-colors duration-200 ${activeTab === 'game' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300'}`}
-        >
-          모험
-        </button>
-        <button 
-          onClick={() => setActiveTab('info')} 
-          className={`py-2 px-4 w-full font-bold transition-colors duration-200 ${activeTab === 'info' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300'}`}
-        >
-          정보
-        </button>
-      </div>
-      <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-4" style={{minHeight: 0}}>
-        <div className={`${activeTab === 'game' ? 'grid' : 'hidden'} grid-rows-2 md:grid md:col-span-2 gap-4`} style={{minHeight: 0}}>
-          <StoryWindow />
-          <ChoiceWindow />
+      <div style={{ border: '2px solid #333', borderRadius: '8px', padding: '15px', backgroundColor: '#f5f5f5' }}>
+        <h3>이벤트 로그</h3>
+        <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+          {recentEvents.map((event, index) => {
+            // 비밀 이벤트는 해당 플레이어에게만 표시
+            if (event.isPrivate && event.recipient !== user.uid) return null;
+
+            const getEventColor = (type) => {
+              const colors = {
+                battle: '#ffebee',
+                conquest: '#e8f5e8',
+                elimination: '#fce4ec',
+                diplomacy: '#e3f2fd',
+                technology: '#f3e5f5',
+                betrayal: '#fff3e0',
+                production: '#e0f2f1',
+                stability: '#fafafa'
+              };
+              return colors[type] || '#f9f9f9';
+            };
+
+            return (
+                <div key={index} style={{
+                  padding: '8px',
+                  marginBottom: '5px',
+                  backgroundColor: getEventColor(event.type),
+                  borderLeft: `4px solid ${event.isPrivate ? '#ff9800' : '#2196F3'}`,
+                  borderRadius: '4px',
+                  fontSize: '12px'
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>
+                    턴 {event.turn} {event.isPrivate && '🔒'}
+                  </div>
+                  <div>{event.content}</div>
+                </div>
+            );
+          })}
         </div>
-        <div className={`${activeTab === 'info' ? 'grid' : 'hidden'} md:grid md:grid-rows-2 gap-4`} style={{minHeight: 0}}>
-          <StatusWindow />
-          <MenuWindow />
-        </div>
       </div>
-    </div>
   );
+}
+// Define PropTypes for EventLog component
+EventLog.propTypes = {
+  events: PropTypes.arrayOf(PropTypes.shape({
+    turn: PropTypes.number,
+    type: PropTypes.string,
+    content: PropTypes.string,
+    isPrivate: PropTypes.bool,
+    recipient: PropTypes.string
+  })).isRequired,
+  user: PropTypes.shape({
+    uid: PropTypes.string.isRequired
+  }).isRequired
 };
 
-// Create a wrapped version of App that includes the GameProvider
-const WrappedApp = () => (
-  <GameProvider>
-    <App />
-  </GameProvider>
-);
+// END: EventLog Component
 
-// Export the wrapped component as default
-export default WrappedApp;
+// START: Turn Processing Function
+// [10] 턴 처리 함수: 모든 플레이어가 턴을 종료하면 실행되는 핵심 로직입니다.
+const processTurn = async (db, gameData) => {
+  const batch = writeBatch(db);
+  const gameRef = doc(db, 'games', gameData.id);
+  // 데이터의 안전한 처리를 위해 깊은 복사(deep copy) 사용
+  let updatedMap = JSON.parse(JSON.stringify(gameData.map));
+  let updatedNations = JSON.parse(JSON.stringify(gameData.nations));
+  let updatedPlayers = JSON.parse(JSON.stringify(gameData.players));
+  let updatedAdvisors = JSON.parse(JSON.stringify(gameData.advisors));
+  let newEvents = [];
 
-// For development/testing, we can keep the ReactDOM.render call
-const container = document.getElementById('root');
-const root = ReactDOM.createRoot(container);
-root.render(
-  <GameProvider>
-    <App />
-  </GameProvider>
-);
+  // [10-1] 보좌관 배신 단계
+  for (const player of updatedPlayers) {
+    if (player.status !== 'playing') continue;
+    const playerAdvisors = updatedAdvisors[player.uid];
+    const playerNation = updatedNations[player.nation];
+    for (const advisorType in playerAdvisors) {
+      const advisor = playerAdvisors[advisorType];
+      if (advisor.loyalty < 20 && Math.random() < 0.33) {
+        const stolenResources = Math.floor(playerNation.resources * 0.1);
+        playerNation.resources -= stolenResources;
+        newEvents.push({
+          turn: gameData.turn,
+          type: 'betrayal',
+          nation: player.nation,
+          content: `[비밀 보고] ${advisorType} 장관의 횡령으로 자원 ${stolenResources}이 사라졌습니다!`,
+          isPrivate: true,
+          recipient: player.uid
+        });
+        newEvents.push({
+          turn: gameData.turn,
+          type: 'economy',
+          nation: player.nation,
+          content: `국고에서 원인 불명의 자원 손실이 발생했습니다.`
+        });
+      }
+    }
+  }
+
+  // [10-2] 동적 이벤트 발생 단계
+  if (Math.random() < 0.25) {
+    const systemPrompt = `당신은 이 지정학 게임의 스토리텔러입니다. 현재 게임 상황을 바탕으로 흥미로운 무작위 이벤트를 생성하세요. 결과는 반드시 다음 JSON 형식이어야 합니다: {"title": "이벤트 제목", "description": "이벤트 설명", "effects": [{"nation": "국가명", "effect": "자원변경/안정도변경/군사력변경/기술발전", "value": 숫자, "tech_name": "기술명(기술발전인 경우만)"}]}. 효과는 게임에 참여중인 국가 중 하나 이상에 적용되어야 합니다.`;
+    const userPrompt = `현재 게임 상태: ${JSON.stringify(gameData.nations)}`;
+    const eventResult = await callGroqLlmApi(userPrompt, systemPrompt);
+    if (eventResult && !eventResult.error && eventResult.effects) {
+      newEvents.push({
+        turn: gameData.turn,
+        type: 'dynamic_event',
+        content: `${eventResult.title}: ${eventResult.description}`
+      });
+      for (const effect of eventResult.effects) {
+        if (updatedNations[effect.nation]) {
+          if (effect.effect === '자원변경') {
+            updatedNations[effect.nation].resources += effect.value;
+          } else if (effect.effect === '안정도변경') {
+            updatedNations[effect.nation].stability = Math.max(0, Math.min(100, updatedNations[effect.nation].stability + effect.value));
+          } else if (effect.effect === '군사력변경') {
+            // 군사력 변경은 수도에 적용
+            const capitalId = Object.values(updatedMap.territories)
+              .find(t => t.owner === effect.nation && t.isCapital)?.id;
+            if (capitalId) {
+              updatedMap.territories[capitalId].army = Math.max(0, updatedMap.territories[capitalId].army + effect.value);
+            }
+          } else if (effect.effect === '기술발전' && effect.tech_name && techTree[effect.tech_name]) {
+            // 기술 레벨 향상
+            const techKey = effect.tech_name;
+            if (updatedNations[effect.nation].technologies[techKey]) {
+              updatedNations[effect.nation].technologies[techKey].level += effect.value;
+              newEvents.push({
+                turn: gameData.turn,
+                type: 'technology',
+                nation: effect.nation,
+                content: `${effect.nation}이(가) ${techTree[techKey].name} 기술에서 돌파구를 발견했습니다! (레벨 +${effect.value})`
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // [10-3] 전투 단계
+  const attackActions = gameData.pendingActions.filter(a => a.action === 'attack' && a.turn === gameData.turn);
+  for (const action of attackActions) {
+    const { fromId, toId } = action.details;
+    const attackerTerritory = updatedMap.territories[fromId];
+    const defenderTerritory = updatedMap.territories[toId];
+    const attackerNation = action.fromNation;
+    const defenderNation = defenderTerritory.owner;
+
+    if (attackerTerritory.owner !== attackerNation || defenderTerritory.owner === attackerNation) continue;
+
+    // 공학 기술 레벨에 따른 전투력 보너스 적용
+    const attackerEngLevel = updatedNations[attackerNation]?.technologies?.engineering?.level || 0;
+    const defenderEngLevel = defenderNation ? updatedNations[defenderNation]?.technologies?.engineering?.level || 0 : 0;
+    
+    const attackerBonus = attackerEngLevel * techTree.engineering.combatBonusPerLevel;
+    const defenderBonus = defenderEngLevel * techTree.engineering.combatBonusPerLevel;
+    
+    const attackerPower = attackerTerritory.army * (1 + Math.random() * 0.2 + attackerBonus);
+    const defenderPower = defenderTerritory.army * (1 + Math.random() * 0.2 + defenderBonus);
+    const totalPower = attackerPower + defenderPower;
+    const attackerLossRate = Math.min(1, (defenderPower / totalPower) * 1.2);
+    const defenderLossRate = Math.min(1, (attackerPower / totalPower) * 1.2);
+    const attackerLosses = Math.round(attackerTerritory.army * attackerLossRate);
+    const defenderLosses = Math.round(defenderTerritory.army * defenderLossRate);
+
+    attackerTerritory.army -= attackerLosses;
+    defenderTerritory.army -= defenderLosses;
+    newEvents.push({
+      turn: gameData.turn,
+      type: 'battle',
+      content: `${attackerNation}의 ${attackerTerritory.name}가 ${defenderNation ? defenderNation + '의 ' : ''}${defenderTerritory.name}를 공격! 피해: (공격측: ${attackerLosses}, 수비측: ${defenderLosses})`
+    });
+
+    // 전투 결과에 따른 영토 점령 처리
+    if (defenderTerritory.army <= 0) {
+      defenderTerritory.owner = attackerNation;
+      defenderTerritory.army = Math.max(1, attackerTerritory.army - attackerLosses);
+      attackerTerritory.army = Math.max(0, attackerTerritory.army - attackerLosses);
+      newEvents.push({
+        turn: gameData.turn,
+        type: 'conquest',
+        content: `${attackerNation}이 ${defenderTerritory.name}을 점령했습니다!`
+      });
+
+      // 수도 점령 시 국가 멸망 처리
+      if (defenderTerritory.isCapital && defenderNation) {
+        updatedNations[defenderNation].status = 'eliminated';
+        const eliminatedPlayer = updatedPlayers.find(p => p.nation === defenderNation);
+        if (eliminatedPlayer) eliminatedPlayer.status = 'eliminated';
+        newEvents.push({
+          turn: gameData.turn,
+          type: 'elimination',
+          content: `${defenderNation}이 멸망했습니다! ${attackerNation}의 승리!`
+        });
+      }
+    }
+  }
+
+  // [10-4] 자원 생산 단계
+  for (const player of updatedPlayers) {
+    if (player.status !== 'playing') continue;
+    const nation = updatedNations[player.nation];
+    const territories = Object.values(updatedMap.territories).filter(t => t.owner === player.nation);
+    const agricultureLevel = nation.technologies.agriculture.level;
+    
+    // 향상된 농업 기술 효과 적용
+    const baseProduction = territories.length * 50;
+    const bonusRate = agricultureLevel * techTree.agriculture.effectPerLevel;
+    const bonus = Math.floor(baseProduction * bonusRate);
+    const totalProduction = baseProduction + bonus;
+    
+    nation.resources += totalProduction;
+    newEvents.push({
+      turn: gameData.turn,
+      type: 'production',
+      nation: player.nation,
+      content: `자원 ${totalProduction} 생산 (기본: ${baseProduction}, 농업 보너스: ${bonus}, 농업 레벨: ${agricultureLevel})`
+    });
+  }
+
+  // [10-5] 안정도 업데이트
+  for (const player of updatedPlayers) {
+    if (player.status !== 'playing') continue;
+    const nation = updatedNations[player.nation];
+    const playerAdvisors = updatedAdvisors[player.uid];
+
+    // 낮은 충성도 보좌관으로 인한 안정도 감소
+    let stabilityChange = 0;
+    for (const advisorType in playerAdvisors) {
+      if (playerAdvisors[advisorType].loyalty < 30) stabilityChange -= 2;
+    }
+
+    // 자원 부족으로 인한 안정도 감소
+    if (nation.resources < 100) stabilityChange -= 5;
+
+    nation.stability = Math.max(0, Math.min(100, nation.stability + stabilityChange));
+
+    if (stabilityChange !== 0) {
+      newEvents.push({
+        turn: gameData.turn,
+        type: 'stability',
+        nation: player.nation,
+        content: `안정도가 ${stabilityChange > 0 ? '+' : ''}${stabilityChange} 변화했습니다.`
+      });
+    }
+
+    // 안정도가 0이 되면 국가 멸망
+    if (nation.stability <= 0) {
+      nation.status = 'eliminated';
+      player.status = 'eliminated';
+      newEvents.push({
+        turn: gameData.turn,
+        type: 'collapse',
+        content: `${player.nation}이 내부 혼란으로 붕괴했습니다!`
+      });
+    }
+  }
+
+  // [10-6] 승리 조건 확인
+  const activePlayers = updatedPlayers.filter(p => p.status === 'playing');
+  if (activePlayers.length === 1) {
+    const winner = activePlayers[0];
+    newEvents.push({
+      turn: gameData.turn,
+      type: 'victory',
+      content: `${winner.nation}이 최후의 승자가 되었습니다!`
+    });
+
+    // 게임 종료 상태 업데이트
+    batch.update(gameRef, {
+      status: 'finished',
+      winner: winner.nation,
+      players: updatedPlayers,
+      nations: updatedNations,
+      map: updatedMap,
+      advisors: updatedAdvisors,
+      events: [...gameData.events, ...newEvents],
+      turn: gameData.turn + 1,
+      pendingActions: []
+    });
+  } else {
+    // 다음 턴 준비
+    updatedPlayers.forEach(p => { p.isTurnReady = false; });
+
+    batch.update(gameRef, {
+      players: updatedPlayers,
+      nations: updatedNations,
+      map: updatedMap,
+      advisors: updatedAdvisors,
+      events: [...gameData.events, ...newEvents],
+      turn: gameData.turn + 1,
+      pendingActions: []
+    });
+  }
+
+  await batch.commit();
+};
+// END: Turn Processing Function
+
+// START: Main App Component
+// [11] 최상위 컴포넌트: Firebase 초기화, 사용자 인증 및 게임 상태에 따른 화면 전환을 담당합니다.
+function App() {
+  const [db, setDb] = useState(null);
+  const [user, setUser] = useState(null);
+  const [gameId, setGameId] = useState(null);
+
+  // 컴포넌트 마운트 시 Firebase 초기화 및 익명 로그인 처리
+  useEffect(() => {
+    const app = initializeApp(firebaseConfig);
+    const authInstance = getAuth(app);
+    const dbInstance = getFirestore(app);
+    setDb(dbInstance);
+    const unsubscribe = onAuthStateChanged(authInstance, (currentUser) => {
+      if (currentUser) setUser(currentUser);
+      else signInAnonymously(authInstance).catch(error => console.error("익명 로그인 실패:", error));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 로딩 화면
+  if (!user || !db) return <div style={{textAlign: 'center', paddingTop: '50px'}}>Loading...</div>;
+
+  // 게임 ID 유무에 따라 로비 또는 게임방을 렌더링
+  return (
+      <div style={{ fontFamily: 'sans-serif', padding: '20px', maxWidth: '1400px', margin: 'auto' }}>
+        <h1 style={{textAlign: 'center', color: '#333'}}>Council of Crowns (Final Version)</h1>
+        <p style={{textAlign: 'center', color: '#666', marginBottom: '20px'}}>사용자 ID: {user.uid}</p>
+        <hr />
+        {gameId ? <GameRoom db={db} user={user} gameId={gameId} setGameId={setGameId} /> : <Lobby db={db} user={user} setGameId={setGameId} />}
+      </div>
+  );
+}
+// END: Main App Component
+
+// START: Lobby Component
+// [12] 로비 컴포넌트: 새 게임을 생성하거나 기존 게임에 참여하는 UI를 제공합니다.
+function Lobby({ db, user, setGameId }) {
+  const [newGameName, setNewGameName] = useState('');
+  const [joinGameId, setJoinGameId] = useState('');
+  const [error, setError] = useState('');
+
+  // 새 게임 생성 핸들러
+  const handleCreateGame = async () => {
+    if (!newGameName.trim()) { setError('게임 이름을 입력해주세요.'); return; }
+    setError('');
+    try {
+      // 게임에 필요한 모든 초기 데이터(기술, 국가, 보좌관, 지도 등)를 설정합니다.
+      const initialTechs = Object.keys(techTree).reduce((acc, key) => ({...acc, [key]: { level: 0 }}), {});
+      const nations = {
+        '에라시아': { name: '에라시아', resources: 1000, stability: 75, owner: null, status: 'active', technologies: JSON.parse(JSON.stringify(initialTechs)) },
+        '브라카다': { name: '브라카다', resources: 1200, stability: 80, owner: null, status: 'active', technologies: JSON.parse(JSON.stringify(initialTechs)) },
+        '아블리': { name: '아블리', resources: 800, stability: 65, owner: null, status: 'active', technologies: JSON.parse(JSON.stringify(initialTechs)) },
+      };
+      const playerInfo = { uid: user.uid, name: `플레이어 ${user.uid.substring(0, 4)}`, nation: null, isTurnReady: false, status: 'playing' };
+      const initialAdvisors = {};
+      Object.keys(advisorPersonas).forEach(key => {
+        initialAdvisors[key] = { loyalty: 50, ambition: advisorPersonas[key].ambition };
+      });
+
+      // Firestore에 새 게임 문서를 생성합니다.
+      const newGameDoc = await addDoc(collection(db, 'games'), {
+        name: newGameName, players: [playerInfo], nations: nations,
+        advisors: { [user.uid]: initialAdvisors },
+        map: JSON.parse(JSON.stringify(initialMapData)),
+        status: 'waiting', turn: 1,
+        events: [{ turn: 1, type: 'game_start', content: '새로운 역사가 시작됩니다.' }],
+        diplomacy: { proposals: [], treaties: [], wars: [] },
+        pendingActions: [], createdAt: new Date(),
+      });
+      setGameId(newGameDoc.id);
+    } catch (e) { console.error("게임 생성 오류: ", e); setError('게임 생성에 실패했습니다.'); }
+  };
+
+  // 기존 게임 참여 핸들러
+  const handleJoinGame = async () => {
+    if (!joinGameId.trim()) { setError('참여할 게임 ID를 입력해주세요.'); return; }
+    setError('');
+    try {
+      const gameRef = doc(db, 'games', joinGameId);
+      const gameSnap = await getDoc(gameRef);
+      if (gameSnap.exists()) {
+        const gameData = gameSnap.data();
+        // 이미 참여한 플레이어인지 확인
+        if (gameData.players.some(p => p.uid === user.uid)) setGameId(joinGameId);
+        else {
+          // 새로운 플레이어 정보와 보좌관 정보를 추가
+          const playerInfo = { uid: user.uid, name: `플레이어 ${user.uid.substring(0, 4)}`, nation: null, isTurnReady: false, status: 'playing' };
+          const initialAdvisors = {};
+          Object.keys(advisorPersonas).forEach(key => {
+            initialAdvisors[key] = { loyalty: 50, ambition: advisorPersonas[key].ambition };
+          });
+          await updateDoc(gameRef, {
+            players: arrayUnion(playerInfo),
+            [`advisors.${user.uid}`]: initialAdvisors
+          });
+          setGameId(joinGameId);
+        }
+      } else setError('존재하지 않는 게임 ID입니다.');
+    } catch (e) { console.error("게임 참여 오류: ", e); setError('게임 참여에 실패했습니다.'); }
+  };
+
+  return (
+      <div>
+        <h2 style={{textAlign: 'center'}}>게임 로비</h2>
+        {error && <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>}
+        <div style={{ marginBottom: '20px', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+          <h3>새 게임 만들기</h3>
+          <input type="text" value={newGameName} onChange={(e) => setNewGameName(e.target.value)} placeholder="게임 이름" style={{ marginRight: '10px', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <button onClick={handleCreateGame} style={{ padding: '8px 15px', borderRadius: '4px', border: 'none', backgroundColor: '#4CAF50', color: 'white', cursor: 'pointer' }}>생성</button>
+        </div>
+        <div style={{ padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+          <h3>게임 참여하기</h3>
+          <input type="text" value={joinGameId} onChange={(e) => setJoinGameId(e.target.value)} placeholder="게임 ID" style={{ marginRight: '10px', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <button onClick={handleJoinGame} style={{ padding: '8px 15px', borderRadius: '4px', border: 'none', backgroundColor: '#008CBA', color: 'white', cursor: 'pointer' }}>참여</button>
+        </div>
+      </div>
+  );
+}
+// Define PropTypes for Lobby component
+Lobby.propTypes = {
+  db: PropTypes.object.isRequired,
+  user: PropTypes.shape({
+    uid: PropTypes.string.isRequired
+  }).isRequired,
+  setGameId: PropTypes.func.isRequired
+};
+
+// END: Lobby Component
+
+// START: GameRoom Component
+// [13] 게임방 컴포넌트: 실제 게임 플레이가 이루어지는 메인 컨테이너입니다.
+function GameRoom({ db, user, gameId, setGameId }) {
+  const [gameData, setGameData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Firestore의 게임 데이터를 실시간으로 구독하고, 턴 종료 조건을 확인합니다.
+  useEffect(() => {
+    const gameRef = doc(db, 'games', gameId);
+    const unsubscribe = onSnapshot(gameRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = { id: docSnap.id, ...docSnap.data() };
+        setGameData(data);
+        const activePlayers = data.players.filter(p => p.status === 'playing');
+        const allPlayersReady = data.status === 'playing' && activePlayers.length > 0 && activePlayers.every(p => p.isTurnReady);
+        const isMyPlayerHost = data.players[0]?.uid === user.uid; // 첫 번째 플레이어가 호스트 역할
+        if (allPlayersReady && isMyPlayerHost) processTurn(db, data);
+      } else { setGameId(null); }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [db, gameId, setGameId, user.uid]);
+
+  // 국가 선택 핸들러
+  const handleSelectNation = async (nationName) => {
+    if (!gameData) return;
+    const playerIndex = gameData.players.findIndex(p => p.uid === user.uid);
+    if (playerIndex === -1 || gameData.nations[nationName].owner) return;
+    const batch = writeBatch(db);
+    const gameRef = doc(db, 'games', gameId);
+    const updatedPlayers = [...gameData.players];
+    updatedPlayers[playerIndex].nation = nationName;
+    const updatedNations = { ...gameData.nations, [nationName]: { ...gameData.nations[nationName], owner: user.uid } };
+    batch.update(gameRef, { players: updatedPlayers, nations: updatedNations });
+    await batch.commit();
+  };
+
+  // 게임 시작 핸들러
+  const handleStartGame = async () => {
+    if (gameData.players.every(p => p.nation)) await updateDoc(doc(db, 'games', gameId), { status: 'playing' });
+    else alert('모든 플레이어가 국가를 선택해야 게임을 시작할 수 있습니다.');
+  };
+
+  // 턴 종료 핸들러
+  const handleEndTurn = async () => {
+    const playerIndex = gameData.players.findIndex(p => p.uid === user.uid);
+    const updatedPlayers = [...gameData.players];
+    updatedPlayers[playerIndex].isTurnReady = true;
+    await updateDoc(doc(db, 'games', gameId), { players: updatedPlayers });
+  };
+
+  // AI 보좌관에게 내린 자연어 명령을 해석하고 실행하는 함수
+  const executeCommand = async (command) => {
+    // 기본 유효성 검사
+    if (!command || typeof command !== 'object') {
+      return { success: false, message: "명령을 처리할 수 없습니다. 다시 시도해주세요." };
+    }
+    
+    const myNationName = gameData.players.find(p => p.uid === user.uid)?.nation;
+    if (!myNationName) return { success: false, message: "국가를 선택하지 않았습니다." };
+    
+    // 게임 상태 확인
+    if (gameData.status !== 'playing') {
+      return { success: false, message: "게임이 아직 시작되지 않았거나 이미 종료되었습니다." };
+    }
+    
+    // 턴 준비 상태 확인
+    const currentPlayer = gameData.players.find(p => p.uid === user.uid);
+    if (currentPlayer.isTurnReady) {
+      return { success: false, message: "이미 턴을 종료했습니다. 다음 턴까지 기다려주세요." };
+    }
+
+    const gameRef = doc(db, 'games', gameId);
+    let updates = {};
+    let event = null;
+    let loyaltyChange = {};
+
+    // 공격 명령 처리
+    if (command.action === 'attack') {
+      const fromTerritory = Object.values(gameData.map.territories).find(t => t.name === command.from);
+      const toTerritory = Object.values(gameData.map.territories).find(t => t.name === command.to);
+      if (!fromTerritory || !toTerritory) return { success: false, message: "잘못된 영토 이름입니다." };
+      if (fromTerritory.owner !== myNationName) return { success: false, message: "공격을 시작할 영토는 당신의 소유가 아닙니다." };
+      if (fromTerritory.army <= 0) return { success: false, message: "공격에 사용할 군대가 없습니다." };
+      if (!fromTerritory.neighbors.includes(toTerritory.id)) return { success: false, message: "인접하지 않은 영토는 공격할 수 없습니다."};
+      if (toTerritory.owner === myNationName) return { success: false, message: "자신의 영토를 공격할 수 없습니다."};
+
+      updates['pendingActions'] = arrayUnion({ fromNation: myNationName, action: 'attack', details: { fromId: fromTerritory.id, toId: toTerritory.id }, turn: gameData.turn });
+      loyaltyChange = { '국방': 5, '외교': -5, '재무': -2 };
+    }
+    // 군사 훈련 명령 처리
+    else if (command.action === 'build_military') {
+      const engLevel = gameData.nations[myNationName].technologies.engineering.level;
+      // 향상된 공학 기술 효과 적용
+      const discount = 1 - (engLevel * techTree.engineering.discountPerLevel);
+      const baseCost = command.value * 10;
+      const cost = Math.round(baseCost * discount);
+      const savings = baseCost - cost;
+      
+      if (gameData.nations[myNationName].resources < cost) return { 
+        success: false, 
+        message: `자원이 부족합니다. (필요: ${cost}, 보유: ${gameData.nations[myNationName].resources})` 
+      };
+
+      const capitalId = Object.values(gameData.map.territories).find(t => t.owner === myNationName && t.isCapital)?.id;
+      if(!capitalId) return { success: false, message: "수도가 없어 군대를 훈련할 수 없습니다." };
+
+      updates[`map.territories.${capitalId}.army`] = increment(command.value);
+      updates[`nations.${myNationName}.resources`] = increment(-cost);
+      
+      // 이벤트 메시지에 공학 기술 할인 정보 추가
+      let eventMessage = `수도에서 군사 유닛 ${command.value}개를 훈련했습니다.`;
+      if (savings > 0) {
+        eventMessage += ` (공학 기술 할인: ${savings} 자원 절약)`;
+      }
+      
+      event = { 
+        turn: gameData.turn, 
+        type: 'military', 
+        nation: myNationName, 
+        content: eventMessage
+      };
+      
+      loyaltyChange = { '국방': 3, '재무': -1 };
+    }
+    // 기술 연구 명령 처리
+    else if (command.action === 'research') {
+      const techKey = command.tech_name;
+      const tech = techTree[techKey];
+      if (!tech) return { success: false, message: "존재하지 않는 기술입니다." };
+      const currentLevel = gameData.nations[myNationName].technologies[techKey].level;
+      const cost = tech.baseCost * (currentLevel + 1);
+      if (gameData.nations[myNationName].resources < cost) return { success: false, message: `연구 자금이 부족합니다. (필요: ${cost})` };
+
+      updates[`nations.${myNationName}.resources`] = increment(-cost);
+      updates[`nations.${myNationName}.technologies.${techKey}.level`] = increment(1);
+      event = { turn: gameData.turn, type: 'technology', nation: myNationName, content: `'${tech.name}' 기술 연구를 완료했습니다! (레벨 ${currentLevel + 1})` };
+      loyaltyChange = { '재무': 5, '국방': 1, '정보': 1 };
+    }
+    // 부대 이동 명령 처리
+    else if (command.action === 'move_troops') {
+      const fromTerritory = Object.values(gameData.map.territories).find(t => t.name === command.from);
+      const toTerritory = Object.values(gameData.map.territories).find(t => t.name === command.to);
+      
+      // 유효성 검사
+      if (!fromTerritory || !toTerritory) return { success: false, message: "잘못된 영토 이름입니다." };
+      if (fromTerritory.owner !== myNationName) return { success: false, message: "출발 영토는 당신의 소유가 아닙니다." };
+      if (toTerritory.owner !== myNationName) return { success: false, message: "도착 영토는 당신의 소유가 아닙니다." };
+      if (!fromTerritory.neighbors.includes(toTerritory.id)) return { success: false, message: "인접하지 않은 영토로는 이동할 수 없습니다."};
+      
+      const troopsToMove = Math.min(fromTerritory.army - 1, command.value); // 최소 1개 부대는 남겨둠
+      if (troopsToMove <= 0) return { success: false, message: "이동할 수 있는 부대가 없습니다. 최소 1개 부대는 영토에 남겨두어야 합니다." };
+      
+      // 부대 이동 처리
+      updates[`map.territories.${fromTerritory.id}.army`] = increment(-troopsToMove);
+      updates[`map.territories.${toTerritory.id}.army`] = increment(troopsToMove);
+      event = { 
+        turn: gameData.turn, 
+        type: 'troop_movement', 
+        nation: myNationName, 
+        content: `${fromTerritory.name}에서 ${toTerritory.name}으로 ${troopsToMove}개 부대를 이동했습니다.` 
+      };
+      loyaltyChange = { '국방': 2, '정보': 1 };
+    }
+
+    // 보좌관 충성도 변경 적용
+    if (Object.keys(loyaltyChange).length > 0) {
+      for (const advisor in loyaltyChange) {
+        updates[`advisors.${user.uid}.${advisor}.loyalty`] = increment(loyaltyChange[advisor]);
+      }
+    }
+    // 이벤트 로그 추가
+    if (event) updates['events'] = arrayUnion(event);
+
+    try {
+      // Firestore에 모든 변경사항을 한 번에 업데이트
+      await updateDoc(gameRef, updates);
+      return { success: true, message: `명령이 접수되었습니다.` };
+    } catch (error) {
+      console.error("Firestore 업데이트 중 오류 발생:", error);
+      return { success: false, message: "명령을 처리하는 중 오류가 발생했습니다. 다시 시도해주세요." };
+    }
+  };
+
+  if (loading) return <div style={{textAlign: 'center', paddingTop: '50px'}}>게임 데이터를 불러오는 중...</div>;
+  if (!gameData) return <div style={{textAlign: 'center', paddingTop: '50px'}}>게임이 존재하지 않습니다. 로비로 돌아가주세요.</div>;
+
+  const currentPlayer = gameData.players.find(p => p.uid === user.uid);
+  const myNation = currentPlayer ? gameData.nations[currentPlayer.nation] : null;
+
+  // 게임 오버 또는 승리 화면
+  if (currentPlayer && currentPlayer.status === 'eliminated') return <div style={{textAlign: 'center', paddingTop: '50px'}}><h2>당신은 패배했습니다.</h2><p>당신의 국가는 역사 속으로 사라졌습니다.</p><button onClick={() => setGameId(null)}>로비로 돌아가기</button></div>;
+  if (gameData.status === 'finished') return <div style={{textAlign: 'center', paddingTop: '50px'}}><h2>게임 종료!</h2><p>최후의 승자는 {gameData.winner} 입니다!</p><button onClick={() => setGameId(null)}>로비로 돌아가기</button></div>;
+
+  return (
+      <div>
+        <h2 style={{textAlign: 'center'}}>게임방: {gameData.name} (ID: {gameData.id})</h2>
+        <hr/>
+        {gameData.status === 'waiting' ? (
+            // 게임 대기 중 UI
+            <div>
+              <h3>참여 플레이어</h3>
+              <ul>{gameData.players.map(p => <li key={p.uid}>{p.name} ({p.uid.substring(0, 4)}) - 국가: {p.nation || '선택 안 함'}</li>)}</ul>
+              <hr/>
+              <h3>국가 선택</h3>
+              {!currentPlayer.nation ? (
+                  <div>{Object.values(gameData.nations).filter(n => !n.owner).map(nation => <button key={nation.name} onClick={() => handleSelectNation(nation.name)} style={{margin: '5px', padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>{nation.name} 선택</button>)}</div>
+              ) : (<p>당신은 <strong>{myNation.name}</strong>을(를) 선택했습니다. 다른 플레이어를 기다려주세요.</p>)}
+              <hr/>
+              <button onClick={handleStartGame} style={{padding: '10px 20px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>게임 시작</button>
+            </div>
+        ) : (
+            // 게임 플레이 중 UI
+            <div style={{display: 'flex', gap: '20px'}}>
+              <div style={{flex: 3}}>
+                <MapView mapData={gameData.map} nations={gameData.nations} />
+              </div>
+              <div style={{flex: 2}}>
+                <TurnControls gameData={gameData} currentPlayer={currentPlayer} onEndTurn={handleEndTurn} />
+                <Dashboard myNation={myNation} gameData={gameData} />
+                <AdvisorView db={db} gameData={gameData} myNation={myNation} user={user} onCommand={executeCommand} />
+                <DiplomacyView db={db} gameData={gameData} myNation={myNation} />
+              </div>
+              <div style={{flex: 1}}>
+                <TechnologyView myNation={myNation} />
+                <EventLog events={gameData.events} user={user} />
+              </div>
+            </div>
+        )}
+        <hr/>
+        <button onClick={() => setGameId(null)} style={{marginTop: '20px', padding: '8px 15px', backgroundColor: '#666', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>로비로 돌아가기</button>
+      </div>
+  );
+}
+// Define PropTypes for GameRoom component
+GameRoom.propTypes = {
+  db: PropTypes.object.isRequired,
+  user: PropTypes.shape({
+    uid: PropTypes.string.isRequired
+  }).isRequired,
+  gameId: PropTypes.string.isRequired,
+  setGameId: PropTypes.func.isRequired
+};
+
+// END: GameRoom Component
+
+export default App;
