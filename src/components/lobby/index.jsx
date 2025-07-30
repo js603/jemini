@@ -3,9 +3,9 @@
  * 게임 로비 컴포넌트입니다.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { collection, addDoc, doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, updateDoc, arrayUnion, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { useResponsive } from '../../hooks';
 import { techTree, initialMapData, advisorPersonas } from '../../data';
 
@@ -13,6 +13,7 @@ import { techTree, initialMapData, advisorPersonas } from '../../data';
  * Lobby - 게임 로비 컴포넌트
  * 
  * 새 게임을 생성하거나 기존 게임에 참여하는 UI를 제공합니다.
+ * 사용 가능한 게임 목록을 표시하고 선택하여 참여하거나, 게임 ID를 직접 입력하여 참여할 수 있습니다.
  * 모바일 환경에서도 잘 작동하도록 반응형으로 설계되었습니다.
  * 
  * @param {Object} props - 컴포넌트 속성
@@ -29,6 +30,64 @@ function Lobby({ db, user, setGameId, isMobile }) {
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [availableGames, setAvailableGames] = useState([]);
+  const [isLoadingGames, setIsLoadingGames] = useState(false);
+  const [selectedGameId, setSelectedGameId] = useState('');
+
+  /**
+   * 사용 가능한 게임 목록을 가져오는 함수
+   * 
+   * Firebase에서 'waiting' 상태인 게임(아직 시작되지 않은 게임)을 최대 10개까지 가져옵니다.
+   * 게임은 생성 시간 기준 내림차순으로 정렬됩니다(최신 게임이 먼저 표시).
+   * 
+   * 각 게임에 대해 ID, 이름, 플레이어 목록, 생성 시간, 플레이어 수를 추출하여 저장합니다.
+   * 이 정보는 게임 목록 UI에 표시되고 게임 선택 및 참여에 사용됩니다.
+   */
+  const fetchAvailableGames = async () => {
+    setIsLoadingGames(true);
+    setError('');
+    
+    try {
+      // 'waiting' 상태인 게임만 가져오기 (아직 시작되지 않은 게임)
+      const gamesQuery = query(
+        collection(db, 'games'),
+        where('status', '==', 'waiting'),
+        orderBy('createdAt', 'desc'),
+        limit(10)
+      );
+      
+      const querySnapshot = await getDocs(gamesQuery);
+      const games = [];
+      
+      querySnapshot.forEach((doc) => {
+        const gameData = doc.data();
+        games.push({
+          id: doc.id,
+          name: gameData.name,
+          players: gameData.players,
+          createdAt: gameData.createdAt.toDate(),
+          playerCount: gameData.players.length
+        });
+      });
+      
+      setAvailableGames(games);
+    } catch (e) {
+      console.error("게임 목록 가져오기 오류:", e);
+      setError('게임 목록을 가져오는데 실패했습니다: ' + e.message);
+    } finally {
+      setIsLoadingGames(false);
+    }
+  };
+  
+  // 컴포넌트 마운트 시 게임 목록 가져오기
+  useEffect(() => {
+    fetchAvailableGames();
+    
+    // 30초마다 게임 목록 갱신
+    const intervalId = setInterval(fetchAvailableGames, 30000);
+    
+    return () => clearInterval(intervalId);
+  }, [db]);
 
   /**
    * 새 게임 생성 핸들러
@@ -118,10 +177,21 @@ function Lobby({ db, user, setGameId, isMobile }) {
 
   /**
    * 기존 게임 참여 핸들러
+   * 
+   * 사용자가 게임에 참여할 수 있는 세 가지 방법을 지원합니다:
+   * 1. 게임 목록에서 '참여' 버튼 클릭 (gameIdToJoin 매개변수로 전달)
+   * 2. 게임 목록에서 게임 선택 후 하단 '참여' 버튼 클릭 (selectedGameId 상태 사용)
+   * 3. 게임 ID 직접 입력 후 '참여' 버튼 클릭 (joinGameId 상태 사용)
+   * 
+   * 우선순위는 1 > 2 > 3 순서입니다.
+   * 
+   * @param {string} gameIdToJoin - 선택적 매개변수. 게임 목록에서 직접 '참여' 버튼을 클릭한 경우 해당 게임 ID
    */
-  const handleJoinGame = async () => {
-    if (!joinGameId.trim()) { 
-      setError('참여할 게임 ID를 입력해주세요.'); 
+  const handleJoinGame = async (gameIdToJoin) => {
+    const targetGameId = gameIdToJoin || selectedGameId || joinGameId;
+    
+    if (!targetGameId.trim()) { 
+      setError('참여할 게임을 선택하거나 ID를 입력해주세요.'); 
       return; 
     }
     
@@ -130,7 +200,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
     setIsJoining(true);
     
     try {
-      const gameRef = doc(db, 'games', joinGameId);
+      const gameRef = doc(db, 'games', targetGameId);
       const gameSnap = await getDoc(gameRef);
       
       if (gameSnap.exists()) {
@@ -142,7 +212,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
           
           // 잠시 후 게임으로 이동
           setTimeout(() => {
-            setGameId(joinGameId);
+            setGameId(targetGameId);
           }, 1500);
         } else {
           // 새로운 플레이어 정보와 보좌관 정보를 추가
@@ -166,10 +236,14 @@ function Lobby({ db, user, setGameId, isMobile }) {
           
           setSuccessMessage('게임에 성공적으로 참여했습니다! 게임으로 이동합니다...');
           setJoinGameId('');
+          setSelectedGameId('');
+          
+          // 게임 목록 갱신
+          fetchAvailableGames();
           
           // 잠시 후 게임으로 이동
           setTimeout(() => {
-            setGameId(joinGameId);
+            setGameId(targetGameId);
           }, 1500);
         }
       } else {
@@ -262,39 +336,118 @@ function Lobby({ db, user, setGameId, isMobile }) {
             </h3>
           </div>
           <div className="p-6">
-            <div className="mb-4">
-              <label htmlFor="joinGameId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                게임 ID
-              </label>
-              <input 
-                id="joinGameId"
-                type="text" 
-                value={joinGameId} 
-                onChange={(e) => setJoinGameId(e.target.value)} 
-                placeholder="참여할 게임의 ID를 입력하세요" 
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              />
-            </div>
-            <button 
-              onClick={handleJoinGame} 
-              disabled={isJoining || !joinGameId.trim()}
-              className={`w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                isJoining || !joinGameId.trim() ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {isJoining ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            {/* 사용 가능한 게임 목록 - 사용자가 참여할 수 있는 게임 목록을 표시합니다 */}
+            <div className="mb-6">
+              <h4 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-3">사용 가능한 게임 목록</h4>
+              
+              {/* 로딩 중 상태 표시 */}
+              {isLoadingGames ? (
+                <div className="flex justify-center items-center py-8">
+                  <svg className="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  게임 참여 중...
-                </span>
-              ) : "게임 참여"}
-            </button>
+                </div>
+              ) : availableGames.length > 0 ? (
+                // 게임 목록이 있는 경우 목록 표시
+                <div className="border border-gray-200 dark:border-gray-700 rounded-md overflow-hidden">
+                  <ul className="divide-y divide-gray-200 dark:divide-gray-700 max-h-60 overflow-y-auto">
+                    {availableGames.map((game) => (
+                      <li 
+                        key={game.id}
+                        // 게임 항목 클릭 시 해당 게임 선택
+                        onClick={() => setSelectedGameId(game.id)}
+                        // 선택된 게임은 배경색으로 강조 표시
+                        className={`p-3 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                          selectedGameId === game.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <h5 className="font-medium text-gray-800 dark:text-gray-200">{game.name}</h5>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              플레이어: {game.playerCount}명 | ID: {game.id.substring(0, 8)}...
+                            </p>
+                          </div>
+                          {/* 각 게임 항목에 직접 참여 버튼 제공 */}
+                          <button
+                            onClick={(e) => {
+                              // 버블링 방지 (부모 요소의 클릭 이벤트가 발생하지 않도록)
+                              e.stopPropagation();
+                              // 해당 게임 ID로 직접 참여
+                              handleJoinGame(game.id);
+                            }}
+                            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-md transition-colors"
+                          >
+                            참여
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                // 게임 목록이 없는 경우 안내 메시지와 새로고침 버튼 표시
+                <div className="text-center py-8 border border-gray-200 dark:border-gray-700 rounded-md">
+                  <p className="text-gray-500 dark:text-gray-400">현재 참여 가능한 게임이 없습니다.</p>
+                  <button 
+                    onClick={fetchAvailableGames}
+                    className="mt-2 text-blue-500 hover:text-blue-600 text-sm font-medium"
+                  >
+                    새로고침
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            {/* 게임 ID로 직접 참여 - 게임 ID를 알고 있는 경우 직접 입력하여 참여할 수 있습니다 */}
+            <div className="mb-4">
+              {/* 구분선 - 두 가지 참여 방법을 시각적으로 구분합니다 */}
+              <div className="flex items-center mb-3">
+                <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+                <span className="mx-3 text-sm text-gray-500 dark:text-gray-400">또는</span>
+                <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+              </div>
+              
+              <label htmlFor="joinGameId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                게임 ID로 직접 참여
+              </label>
+              {/* 입력 필드와 버튼을 하나의 그룹으로 표시 */}
+              <div className="flex">
+                <input 
+                  id="joinGameId"
+                  type="text" 
+                  value={joinGameId} 
+                  onChange={(e) => {
+                    setJoinGameId(e.target.value);
+                    setSelectedGameId(''); // ID 입력 시 선택된 게임 초기화 (두 방식 간 충돌 방지)
+                  }} 
+                  placeholder="참여할 게임의 ID를 입력하세요" 
+                  className="flex-grow px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-l-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                />
+                {/* 참여 버튼 - 게임 ID 입력 또는 게임 선택이 있을 때만 활성화 */}
+                <button 
+                  onClick={() => handleJoinGame()} 
+                  disabled={isJoining || (!joinGameId.trim() && !selectedGameId)}
+                  className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-r-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                    isJoining || (!joinGameId.trim() && !selectedGameId) ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  {isJoining ? (
+                    <span className="flex items-center justify-center">
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      참여 중...
+                    </span>
+                  ) : "참여"}
+                </button>
+              </div>
+            </div>
             
             <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-              <p>다른 플레이어가 공유한 게임 ID를 입력하여 기존 게임에 참여할 수 있습니다.</p>
+              <p>위 목록에서 게임을 선택하거나 게임 ID를 직접 입력하여 참여할 수 있습니다.</p>
             </div>
           </div>
         </div>
