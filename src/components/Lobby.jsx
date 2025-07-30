@@ -31,35 +31,97 @@ function Lobby({ db, user, setGameId, isMobile }) {
    * 
    * 각 게임에 대해 ID, 이름, 플레이어 목록, 생성 시간, 플레이어 수를 추출하여 저장합니다.
    * 이 정보는 게임 목록 UI에 표시되고 게임 선택 및 참여에 사용됩니다.
+   * 
+   * 인덱스 오류 처리:
+   * 이 함수는 Firestore 복합 인덱스 오류를 처리하기 위한 이중 전략을 사용합니다:
+   * 1. 먼저 최적의 쿼리(status + createdAt 정렬)를 시도합니다. 이 쿼리는 복합 인덱스가 필요합니다.
+   * 2. 인덱스 오류가 발생하면 대체 쿼리로 전환합니다:
+   *    - 더 많은 게임을 가져와서 클라이언트에서 필터링 및 정렬
+   *    - 성능은 떨어지지만 인덱스가 없어도 작동합니다
+   * 3. 관리자를 위한 상세한 오류 메시지를 콘솔에 기록합니다
+   * 
+   * 이 접근 방식은 인덱스가 생성되지 않은 환경에서도 애플리케이션이 계속 작동하도록 합니다.
+   * 최적의 성능을 위해서는 Firebase 콘솔에서 적절한 인덱스를 생성해야 합니다.
    */
   const fetchAvailableGames = async () => {
     setIsLoadingGames(true);
     setError('');
     
     try {
-      // 'waiting' 상태인 게임만 가져오기 (아직 시작되지 않은 게임)
-      const gamesQuery = query(
-        collection(db, 'games'),
-        where('status', '==', 'waiting'),
-        orderBy('createdAt', 'desc'),
-        limit(10)
-      );
-      
-      const querySnapshot = await getDocs(gamesQuery);
-      const games = [];
-      
-      querySnapshot.forEach((doc) => {
-        const gameData = doc.data();
-        games.push({
-          id: doc.id,
-          name: gameData.name,
-          players: gameData.players,
-          createdAt: gameData.createdAt.toDate(),
-          playerCount: gameData.players.length
+      // 먼저 인덱스가 있는지 확인하기 위해 복합 쿼리 시도
+      try {
+        // 'waiting' 상태인 게임만 가져오기 (아직 시작되지 않은 게임)
+        const gamesQuery = query(
+          collection(db, 'games'),
+          where('status', '==', 'waiting'),
+          orderBy('createdAt', 'desc'),
+          limit(10)
+        );
+        
+        const querySnapshot = await getDocs(gamesQuery);
+        const games = [];
+        
+        querySnapshot.forEach((doc) => {
+          const gameData = doc.data();
+          games.push({
+            id: doc.id,
+            name: gameData.name,
+            players: gameData.players,
+            createdAt: gameData.createdAt.toDate(),
+            playerCount: gameData.players.length
+          });
         });
-      });
-      
-      setAvailableGames(games);
+        
+        setAvailableGames(games);
+      } catch (indexError) {
+        // 인덱스 오류가 발생하면 대체 쿼리 사용
+        console.warn("인덱스 오류로 인해 대체 쿼리를 사용합니다:", indexError);
+        
+        // 관리자를 위한 인덱스 생성 안내 메시지 (콘솔에만 표시)
+        if (indexError.message && indexError.message.includes("requires an index")) {
+          console.error(`
+            ============================================================
+            Firebase 인덱스 오류 감지됨!
+            
+            성능 최적화를 위해 Firebase 콘솔에서 다음 필드에 대한 복합 인덱스를 생성하세요:
+            - 컬렉션: games
+            - 필드: status (Ascending), createdAt (Descending)
+            
+            오류 메시지에 포함된 링크를 통해 직접 인덱스를 생성할 수 있습니다.
+            이 인덱스가 없으면 애플리케이션은 계속 작동하지만 성능이 저하될 수 있습니다.
+            ============================================================
+          `);
+        }
+        
+        // 대체 쿼리: 모든 게임을 가져온 후 클라이언트에서 필터링
+        const simpleQuery = query(
+          collection(db, 'games'),
+          limit(50) // 더 많은 게임을 가져와서 필터링할 수 있도록 함
+        );
+        
+        const querySnapshot = await getDocs(simpleQuery);
+        const games = [];
+        
+        querySnapshot.forEach((doc) => {
+          const gameData = doc.data();
+          // 클라이언트에서 'waiting' 상태인 게임만 필터링
+          if (gameData.status === 'waiting') {
+            games.push({
+              id: doc.id,
+              name: gameData.name,
+              players: gameData.players,
+              createdAt: gameData.createdAt.toDate(),
+              playerCount: gameData.players.length
+            });
+          }
+        });
+        
+        // 클라이언트에서 생성 시간 기준 내림차순 정렬
+        games.sort((a, b) => b.createdAt - a.createdAt);
+        
+        // 최대 10개만 표시
+        setAvailableGames(games.slice(0, 10));
+      }
     } catch (e) {
       console.error("게임 목록 가져오기 오류:", e);
       setError('게임 목록을 가져오는데 실패했습니다: ' + e.message);
