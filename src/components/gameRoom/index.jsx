@@ -104,7 +104,7 @@ function GameRoom({ db, user, gameId, setGameId }) {
       <div className="bg-gradient-to-r from-indigo-800 to-purple-800 p-4 text-white">
         <div className="flex justify-between items-center">
           <h2 className="text-xl md:text-2xl font-bold">{gameData.name}</h2>
-          <div className="text-sm opacity-75">ID: {gameData.id.substring(0, 8)}...</div>
+          <div className="text-sm opacity-75">ID: {gameData.id}</div>
         </div>
         <div className="mt-2 text-sm flex flex-wrap gap-2">
           <span className="bg-indigo-900/70 px-3 py-1 rounded-full flex items-center">

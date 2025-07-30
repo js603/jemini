@@ -160,7 +160,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
         createdAt: new Date(),
       });
       
-      setSuccessMessage(`게임이 성공적으로 생성되었습니다! 게임 ID: ${newGameDoc.id.substring(0, 8)}...`);
+      setSuccessMessage(`게임이 성공적으로 생성되었습니다! 게임 ID: ${newGameDoc.id}`);
       setNewGameName('');
       
       // 잠시 후 게임으로 이동
@@ -386,7 +386,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
                           <div className="flex-1">
                             <h5 className="font-medium text-gray-800 dark:text-gray-200 text-lg">{game.name}</h5>
                             <p className="text-sm text-gray-500 dark:text-gray-400">
-                              플레이어: {game.playerCount}명 | ID: {game.id.substring(0, 8)}...
+                              플레이어: {game.playerCount}명 | ID: {game.id}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                               생성: {game.createdAt.toLocaleString()}
@@ -444,7 +444,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
                       선택된 게임: {availableGames.find(g => g.id === selectedGameId)?.name || selectedGameId}
                     </h5>
                     <p className="text-sm text-blue-600 dark:text-blue-400">
-                      ID: {selectedGameId.substring(0, 8)}...
+                      ID: {selectedGameId}
                     </p>
                   </div>
                   <div className="flex gap-2">
