@@ -1,17 +1,28 @@
-/**
- * @file App.jsx
- * 애플리케이션의 최상위 컴포넌트입니다.
- */
-
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import { useMediaQuery } from 'react-responsive';
-
-// Import services
-import { firebase } from './services';
 
 // Import components
 import GameRoom from './components/GameRoom';
 import Lobby from './components/Lobby';
+
+// Import services
+import aiService from './services/ai';
+
+/**
+ * Firebase 연동 설정: Firebase 프로젝트의 구성 정보입니다.
+ */
+const firebaseConfig = {
+  apiKey: 'AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8',
+  authDomain: 'text-adventure-game-cb731.firebaseapp.com',
+  projectId: 'text-adventure-game-cb731',
+  storageBucket: 'text-adventure-game-cb731.appspot.com',
+  messagingSenderId: '1092941614820',
+  appId: '1:1092941614820:web:5545f36014b73c268026f1',
+  measurementId: 'G-FNGF42T1FP',
+};
 
 /**
  * 최상위 컴포넌트: Firebase 초기화, 사용자 인증 및 게임 상태에 따른 화면 전환을 담당합니다.
@@ -24,14 +35,14 @@ function App() {
 
   // 컴포넌트 마운트 시 Firebase 초기화 및 익명 로그인 처리
   useEffect(() => {
-    // Firebase 서비스에서 초기화 함수 사용
-    const { auth, db: dbInstance } = firebase.initializeFirebase();
+    const app = initializeApp(firebaseConfig);
+    const authInstance = getAuth(app);
+    const dbInstance = getFirestore(app);
     setDb(dbInstance);
     
-    // 인증 상태 변경 리스너 설정
-    const unsubscribe = firebase.onAuthStateChangedListener(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(authInstance, (currentUser) => {
       if (currentUser) setUser(currentUser);
-      else firebase.signInAnonymouslyWithFirebase(auth).catch(error => console.error("익명 로그인 실패:", error));
+      else signInAnonymously(authInstance).catch(error => console.error("익명 로그인 실패:", error));
     });
     
     return () => unsubscribe();
@@ -61,7 +72,7 @@ function App() {
         <main>
           {gameId ? 
             <GameRoom db={db} user={user} gameId={gameId} setGameId={setGameId} /> : 
-            <Lobby db={db} user={user} setGameId={setGameId} isMobile={isMobile} />
+            <Lobby db={db} user={user} setGameId={setGameId} />
           }
         </main>
       </div>
