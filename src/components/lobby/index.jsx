@@ -289,7 +289,10 @@ function Lobby({ db, user, setGameId, isMobile }) {
           </div>
           <div className="p-6">
             <div className="mb-4">
-              <label htmlFor="newGameName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label htmlFor="newGameName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1 text-indigo-500" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                </svg>
                 게임 이름
               </label>
               <input 
@@ -304,7 +307,7 @@ function Lobby({ db, user, setGameId, isMobile }) {
             <button 
               onClick={handleCreateGame} 
               disabled={isCreating || !newGameName.trim()}
-              className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+              className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
                 isCreating || !newGameName.trim() ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
@@ -316,7 +319,14 @@ function Lobby({ db, user, setGameId, isMobile }) {
                   </svg>
                   게임 생성 중...
                 </span>
-              ) : "게임 생성"}
+              ) : (
+                <span className="flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                  </svg>
+                  새 게임 생성하기
+                </span>
+              )}
             </button>
             
             <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
@@ -338,7 +348,14 @@ function Lobby({ db, user, setGameId, isMobile }) {
           <div className="p-6">
             {/* 사용 가능한 게임 목록 - 사용자가 참여할 수 있는 게임 목록을 표시합니다 */}
             <div className="mb-6">
-              <h4 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-3">사용 가능한 게임 목록</h4>
+              <h4 className="text-lg font-medium text-gray-800 dark:text-gray-200 mb-3 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                  <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                </svg>
+                참여 가능한 게임 목록
+                <span className="ml-2 text-sm text-blue-500 font-normal">(아래 목록에서 선택하세요)</span>
+              </h4>
               
               {/* 로딩 중 상태 표시 */}
               {isLoadingGames ? (
@@ -350,37 +367,52 @@ function Lobby({ db, user, setGameId, isMobile }) {
                 </div>
               ) : availableGames.length > 0 ? (
                 // 게임 목록이 있는 경우 목록 표시
-                <div className="border border-gray-200 dark:border-gray-700 rounded-md overflow-hidden">
-                  <ul className="divide-y divide-gray-200 dark:divide-gray-700 max-h-60 overflow-y-auto">
+                <div className="border-2 border-blue-300 dark:border-blue-700 rounded-md overflow-hidden shadow-md">
+                  <div className="bg-blue-50 dark:bg-blue-900/30 p-2 border-b border-blue-200 dark:border-blue-800">
+                    <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">게임을 선택하고 참여 버튼을 클릭하세요</p>
+                  </div>
+                  <ul className="divide-y divide-gray-200 dark:divide-gray-700 max-h-72 overflow-y-auto">
                     {availableGames.map((game) => (
                       <li 
                         key={game.id}
                         // 게임 항목 클릭 시 해당 게임 선택
                         onClick={() => setSelectedGameId(game.id)}
                         // 선택된 게임은 배경색으로 강조 표시
-                        className={`p-3 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                          selectedGameId === game.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''
+                        className={`p-4 cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                          selectedGameId === game.id ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500' : ''
                         }`}
                       >
                         <div className="flex justify-between items-center">
-                          <div>
-                            <h5 className="font-medium text-gray-800 dark:text-gray-200">{game.name}</h5>
+                          <div className="flex-1">
+                            <h5 className="font-medium text-gray-800 dark:text-gray-200 text-lg">{game.name}</h5>
                             <p className="text-sm text-gray-500 dark:text-gray-400">
                               플레이어: {game.playerCount}명 | ID: {game.id.substring(0, 8)}...
                             </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                              생성: {game.createdAt.toLocaleString()}
+                            </p>
                           </div>
-                          {/* 각 게임 항목에 직접 참여 버튼 제공 */}
-                          <button
-                            onClick={(e) => {
-                              // 버블링 방지 (부모 요소의 클릭 이벤트가 발생하지 않도록)
-                              e.stopPropagation();
-                              // 해당 게임 ID로 직접 참여
-                              handleJoinGame(game.id);
-                            }}
-                            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-md transition-colors"
-                          >
-                            참여
-                          </button>
+                          <div className="flex items-center">
+                            {selectedGameId === game.id && (
+                              <span className="mr-3 text-blue-500 dark:text-blue-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              </span>
+                            )}
+                            {/* 각 게임 항목에 직접 참여 버튼 제공 */}
+                            <button
+                              onClick={(e) => {
+                                // 버블링 방지 (부모 요소의 클릭 이벤트가 발생하지 않도록)
+                                e.stopPropagation();
+                                // 해당 게임 ID로 직접 참여
+                                handleJoinGame(game.id);
+                              }}
+                              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-md transition-colors font-medium"
+                            >
+                              참여하기
+                            </button>
+                          </div>
                         </div>
                       </li>
                     ))}
@@ -388,17 +420,61 @@ function Lobby({ db, user, setGameId, isMobile }) {
                 </div>
               ) : (
                 // 게임 목록이 없는 경우 안내 메시지와 새로고침 버튼 표시
-                <div className="text-center py-8 border border-gray-200 dark:border-gray-700 rounded-md">
-                  <p className="text-gray-500 dark:text-gray-400">현재 참여 가능한 게임이 없습니다.</p>
+                <div className="text-center py-8 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-800">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-gray-500 dark:text-gray-400 mb-2">현재 참여 가능한 게임이 없습니다.</p>
                   <button 
                     onClick={fetchAvailableGames}
-                    className="mt-2 text-blue-500 hover:text-blue-600 text-sm font-medium"
+                    className="mt-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-md transition-colors font-medium"
                   >
-                    새로고침
+                    게임 목록 새로고침
                   </button>
                 </div>
               )}
             </div>
+            
+            {/* 선택한 게임 참여 버튼 - 목록에서 게임을 선택한 경우 표시 */}
+            {selectedGameId && (
+              <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+                  <div>
+                    <h5 className="font-medium text-blue-800 dark:text-blue-300">
+                      선택된 게임: {availableGames.find(g => g.id === selectedGameId)?.name || selectedGameId}
+                    </h5>
+                    <p className="text-sm text-blue-600 dark:text-blue-400">
+                      ID: {selectedGameId.substring(0, 8)}...
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setSelectedGameId('')}
+                      className="px-3 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 text-sm rounded-md transition-colors font-medium"
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={() => handleJoinGame()}
+                      disabled={isJoining}
+                      className={`px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                        isJoining ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    >
+                      {isJoining ? (
+                        <span className="flex items-center justify-center">
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          참여 중...
+                        </span>
+                      ) : "선택한 게임에 참여하기"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* 게임 ID로 직접 참여 - 게임 ID를 알고 있는 경우 직접 입력하여 참여할 수 있습니다 */}
             <div className="mb-4">
@@ -409,7 +485,10 @@ function Lobby({ db, user, setGameId, isMobile }) {
                 <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
               </div>
               
-              <label htmlFor="joinGameId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label htmlFor="joinGameId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
                 게임 ID로 직접 참여
               </label>
               {/* 입력 필드와 버튼을 하나의 그룹으로 표시 */}
@@ -425,12 +504,12 @@ function Lobby({ db, user, setGameId, isMobile }) {
                   placeholder="참여할 게임의 ID를 입력하세요" 
                   className="flex-grow px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-l-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                 />
-                {/* 참여 버튼 - 게임 ID 입력 또는 게임 선택이 있을 때만 활성화 */}
+                {/* 참여 버튼 - 게임 ID 입력이 있을 때만 활성화 */}
                 <button 
                   onClick={() => handleJoinGame()} 
-                  disabled={isJoining || (!joinGameId.trim() && !selectedGameId)}
+                  disabled={isJoining || !joinGameId.trim()}
                   className={`px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-r-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                    isJoining || (!joinGameId.trim() && !selectedGameId) ? 'opacity-50 cursor-not-allowed' : ''
+                    isJoining || !joinGameId.trim() ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 >
                   {isJoining ? (
@@ -444,18 +523,34 @@ function Lobby({ db, user, setGameId, isMobile }) {
                   ) : "참여"}
                 </button>
               </div>
-            </div>
-            
-            <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-              <p>위 목록에서 게임을 선택하거나 게임 ID를 직접 입력하여 참여할 수 있습니다.</p>
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                게임 ID를 알고 있는 경우에만 사용하세요. 일반적으로는 위 목록에서 게임을 선택하는 것이 좋습니다.
+              </p>
             </div>
           </div>
         </div>
       </div>
       
-      <div className="mt-8 text-center text-gray-600 dark:text-gray-400">
-        <p className="text-sm">게임 ID는 다른 플레이어들과 공유하여 같은 게임에 참여할 수 있습니다.</p>
-        <p className="text-sm mt-2">각 플레이어는 서로 다른 국가를 선택하여 플레이합니다.</p>
+      <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-center">
+        <h3 className="text-lg font-medium text-blue-800 dark:text-blue-300 mb-2">게임 참여 방법</h3>
+        <div className="flex flex-col md:flex-row justify-center items-center gap-4 md:gap-8 mb-4">
+          <div className="flex items-center">
+            <div className="bg-blue-100 dark:bg-blue-800 rounded-full w-8 h-8 flex items-center justify-center mr-3 text-blue-600 dark:text-blue-300">1</div>
+            <p className="text-gray-700 dark:text-gray-300">목록에서 게임 선택</p>
+          </div>
+          <div className="hidden md:block text-gray-400">→</div>
+          <div className="flex items-center">
+            <div className="bg-blue-100 dark:bg-blue-800 rounded-full w-8 h-8 flex items-center justify-center mr-3 text-blue-600 dark:text-blue-300">2</div>
+            <p className="text-gray-700 dark:text-gray-300">참여하기 버튼 클릭</p>
+          </div>
+          <div className="hidden md:block text-gray-400">→</div>
+          <div className="flex items-center">
+            <div className="bg-blue-100 dark:bg-blue-800 rounded-full w-8 h-8 flex items-center justify-center mr-3 text-blue-600 dark:text-blue-300">3</div>
+            <p className="text-gray-700 dark:text-gray-300">국가 선택 후 게임 시작</p>
+          </div>
+        </div>
+        <p className="text-sm text-gray-600 dark:text-gray-400">게임 ID는 다른 플레이어들과 공유하여 같은 게임에 참여할 수 있습니다.</p>
+        <p className="text-sm mt-1 text-gray-600 dark:text-gray-400">각 플레이어는 서로 다른 국가를 선택하여 플레이합니다.</p>
       </div>
     </div>
   );
