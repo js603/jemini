@@ -1,0 +1,652 @@
+/* TechnologyTree.css - 대형 SLG 기술 트리 스타일 */
+
+.technology-tree {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    color: #ffffff;
+}
+
+/* 헤더 스타일 */
+.tech-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.tech-header h2 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.research-points {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.points-icon {
+    font-size: 24px;
+}
+
+.points-value {
+    color: #ffd700;
+    font-size: 20px;
+}
+
+/* 카테고리 버튼 스타일 */
+.tech-categories {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+}
+
+.category-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    color: #ffffff;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.category-button:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.category-button.active {
+    background: rgba(255, 255, 255, 0.3);
+    border-color: #ffd700;
+    box-shadow: 0 0 16px rgba(255, 215, 0, 0.4);
+}
+
+.category-icon {
+    font-size: 18px;
+}
+
+.category-name {
+    font-weight: 600;
+}
+
+/* 메인 콘텐츠 영역 */
+.tech-content {
+    display: grid;
+    grid-template-columns: 1fr 350px;
+    gap: 24px;
+    min-height: 600px;
+}
+
+/* 기술 트리 컨테이너 */
+.tech-tree-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 20px;
+    overflow-y: auto;
+    max-height: 800px;
+}
+
+/* 모든 기술 표시 모드 */
+.tech-tree-all {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+}
+
+.category-section {
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.category-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 20px 0;
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.category-title .category-icon {
+    font-size: 28px;
+}
+
+/* 카테고리별 기술 표시 모드 */
+.tech-tree-category {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* 티어 섹션 */
+.tier-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tier-label {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffd700;
+    text-align: center;
+    padding: 8px 16px;
+    background: rgba(255, 215, 0, 0.2);
+    border-radius: 20px;
+    border: 2px solid rgba(255, 215, 0, 0.4);
+}
+
+.tier-techs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+/* 기술 노드 스타일 */
+.tech-node {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    background: linear-gradient(145deg, #2a5298, #1e3c72);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-height: 120px;
+    text-align: center;
+}
+
+.tech-node:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+.tech-node.researched {
+    background: linear-gradient(145deg, #27ae60, #2ecc71);
+    border-color: #2ecc71;
+    box-shadow: 0 0 16px rgba(46, 204, 113, 0.4);
+}
+
+.tech-node.researchable {
+    border-color: #ffd700;
+    box-shadow: 0 0 12px rgba(255, 215, 0, 0.3);
+}
+
+.tech-node.selected {
+    border-color: #e74c3c;
+    box-shadow: 0 0 20px rgba(231, 76, 60, 0.5);
+    transform: translateY(-2px);
+}
+
+.tech-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+.tech-icon.large {
+    font-size: 36px;
+}
+
+.tech-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.tech-name {
+    margin: 0;
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.tech-cost {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #cccccc;
+}
+
+.cost-icon {
+    font-size: 14px;
+}
+
+.cost-value {
+    font-weight: bold;
+    color: #ffd700;
+}
+
+/* 기술 툴팁 */
+.tech-tooltip {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 280px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.95);
+    border: 2px solid #ffd700;
+    border-radius: 8px;
+    color: #ffffff;
+    font-size: 12px;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.tech-node:hover .tech-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(8px);
+}
+
+.tech-tooltip h4 {
+    margin: 0 0 8px 0;
+    color: #ffd700;
+    font-size: 14px;
+}
+
+.tech-tooltip p {
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+}
+
+.tech-effects,
+.tech-prerequisites,
+.tech-unlocks {
+    margin-bottom: 8px;
+}
+
+.tech-effects strong,
+.tech-prerequisites strong,
+.tech-unlocks strong {
+    color: #ffd700;
+}
+
+.tech-locked-reason {
+    color: #e74c3c;
+    font-weight: bold;
+    margin-top: 8px;
+}
+
+/* 기술 세부 정보 패널 */
+.tech-details-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 20px;
+    overflow-y: auto;
+    max-height: 800px;
+}
+
+.tech-details-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.tech-details-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.tech-details-header h3 {
+    margin: 0;
+    font-size: 24px;
+    color: #ffd700;
+    flex: 1;
+}
+
+.tech-tier {
+    padding: 4px 12px;
+    background: rgba(255, 215, 0, 0.2);
+    border: 1px solid rgba(255, 215, 0, 0.4);
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: bold;
+    color: #ffd700;
+}
+
+.tech-description {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #cccccc;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+/* 효과 목록 */
+.tech-effects-list h4,
+.tech-prerequisites-list h4,
+.tech-unlocks-list h4 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    color: #ffd700;
+}
+
+.tech-effects-list ul,
+.tech-prerequisites-list ul,
+.unlocks-items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.effect-item,
+.prerequisite-item,
+.unlock-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    transition: background 0.2s ease;
+}
+
+.effect-item:hover,
+.prerequisite-item:hover,
+.unlock-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.prerequisite-item {
+    cursor: pointer;
+}
+
+.prerequisite-item.researched {
+    background: rgba(46, 204, 113, 0.2);
+}
+
+.prerequisite-item.missing {
+    background: rgba(231, 76, 60, 0.2);
+}
+
+.effect-icon,
+.prereq-icon,
+.unlock-icon {
+    font-size: 16px;
+}
+
+.effect-name,
+.prereq-name,
+.unlock-name {
+    flex: 1;
+    font-size: 13px;
+}
+
+.effect-value {
+    font-weight: bold;
+    color: #ffd700;
+}
+
+/* 해금 항목 섹션 */
+.unlocks-section {
+    margin-bottom: 16px;
+}
+
+.unlocks-section h5 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #ffd700;
+}
+
+/* 기술 상태 및 비용 */
+.tech-status {
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.researched-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #2ecc71;
+}
+
+.status-icon {
+    font-size: 20px;
+}
+
+.research-cost h4 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    color: #ffd700;
+}
+
+.cost-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.cost-label {
+    flex: 1;
+}
+
+.cost-value {
+    font-weight: bold;
+    color: #e74c3c;
+}
+
+.cost-available {
+    color: #2ecc71;
+}
+
+.research-locked-reason {
+    color: #e74c3c;
+    font-weight: bold;
+    margin-top: 12px;
+    padding: 8px;
+    background: rgba(231, 76, 60, 0.1);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* 연구 버튼 */
+.research-button {
+    padding: 12px 24px;
+    background: linear-gradient(145deg, #2ecc71, #27ae60);
+    border: none;
+    border-radius: 8px;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.research-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(46, 204, 113, 0.4);
+}
+
+/* 확인 모달 */
+.confirmation-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.confirmation-content {
+    background: linear-gradient(145deg, #2a5298, #1e3c72);
+    border: 2px solid #ffd700;
+    border-radius: 12px;
+    padding: 32px;
+    max-width: 400px;
+    width: 90%;
+    color: #ffffff;
+    text-align: center;
+}
+
+.confirmation-content h3 {
+    margin: 0 0 16px 0;
+    color: #ffd700;
+    font-size: 20px;
+}
+
+.confirmation-content p {
+    margin: 0 0 20px 0;
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+.confirmation-cost {
+    margin-bottom: 24px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.confirmation-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.confirm-button,
+.cancel-button {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.confirm-button {
+    background: linear-gradient(145deg, #2ecc71, #27ae60);
+    color: #ffffff;
+}
+
+.confirm-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(46, 204, 113, 0.4);
+}
+
+.cancel-button {
+    background: linear-gradient(145deg, #e74c3c, #c0392b);
+    color: #ffffff;
+}
+
+.cancel-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(231, 76, 60, 0.4);
+}
+
+/* 반응형 디자인 */
+@media (max-width: 1200px) {
+    .tech-content {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .tech-details-container {
+        max-height: 400px;
+    }
+}
+
+@media (max-width: 768px) {
+    .technology-tree {
+        padding: 12px;
+    }
+
+    .tech-header {
+        flex-direction: column;
+        gap: 16px;
+        text-align: center;
+    }
+
+    .tech-categories {
+        justify-content: center;
+    }
+
+    .category-button {
+        padding: 8px 16px;
+        font-size: 12px;
+    }
+
+    .tier-techs {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+    }
+
+    .tech-node {
+        min-height: 100px;
+        padding: 12px;
+    }
+
+    .tech-tooltip {
+        width: 240px;
+    }
+}
+
+@media (max-width: 480px) {
+    .tier-techs {
+        grid-template-columns: 1fr;
+    }
+
+    .tech-tooltip {
+        width: 200px;
+        font-size: 11px;
+    }
+
+    .confirmation-content {
+        padding: 20px;
+    }
+}

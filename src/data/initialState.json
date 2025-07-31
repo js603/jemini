@@ -1,0 +1,10 @@
+{
+  "turn": 1,
+  "population": 100,
+  "gold": 200,
+  "food": 150,
+  "army": 50,
+  "trust": 50,
+  "history": [],
+  "currentEventId": "start"
+}

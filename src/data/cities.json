@@ -1,0 +1,38 @@
+[
+  {
+    "id": "city_1",
+    "name": "베르그",
+    "population": 400,
+    "foodProduction": 20,
+    "armyStationed": 15,
+    "wood": 10,
+    "stone": 5,
+    "iron": 2,
+    "mana": 1,
+    "labor": 30
+  },
+  {
+    "id": "city_2",
+    "name": "아르테미스",
+    "population": 300,
+    "foodProduction": 15,
+    "armyStationed": 10,
+    "wood": 7,
+    "stone": 6,
+    "iron": 3,
+    "mana": 2,
+    "labor": 25
+  },
+  {
+    "id": "city_3",
+    "name": "칼리스타",
+    "population": 300,
+    "foodProduction": 10,
+    "armyStationed": 5,
+    "wood": 6,
+    "stone": 4,
+    "iron": 2,
+    "mana": 3,
+    "labor": 20
+  }
+]

@@ -1,0 +1,831 @@
+[
+  {
+    "id": "militia",
+    "name": "민병대",
+    "category": "infantry",
+    "tier": 1,
+    "description": "기본적인 보병 유닛으로, 농민들로 구성되어 있습니다.",
+    "cost": {
+      "gold": 10,
+      "population": 5,
+      "iron": 0,
+      "wood": 0,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 1,
+      "food": 1
+    },
+    "stats": {
+      "attack": 3,
+      "defense": 2,
+      "health": 10,
+      "speed": 1,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "mountains": { "attack": -1, "defense": 0, "speed": -1 },
+      "hills": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": -1, "defense": -1, "speed": -1 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": -1, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": -2,
+      "ranged": -1,
+      "siege": -2,
+      "naval": 0,
+      "magical": -2
+    },
+    "abilities": [],
+    "requirements": {
+      "technology": null,
+      "building": null
+    },
+    "upgradesTo": ["spearman", "swordsman"],
+    "trainingTime": 1
+  },
+  {
+    "id": "spearman",
+    "name": "창병",
+    "category": "infantry",
+    "tier": 2,
+    "description": "창으로 무장한 보병 유닛으로, 기병에게 효과적입니다.",
+    "cost": {
+      "gold": 20,
+      "population": 5,
+      "iron": 5,
+      "wood": 10,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 2,
+      "food": 1
+    },
+    "stats": {
+      "attack": 4,
+      "defense": 5,
+      "health": 15,
+      "speed": 1,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "mountains": { "attack": -1, "defense": 1, "speed": -1 },
+      "hills": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": -1, "defense": -1, "speed": -1 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": -1, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 3,
+      "ranged": -1,
+      "siege": -1,
+      "naval": 0,
+      "magical": -1
+    },
+    "abilities": [
+      {
+        "id": "phalanx",
+        "name": "방진 대형",
+        "description": "방어 시 추가 방어력 +2를 얻습니다."
+      }
+    ],
+    "requirements": {
+      "technology": "military_tactics",
+      "building": "barracks"
+    },
+    "upgradesTo": ["pikeman"],
+    "trainingTime": 2
+  },
+  {
+    "id": "swordsman",
+    "name": "검병",
+    "category": "infantry",
+    "tier": 2,
+    "description": "검과 방패로 무장한 보병 유닛으로, 균형 잡힌 전투력을 갖추고 있습니다.",
+    "cost": {
+      "gold": 25,
+      "population": 5,
+      "iron": 15,
+      "wood": 0,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 3,
+      "food": 1
+    },
+    "stats": {
+      "attack": 6,
+      "defense": 4,
+      "health": 18,
+      "speed": 1,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "mountains": { "attack": -1, "defense": 0, "speed": -1 },
+      "hills": { "attack": 0, "defense": 1, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": -1, "defense": -1, "speed": -1 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": -1, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 0, "defense": 1, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 0,
+      "ranged": 1,
+      "siege": -1,
+      "naval": 0,
+      "magical": -1
+    },
+    "abilities": [
+      {
+        "id": "shield_wall",
+        "name": "방패 벽",
+        "description": "인접한 아군 검병마다 방어력 +1을 얻습니다."
+      }
+    ],
+    "requirements": {
+      "technology": "iron_working",
+      "building": "barracks"
+    },
+    "upgradesTo": ["knight"],
+    "trainingTime": 2
+  },
+  {
+    "id": "archer",
+    "name": "궁수",
+    "category": "ranged",
+    "tier": 2,
+    "description": "활로 무장한 원거리 유닛으로, 안전한 거리에서 공격할 수 있습니다.",
+    "cost": {
+      "gold": 20,
+      "population": 5,
+      "iron": 0,
+      "wood": 20,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 2,
+      "food": 1
+    },
+    "stats": {
+      "attack": 5,
+      "defense": 2,
+      "health": 12,
+      "speed": 1,
+      "range": 2
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "mountains": { "attack": 1, "defense": 1, "speed": -1 },
+      "hills": { "attack": 1, "defense": 1, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": -1, "defense": -1, "speed": -1 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 1, "defense": 1, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 1,
+      "ranged": 0,
+      "siege": -1,
+      "naval": 1,
+      "magical": 0
+    },
+    "abilities": [
+      {
+        "id": "first_strike",
+        "name": "선제 공격",
+        "description": "전투 시작 시 적에게 먼저 공격합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "archery",
+      "building": "archery_range"
+    },
+    "upgradesTo": ["crossbowman"],
+    "trainingTime": 2
+  },
+  {
+    "id": "crossbowman",
+    "name": "석궁병",
+    "category": "ranged",
+    "tier": 3,
+    "description": "석궁으로 무장한 강력한 원거리 유닛으로, 높은 관통력을 가지고 있습니다.",
+    "cost": {
+      "gold": 35,
+      "population": 5,
+      "iron": 10,
+      "wood": 20,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 3,
+      "food": 1
+    },
+    "stats": {
+      "attack": 8,
+      "defense": 3,
+      "health": 15,
+      "speed": 1,
+      "range": 2
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -1, "defense": 1, "speed": -0.5 },
+      "mountains": { "attack": 1, "defense": 1, "speed": -1 },
+      "hills": { "attack": 1, "defense": 1, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": -1, "defense": -1, "speed": -1 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 1, "defense": 1, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 2,
+      "ranged": 0,
+      "siege": -1,
+      "naval": 1,
+      "magical": 0
+    },
+    "abilities": [
+      {
+        "id": "armor_piercing",
+        "name": "갑옷 관통",
+        "description": "적 방어력을 25% 무시합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "machinery",
+      "building": "archery_range"
+    },
+    "upgradesTo": ["musketeer"],
+    "trainingTime": 3
+  },
+  {
+    "id": "cavalry",
+    "name": "기병",
+    "category": "cavalry",
+    "tier": 3,
+    "description": "말을 탄 기동성이 높은 유닛으로, 빠른 속도로 적을 공격할 수 있습니다.",
+    "cost": {
+      "gold": 40,
+      "population": 5,
+      "iron": 10,
+      "wood": 0,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 4,
+      "food": 2
+    },
+    "stats": {
+      "attack": 7,
+      "defense": 3,
+      "health": 20,
+      "speed": 2,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 1, "defense": 0, "speed": 1 },
+      "forest": { "attack": -1, "defense": -1, "speed": -1 },
+      "mountains": { "attack": -2, "defense": -1, "speed": -1.5 },
+      "hills": { "attack": 0, "defense": 0, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "swamp": { "attack": -2, "defense": -1, "speed": -1.5 },
+      "tundra": { "attack": -1, "defense": -1, "speed": -1 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": 0 },
+      "highlands": { "attack": -1, "defense": 0, "speed": -1 },
+      "island": { "attack": 0, "defense": -1, "speed": -0.5 }
+    },
+    "unitAdvantages": {
+      "cavalry": 0,
+      "ranged": 3,
+      "siege": 2,
+      "naval": 0,
+      "magical": -1
+    },
+    "abilities": [
+      {
+        "id": "charge",
+        "name": "돌격",
+        "description": "첫 공격 시 공격력이 50% 증가합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "horseback_riding",
+      "building": "stable"
+    },
+    "upgradesTo": ["knight"],
+    "trainingTime": 3
+  },
+  {
+    "id": "knight",
+    "name": "기사",
+    "category": "cavalry",
+    "tier": 4,
+    "description": "중갑을 입은 기병 유닛으로, 강력한 공격력과 방어력을 갖추고 있습니다.",
+    "cost": {
+      "gold": 60,
+      "population": 5,
+      "iron": 25,
+      "wood": 0,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 6,
+      "food": 2
+    },
+    "stats": {
+      "attack": 10,
+      "defense": 7,
+      "health": 25,
+      "speed": 2,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 1, "defense": 0, "speed": 1 },
+      "forest": { "attack": -1, "defense": -1, "speed": -1 },
+      "mountains": { "attack": -2, "defense": -1, "speed": -1.5 },
+      "hills": { "attack": 0, "defense": 0, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "swamp": { "attack": -2, "defense": -1, "speed": -1.5 },
+      "tundra": { "attack": -1, "defense": -1, "speed": -1 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": 0 },
+      "highlands": { "attack": -1, "defense": 0, "speed": -1 },
+      "island": { "attack": 0, "defense": -1, "speed": -0.5 }
+    },
+    "unitAdvantages": {
+      "cavalry": 0,
+      "ranged": 3,
+      "siege": 3,
+      "naval": 0,
+      "magical": 0
+    },
+    "abilities": [
+      {
+        "id": "heavy_charge",
+        "name": "중갑 돌격",
+        "description": "첫 공격 시 공격력이 75% 증가합니다."
+      },
+      {
+        "id": "intimidation",
+        "name": "위압",
+        "description": "인접한 적 유닛의 공격력이 1 감소합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "chivalry",
+      "building": "castle"
+    },
+    "upgradesTo": [],
+    "trainingTime": 4
+  },
+  {
+    "id": "catapult",
+    "name": "투석기",
+    "category": "siege",
+    "tier": 3,
+    "description": "성벽과 건물을 공격하는 데 특화된 공성 유닛입니다.",
+    "cost": {
+      "gold": 50,
+      "population": 5,
+      "iron": 0,
+      "wood": 40,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 5,
+      "food": 1
+    },
+    "stats": {
+      "attack": 12,
+      "defense": 1,
+      "health": 15,
+      "speed": 0.5,
+      "range": 3
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -2, "defense": 0, "speed": -0.5 },
+      "mountains": { "attack": -3, "defense": 0, "speed": -0.5 },
+      "hills": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "swamp": { "attack": -2, "defense": -1, "speed": -0.5 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "island": { "attack": 0, "defense": -1, "speed": -0.5 }
+    },
+    "unitAdvantages": {
+      "cavalry": -3,
+      "ranged": -2,
+      "siege": 0,
+      "naval": 0,
+      "magical": -1
+    },
+    "abilities": [
+      {
+        "id": "structure_damage",
+        "name": "구조물 파괴",
+        "description": "건물과 성벽에 200% 추가 피해를 입힙니다."
+      }
+    ],
+    "requirements": {
+      "technology": "engineering",
+      "building": "siege_workshop"
+    },
+    "upgradesTo": ["trebuchet"],
+    "trainingTime": 4
+  },
+  {
+    "id": "trebuchet",
+    "name": "투석기",
+    "category": "siege",
+    "tier": 4,
+    "description": "강력한 공성 유닛으로, 먼 거리에서 성벽과 건물을 파괴할 수 있습니다.",
+    "cost": {
+      "gold": 80,
+      "population": 5,
+      "iron": 20,
+      "wood": 60,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 8,
+      "food": 1
+    },
+    "stats": {
+      "attack": 18,
+      "defense": 1,
+      "health": 18,
+      "speed": 0.5,
+      "range": 4
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": -2, "defense": 0, "speed": -0.5 },
+      "mountains": { "attack": -3, "defense": 0, "speed": -0.5 },
+      "hills": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "swamp": { "attack": -2, "defense": -1, "speed": -0.5 },
+      "tundra": { "attack": -1, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": 0, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "island": { "attack": 0, "defense": -1, "speed": -0.5 }
+    },
+    "unitAdvantages": {
+      "cavalry": -3,
+      "ranged": -2,
+      "siege": 0,
+      "naval": 0,
+      "magical": -1
+    },
+    "abilities": [
+      {
+        "id": "advanced_structure_damage",
+        "name": "고급 구조물 파괴",
+        "description": "건물과 성벽에 300% 추가 피해를 입힙니다."
+      },
+      {
+        "id": "area_damage",
+        "name": "광역 피해",
+        "description": "공격 시 주변 유닛에게 50%의 피해를 입힙니다."
+      }
+    ],
+    "requirements": {
+      "technology": "physics",
+      "building": "siege_workshop"
+    },
+    "upgradesTo": [],
+    "trainingTime": 5
+  },
+  {
+    "id": "fishing_boat",
+    "name": "어선",
+    "category": "naval",
+    "tier": 1,
+    "description": "기본적인 해상 유닛으로, 식량을 생산할 수 있습니다.",
+    "cost": {
+      "gold": 20,
+      "population": 3,
+      "iron": 0,
+      "wood": 30,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 2,
+      "food": 1
+    },
+    "stats": {
+      "attack": 0,
+      "defense": 1,
+      "health": 10,
+      "speed": 2,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "coast": { "attack": 0, "defense": 0, "speed": 1 },
+      "island": { "attack": 0, "defense": 0, "speed": 1 }
+    },
+    "unitAdvantages": {},
+    "abilities": [
+      {
+        "id": "fishing",
+        "name": "어업",
+        "description": "턴마다 5의 식량을 생산합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "sailing",
+      "building": "harbor"
+    },
+    "upgradesTo": [],
+    "trainingTime": 2
+  },
+  {
+    "id": "trade_ship",
+    "name": "무역선",
+    "category": "naval",
+    "tier": 2,
+    "description": "해상 무역을 담당하는 유닛으로, 금을 생산할 수 있습니다.",
+    "cost": {
+      "gold": 40,
+      "population": 3,
+      "iron": 0,
+      "wood": 50,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 0,
+      "food": 1
+    },
+    "stats": {
+      "attack": 0,
+      "defense": 2,
+      "health": 15,
+      "speed": 3,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "coast": { "attack": 0, "defense": 0, "speed": 1 },
+      "island": { "attack": 0, "defense": 0, "speed": 1 }
+    },
+    "unitAdvantages": {},
+    "abilities": [
+      {
+        "id": "trade_route",
+        "name": "무역 경로",
+        "description": "턴마다 10의 금을 생산합니다."
+      }
+    ],
+    "requirements": {
+      "technology": "trade",
+      "building": "marketplace"
+    },
+    "upgradesTo": [],
+    "trainingTime": 3
+  },
+  {
+    "id": "galley",
+    "name": "갤리선",
+    "category": "naval",
+    "tier": 2,
+    "description": "기본적인 전투 함선으로, 해상 전투와 수송에 사용됩니다.",
+    "cost": {
+      "gold": 50,
+      "population": 5,
+      "iron": 10,
+      "wood": 60,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 5,
+      "food": 2
+    },
+    "stats": {
+      "attack": 6,
+      "defense": 4,
+      "health": 20,
+      "speed": 2,
+      "range": 1
+    },
+    "terrainModifiers": {
+      "coast": { "attack": 1, "defense": 0, "speed": 1 },
+      "island": { "attack": 0, "defense": 0, "speed": 1 }
+    },
+    "unitAdvantages": {
+      "naval": 0
+    },
+    "abilities": [
+      {
+        "id": "transport",
+        "name": "수송",
+        "description": "최대 3개의 육상 유닛을 수송할 수 있습니다."
+      }
+    ],
+    "requirements": {
+      "technology": "shipbuilding",
+      "building": "harbor"
+    },
+    "upgradesTo": ["warship"],
+    "trainingTime": 3
+  },
+  {
+    "id": "warship",
+    "name": "전함",
+    "category": "naval",
+    "tier": 4,
+    "description": "강력한 해상 전투 함선으로, 원거리 공격이 가능합니다.",
+    "cost": {
+      "gold": 100,
+      "population": 8,
+      "iron": 30,
+      "wood": 80,
+      "mana": 0
+    },
+    "upkeep": {
+      "gold": 10,
+      "food": 3
+    },
+    "stats": {
+      "attack": 12,
+      "defense": 8,
+      "health": 35,
+      "speed": 2,
+      "range": 2
+    },
+    "terrainModifiers": {
+      "coast": { "attack": 1, "defense": 0, "speed": 1 },
+      "island": { "attack": 0, "defense": 0, "speed": 1 }
+    },
+    "unitAdvantages": {
+      "naval": 2
+    },
+    "abilities": [
+      {
+        "id": "broadside",
+        "name": "함포 사격",
+        "description": "해안가의 적 유닛에게 원거리 공격이 가능합니다."
+      },
+      {
+        "id": "transport",
+        "name": "수송",
+        "description": "최대 5개의 육상 유닛을 수송할 수 있습니다."
+      }
+    ],
+    "requirements": {
+      "technology": "navigation",
+      "building": "shipyard"
+    },
+    "upgradesTo": [],
+    "trainingTime": 5
+  },
+  {
+    "id": "mage",
+    "name": "마법사",
+    "category": "magical",
+    "tier": 3,
+    "description": "마법을 사용하는 특수 유닛으로, 강력한 원거리 공격이 가능합니다.",
+    "cost": {
+      "gold": 60,
+      "population": 5,
+      "iron": 0,
+      "wood": 0,
+      "mana": 30
+    },
+    "upkeep": {
+      "gold": 6,
+      "food": 1,
+      "mana": 2
+    },
+    "stats": {
+      "attack": 8,
+      "defense": 2,
+      "health": 12,
+      "speed": 1,
+      "range": 2
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": 0, "defense": 0, "speed": -0.5 },
+      "mountains": { "attack": 1, "defense": 0, "speed": -1 },
+      "hills": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "coast": { "attack": 0, "defense": -1, "speed": 0 },
+      "swamp": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "tundra": { "attack": 0, "defense": 0, "speed": -0.5 },
+      "wasteland": { "attack": 1, "defense": -1, "speed": -0.5 },
+      "highlands": { "attack": 1, "defense": 0, "speed": -0.5 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 1,
+      "ranged": 1,
+      "siege": 2,
+      "naval": 1,
+      "magical": 0
+    },
+    "abilities": [
+      {
+        "id": "fireball",
+        "name": "화염구",
+        "description": "광역 공격으로 주변 유닛에게 50%의 피해를 입힙니다."
+      },
+      {
+        "id": "teleport",
+        "name": "순간이동",
+        "description": "3턴에 한 번 최대 3칸 이동할 수 있습니다."
+      }
+    ],
+    "requirements": {
+      "technology": "magic",
+      "building": "mage_tower"
+    },
+    "upgradesTo": ["archmage"],
+    "trainingTime": 4
+  },
+  {
+    "id": "archmage",
+    "name": "대마법사",
+    "category": "magical",
+    "tier": 5,
+    "description": "최상급 마법 유닛으로, 강력한 마법 공격과 다양한 능력을 갖추고 있습니다.",
+    "cost": {
+      "gold": 120,
+      "population": 5,
+      "iron": 0,
+      "wood": 0,
+      "mana": 80
+    },
+    "upkeep": {
+      "gold": 12,
+      "food": 1,
+      "mana": 5
+    },
+    "stats": {
+      "attack": 15,
+      "defense": 5,
+      "health": 18,
+      "speed": 1,
+      "range": 3
+    },
+    "terrainModifiers": {
+      "plains": { "attack": 0, "defense": 0, "speed": 0 },
+      "forest": { "attack": 1, "defense": 0, "speed": 0 },
+      "mountains": { "attack": 2, "defense": 1, "speed": -0.5 },
+      "hills": { "attack": 1, "defense": 0, "speed": 0 },
+      "coast": { "attack": 0, "defense": 0, "speed": 0 },
+      "swamp": { "attack": 2, "defense": 0, "speed": 0 },
+      "tundra": { "attack": 1, "defense": 0, "speed": 0 },
+      "wasteland": { "attack": 2, "defense": 0, "speed": 0 },
+      "highlands": { "attack": 2, "defense": 1, "speed": 0 },
+      "island": { "attack": 0, "defense": 0, "speed": 0 }
+    },
+    "unitAdvantages": {
+      "cavalry": 2,
+      "ranged": 2,
+      "siege": 3,
+      "naval": 2,
+      "magical": 1
+    },
+    "abilities": [
+      {
+        "id": "meteor_storm",
+        "name": "유성우",
+        "description": "5턴에 한 번 광역 공격으로 넓은 지역의 모든 적에게 피해를 입힙니다."
+      },
+      {
+        "id": "teleport_advanced",
+        "name": "고급 순간이동",
+        "description": "2턴에 한 번 최대 5칸 이동할 수 있습니다."
+      },
+      {
+        "id": "mana_shield",
+        "name": "마나 보호막",
+        "description": "받는 피해를 30% 감소시킵니다."
+      }
+    ],
+    "requirements": {
+      "technology": "advanced_magic",
+      "building": "arcane_sanctuary"
+    },
+    "upgradesTo": [],
+    "trainingTime": 6
+  }
+]

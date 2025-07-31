@@ -1,0 +1,684 @@
+[
+  {
+    "id": "food",
+    "name": "식량",
+    "description": "인구를 유지하고 성장시키는 데 필요한 기본 자원입니다.",
+    "category": "basic",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 1000,
+    "baseValue": 1,
+    "sources": [
+      {
+        "type": "building",
+        "id": "farm",
+        "amount": 10
+      },
+      {
+        "type": "building",
+        "id": "irrigation_system",
+        "amount": 20
+      },
+      {
+        "type": "terrain",
+        "id": "plains",
+        "amount": 3
+      },
+      {
+        "type": "unit",
+        "id": "fishing_boat",
+        "amount": 5
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "population",
+        "amount": 0.5
+      },
+      {
+        "type": "unit",
+        "id": "cavalry",
+        "amount": 2
+      },
+      {
+        "type": "unit",
+        "id": "knight",
+        "amount": 2
+      }
+    ],
+    "effects": {
+      "population_growth": 0.1,
+      "happiness": 0.05
+    },
+    "iconPath": "icons/resources/food.png"
+  },
+  {
+    "id": "gold",
+    "name": "금",
+    "description": "경제 활동과 거래에 사용되는 기본 화폐 자원입니다.",
+    "category": "basic",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 5000,
+    "baseValue": 1,
+    "sources": [
+      {
+        "type": "building",
+        "id": "marketplace",
+        "amount": 15
+      },
+      {
+        "type": "terrain",
+        "id": "hills",
+        "amount": 1
+      },
+      {
+        "type": "unit",
+        "id": "trade_ship",
+        "amount": 10
+      },
+      {
+        "type": "diplomacy",
+        "id": "trade_agreement",
+        "amount": 5
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "maintenance",
+        "amount": "variable"
+      },
+      {
+        "type": "unit",
+        "id": "maintenance",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "diplomatic_influence": 0.05,
+      "building_speed": 0.02
+    },
+    "iconPath": "icons/resources/gold.png"
+  },
+  {
+    "id": "wood",
+    "name": "목재",
+    "description": "건물과 일부 유닛을 생산하는 데 필요한 기본 건축 자원입니다.",
+    "category": "basic",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 500,
+    "baseValue": 2,
+    "sources": [
+      {
+        "type": "terrain",
+        "id": "forest",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "lumber_mill",
+        "amount": 15
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "construction",
+        "amount": "variable"
+      },
+      {
+        "type": "unit",
+        "id": "archer",
+        "amount": 20
+      },
+      {
+        "type": "unit",
+        "id": "catapult",
+        "amount": 40
+      }
+    ],
+    "effects": {
+      "building_speed": 0.05
+    },
+    "iconPath": "icons/resources/wood.png"
+  },
+  {
+    "id": "stone",
+    "name": "돌",
+    "description": "건물과 방어 시설을 건설하는 데 필요한 기본 건축 자원입니다.",
+    "category": "basic",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 500,
+    "baseValue": 2,
+    "sources": [
+      {
+        "type": "terrain",
+        "id": "hills",
+        "amount": 3
+      },
+      {
+        "type": "terrain",
+        "id": "mountains",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "mine",
+        "amount": 10
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "construction",
+        "amount": "variable"
+      },
+      {
+        "type": "building",
+        "id": "stone_wall",
+        "amount": 50
+      },
+      {
+        "type": "building",
+        "id": "watchtower",
+        "amount": 30
+      }
+    ],
+    "effects": {
+      "building_durability": 0.05
+    },
+    "iconPath": "icons/resources/stone.png"
+  },
+  {
+    "id": "iron",
+    "name": "철",
+    "description": "무기와 갑옷을 만드는 데 필요한 중요한 군사 자원입니다.",
+    "category": "strategic",
+    "tier": 2,
+    "isStorable": true,
+    "maxStorage": 300,
+    "baseValue": 5,
+    "sources": [
+      {
+        "type": "terrain",
+        "id": "hills",
+        "amount": 2
+      },
+      {
+        "type": "terrain",
+        "id": "mountains",
+        "amount": 3
+      },
+      {
+        "type": "building",
+        "id": "mine",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "deep_mine",
+        "amount": 15
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "swordsman",
+        "amount": 15
+      },
+      {
+        "type": "unit",
+        "id": "knight",
+        "amount": 25
+      },
+      {
+        "type": "unit",
+        "id": "crossbowman",
+        "amount": 10
+      }
+    ],
+    "effects": {
+      "military_unit_strength": 0.1
+    },
+    "iconPath": "icons/resources/iron.png"
+  },
+  {
+    "id": "mana",
+    "name": "마나",
+    "description": "마법 유닛과 건물을 생산하고 유지하는 데 필요한 신비한 자원입니다.",
+    "category": "special",
+    "tier": 2,
+    "isStorable": true,
+    "maxStorage": 200,
+    "baseValue": 10,
+    "sources": [
+      {
+        "type": "terrain",
+        "id": "ancient_grove",
+        "amount": 3
+      },
+      {
+        "type": "terrain",
+        "id": "mystical_bog",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "shrine",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "mage_tower",
+        "amount": 15
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "mage",
+        "amount": 2
+      },
+      {
+        "type": "unit",
+        "id": "archmage",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "arcane_sanctuary",
+        "amount": 3
+      }
+    ],
+    "effects": {
+      "magical_attack": 0.1,
+      "spell_efficiency": 0.1
+    },
+    "iconPath": "icons/resources/mana.png"
+  },
+  {
+    "id": "labor",
+    "name": "노동력",
+    "description": "건물을 건설하고 유닛을 생산하는 데 필요한 인력 자원입니다.",
+    "category": "basic",
+    "tier": 1,
+    "isStorable": false,
+    "maxStorage": 0,
+    "baseValue": 3,
+    "sources": [
+      {
+        "type": "population",
+        "amount": 0.2
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "construction",
+        "amount": "variable"
+      },
+      {
+        "type": "unit",
+        "id": "training",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "building_speed": 0.1,
+      "unit_training_speed": 0.1
+    },
+    "iconPath": "icons/resources/labor.png"
+  },
+  {
+    "id": "steel",
+    "name": "강철",
+    "description": "고급 무기와 갑옷을 만드는 데 필요한 고급 군사 자원입니다.",
+    "category": "strategic",
+    "tier": 3,
+    "isStorable": true,
+    "maxStorage": 200,
+    "baseValue": 8,
+    "sources": [
+      {
+        "type": "building",
+        "id": "steel_forge",
+        "amount": 10
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "knight",
+        "amount": 15
+      },
+      {
+        "type": "unit",
+        "id": "trebuchet",
+        "amount": 20
+      }
+    ],
+    "effects": {
+      "military_unit_strength": 0.2,
+      "unit_defense": 0.15
+    },
+    "iconPath": "icons/resources/steel.png"
+  },
+  {
+    "id": "magical_essence",
+    "name": "마법의 정수",
+    "description": "강력한 마법 아이템과 고급 마법 유닛을 만드는 데 필요한 희귀한 자원입니다.",
+    "category": "special",
+    "tier": 3,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 15,
+    "sources": [
+      {
+        "type": "building",
+        "id": "mage_tower",
+        "amount": 2
+      },
+      {
+        "type": "building",
+        "id": "alchemy_lab",
+        "amount": 5
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "archmage",
+        "amount": 10
+      },
+      {
+        "type": "building",
+        "id": "arcane_sanctuary",
+        "amount": 20
+      }
+    ],
+    "effects": {
+      "magical_attack": 0.2,
+      "spell_efficiency": 0.2,
+      "magical_resistance": 0.1
+    },
+    "iconPath": "icons/resources/magical_essence.png"
+  },
+  {
+    "id": "luxury_goods",
+    "name": "사치품",
+    "description": "국민의 행복도를 높이고 외교 관계를 개선하는 데 도움이 되는 고급 자원입니다.",
+    "category": "luxury",
+    "tier": 2,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 12,
+    "sources": [
+      {
+        "type": "building",
+        "id": "marketplace",
+        "amount": 2
+      },
+      {
+        "type": "building",
+        "id": "trading_post",
+        "amount": 5
+      },
+      {
+        "type": "diplomacy",
+        "id": "trade_agreement",
+        "amount": 3
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "diplomacy",
+        "id": "gift",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "happiness": 0.2,
+      "diplomatic_influence": 0.15
+    },
+    "iconPath": "icons/resources/luxury_goods.png"
+  },
+  {
+    "id": "research_points",
+    "name": "연구 포인트",
+    "description": "새로운 기술을 연구하는 데 필요한 지식 자원입니다.",
+    "category": "special",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 1000,
+    "baseValue": 0,
+    "sources": [
+      {
+        "type": "building",
+        "id": "library",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "academy",
+        "amount": 10
+      },
+      {
+        "type": "building",
+        "id": "university",
+        "amount": 15
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "technology",
+        "id": "research",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "research_speed": 0.1
+    },
+    "iconPath": "icons/resources/research_points.png"
+  },
+  {
+    "id": "arcane_crystal",
+    "name": "비전 수정",
+    "description": "최상급 마법 건물과 유닛을 만드는 데 필요한 매우 희귀한 자원입니다.",
+    "category": "special",
+    "tier": 4,
+    "isStorable": true,
+    "maxStorage": 50,
+    "baseValue": 25,
+    "sources": [
+      {
+        "type": "building",
+        "id": "arcane_sanctuary",
+        "amount": 1
+      },
+      {
+        "type": "terrain",
+        "id": "magic_crystals",
+        "amount": 2
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "archmage",
+        "amount": 5
+      },
+      {
+        "type": "building",
+        "id": "enchanter_workshop",
+        "amount": 10
+      }
+    ],
+    "effects": {
+      "magical_attack": 0.3,
+      "spell_efficiency": 0.3,
+      "magical_resistance": 0.2
+    },
+    "iconPath": "icons/resources/arcane_crystal.png"
+  },
+  {
+    "id": "elixir",
+    "name": "엘릭서",
+    "description": "유닛의 체력과 능력을 향상시키는 데 사용되는 연금술 자원입니다.",
+    "category": "special",
+    "tier": 3,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 15,
+    "sources": [
+      {
+        "type": "building",
+        "id": "alchemy_lab",
+        "amount": 3
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "enhancement",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "unit_health": 0.2,
+      "unit_attack": 0.1,
+      "unit_defense": 0.1
+    },
+    "iconPath": "icons/resources/elixir.png"
+  },
+  {
+    "id": "enchanted_material",
+    "name": "마법 부여 재료",
+    "description": "마법 아이템과 장비를 만드는 데 사용되는 특수 자원입니다.",
+    "category": "special",
+    "tier": 3,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 18,
+    "sources": [
+      {
+        "type": "building",
+        "id": "enchanter_workshop",
+        "amount": 2
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "item",
+        "id": "enchanted_weapon",
+        "amount": 5
+      },
+      {
+        "type": "item",
+        "id": "enchanted_armor",
+        "amount": 5
+      }
+    ],
+    "effects": {
+      "item_power": 0.2,
+      "magical_attack": 0.1,
+      "magical_defense": 0.1
+    },
+    "iconPath": "icons/resources/enchanted_material.png"
+  },
+  {
+    "id": "medicine",
+    "name": "의약품",
+    "description": "인구 성장과 유닛 회복에 도움이 되는 의료 자원입니다.",
+    "category": "luxury",
+    "tier": 3,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 12,
+    "sources": [
+      {
+        "type": "building",
+        "id": "hospital",
+        "amount": 5
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "unit",
+        "id": "healing",
+        "amount": "variable"
+      }
+    ],
+    "effects": {
+      "population_growth": 0.2,
+      "unit_health_regeneration": 0.3,
+      "disease_resistance": 0.5
+    },
+    "iconPath": "icons/resources/medicine.png"
+  },
+  {
+    "id": "artwork",
+    "name": "예술품",
+    "description": "문화적 영향력과 국민의 행복도를 높이는 데 도움이 되는 문화 자원입니다.",
+    "category": "luxury",
+    "tier": 2,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 15,
+    "sources": [
+      {
+        "type": "building",
+        "id": "artist_guild",
+        "amount": 3
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "palace",
+        "amount": 10
+      },
+      {
+        "type": "building",
+        "id": "cathedral",
+        "amount": 5
+      }
+    ],
+    "effects": {
+      "happiness": 0.2,
+      "cultural_influence": 0.3
+    },
+    "iconPath": "icons/resources/artwork.png"
+  },
+  {
+    "id": "pottery",
+    "name": "도자기",
+    "description": "식량 저장과 문화적 영향력에 도움이 되는 기초 문화 자원입니다.",
+    "category": "luxury",
+    "tier": 1,
+    "isStorable": true,
+    "maxStorage": 100,
+    "baseValue": 8,
+    "sources": [
+      {
+        "type": "building",
+        "id": "pottery_workshop",
+        "amount": 5
+      }
+    ],
+    "consumedBy": [
+      {
+        "type": "building",
+        "id": "granary",
+        "amount": 10
+      }
+    ],
+    "effects": {
+      "food_storage": 0.2,
+      "cultural_influence": 0.1
+    },
+    "iconPath": "icons/resources/pottery.png"
+  }
+]

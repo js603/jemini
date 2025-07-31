@@ -1,0 +1,327 @@
+/* EnhancedMapView.css - 대형 SLG를 위한 확장된 맵 스타일 */
+
+.enhanced-map-view {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: 2rem;
+  border: 1px solid #333;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: #f0f0f0;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.map-container {
+  position: relative;
+  width: 100%;
+  height: 0;
+  padding-bottom: 80%; /* 5:4 비율 유지 */
+  overflow: hidden;
+  background-color: #1a2639;
+  cursor: grab;
+}
+
+.map-container:active {
+  cursor: grabbing;
+}
+
+.map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.map-background {
+  fill: #1a2639;
+}
+
+/* 영토 스타일 */
+.territory {
+  transition: transform 0.1s ease-in-out;
+  cursor: pointer;
+}
+
+.territory:hover {
+  transform: scale(1.05);
+}
+
+.territory.undiscovered {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.territory.selected {
+  filter: drop-shadow(0 0 5px gold);
+}
+
+.territory-name {
+  font-size: 12px;
+  font-weight: bold;
+  text-shadow: 0 0 3px #000;
+  pointer-events: none;
+}
+
+.territory-connection {
+  opacity: 0.5;
+}
+
+.city-marker {
+  filter: drop-shadow(0 0 2px white);
+}
+
+.special-feature-icon {
+  filter: drop-shadow(0 0 2px black);
+  pointer-events: none;
+}
+
+/* 영토 정보 패널 */
+.territory-info {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 300px;
+  max-width: 30%;
+  background-color: rgba(255, 255, 255, 0.9);
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  max-height: 80%;
+  overflow-y: auto;
+}
+
+.territory-info h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #333;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 5px;
+}
+
+.territory-info p {
+  margin-bottom: 15px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.territory-resources h4,
+.territory-features h4 {
+  margin-top: 10px;
+  margin-bottom: 5px;
+  font-size: 16px;
+  color: #444;
+}
+
+.territory-resources ul,
+.territory-features ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.territory-resources li,
+.territory-features li {
+  margin-bottom: 5px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+}
+
+.resource-icon {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+.resource-name {
+  font-weight: bold;
+  margin-right: 5px;
+}
+
+.resource-amount {
+  color: #555;
+}
+
+.territory-status {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.territory-status p {
+  margin: 5px 0;
+  font-size: 14px;
+}
+
+/* 자원별 색상 */
+.resource-item.food .resource-name { color: #2e7d32; }
+.resource-item.gold .resource-name { color: #ff9800; }
+.resource-item.wood .resource-name { color: #795548; }
+.resource-item.stone .resource-name { color: #607d8b; }
+.resource-item.iron .resource-name { color: #455a64; }
+.resource-item.mana .resource-name { color: #9c27b0; }
+
+/* 미니맵 */
+.minimap-container {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  border: 2px solid #333;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.minimap {
+  background-color: #1a2639;
+  cursor: pointer;
+}
+
+/* 줌 컨트롤 */
+.zoom-controls {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.8);
+  border-radius: 4px;
+  padding: 5px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.zoom-button {
+  width: 30px;
+  height: 30px;
+  font-size: 18px;
+  font-weight: bold;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  margin: 2px 0;
+}
+
+.zoom-button:hover {
+  background-color: #f0f0f0;
+}
+
+.zoom-level {
+  font-size: 12px;
+  margin: 2px 0;
+  font-weight: bold;
+}
+
+/* 맵 컨트롤 */
+.map-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background-color: #f8f8f8;
+  border-top: 1px solid #ddd;
+}
+
+.map-filters {
+  display: flex;
+  gap: 15px;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.filter-group label {
+  font-size: 14px;
+  font-weight: bold;
+  color: #555;
+}
+
+.filter-select {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: white;
+  font-size: 14px;
+}
+
+.control-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.control-button {
+  padding: 8px 12px;
+  background-color: #3a3a3a;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.control-button:hover {
+  background-color: #555;
+}
+
+/* 반응형 스타일 */
+@media (max-width: 768px) {
+  .territory-info {
+    width: 250px;
+    max-width: 80%;
+    font-size: 12px;
+  }
+  
+  .map-controls {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .map-filters {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .control-buttons {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .minimap-container {
+    width: 150px;
+    height: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .territory-info {
+    width: 200px;
+    max-width: 90%;
+    font-size: 11px;
+  }
+  
+  .zoom-controls {
+    bottom: 70px;
+  }
+  
+  .minimap-container {
+    width: 100px;
+    height: 100px;
+  }
+  
+  .control-button {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+}

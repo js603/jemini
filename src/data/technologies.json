@@ -1,0 +1,833 @@
+[
+  {
+    "id": "agriculture",
+    "name": "농업",
+    "description": "기본적인 농업 기술로, 식량 생산량을 증가시킵니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 10
+    },
+    "prerequisites": [],
+    "effects": {
+      "food_production": 10,
+      "population_growth": 5
+    },
+    "unlocksBuildings": ["farm"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/agriculture.png"
+  },
+  {
+    "id": "animal_husbandry",
+    "name": "목축",
+    "description": "가축을 기르는 기술로, 식량 생산량과 인구 성장률을 증가시킵니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": ["agriculture"],
+    "effects": {
+      "food_production": 15,
+      "population_growth": 10
+    },
+    "unlocksBuildings": ["pasture"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/animal_husbandry.png"
+  },
+  {
+    "id": "irrigation",
+    "name": "관개",
+    "description": "물을 효율적으로 공급하는 기술로, 농업 생산성을 크게 향상시킵니다.",
+    "category": "economy",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["agriculture"],
+    "effects": {
+      "food_production": 25,
+      "farm_output": 20
+    },
+    "unlocksBuildings": ["irrigation_system"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/irrigation.png"
+  },
+  {
+    "id": "crop_rotation",
+    "name": "윤작",
+    "description": "작물을 번갈아 심는 기술로, 토지의 생산성을 유지하고 향상시킵니다.",
+    "category": "economy",
+    "tier": 3,
+    "cost": {
+      "research_points": 40
+    },
+    "prerequisites": ["irrigation"],
+    "effects": {
+      "food_production": 30,
+      "farm_output": 30
+    },
+    "unlocksBuildings": ["advanced_farm"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/crop_rotation.png"
+  },
+  {
+    "id": "mining",
+    "name": "채광",
+    "description": "광물을 채취하는 기술로, 돌과 철 생산량을 증가시킵니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": [],
+    "effects": {
+      "stone_production": 20,
+      "iron_production": 10
+    },
+    "unlocksBuildings": ["mine"],
+    "unlocksUnits": [],
+    "unlocksResources": ["iron"],
+    "iconPath": "icons/tech/mining.png"
+  },
+  {
+    "id": "bronze_working",
+    "name": "청동 가공",
+    "description": "청동을 다루는 기술로, 더 나은 도구와 무기를 만들 수 있습니다.",
+    "category": "military",
+    "tier": 1,
+    "cost": {
+      "research_points": 20
+    },
+    "prerequisites": ["mining"],
+    "effects": {
+      "unit_attack": 10,
+      "production_efficiency": 10
+    },
+    "unlocksBuildings": ["forge"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/bronze_working.png"
+  },
+  {
+    "id": "iron_working",
+    "name": "철 가공",
+    "description": "철을 다루는 기술로, 강력한 무기와 도구를 만들 수 있습니다.",
+    "category": "military",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["bronze_working"],
+    "effects": {
+      "unit_attack": 20,
+      "unit_defense": 10,
+      "production_efficiency": 15
+    },
+    "unlocksBuildings": ["smithy"],
+    "unlocksUnits": ["swordsman"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/iron_working.png"
+  },
+  {
+    "id": "steel_making",
+    "name": "제강",
+    "description": "강철을 제조하는 기술로, 최고급 무기와 갑옷을 만들 수 있습니다.",
+    "category": "military",
+    "tier": 3,
+    "cost": {
+      "research_points": 50
+    },
+    "prerequisites": ["iron_working"],
+    "effects": {
+      "unit_attack": 30,
+      "unit_defense": 20,
+      "production_efficiency": 20
+    },
+    "unlocksBuildings": ["steel_forge"],
+    "unlocksUnits": ["knight"],
+    "unlocksResources": ["steel"],
+    "iconPath": "icons/tech/steel_making.png"
+  },
+  {
+    "id": "archery",
+    "name": "궁술",
+    "description": "활과 화살을 사용하는 기술로, 원거리 공격이 가능한 유닛을 생산할 수 있습니다.",
+    "category": "military",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": [],
+    "effects": {
+      "ranged_attack": 20
+    },
+    "unlocksBuildings": ["archery_range"],
+    "unlocksUnits": ["archer"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/archery.png"
+  },
+  {
+    "id": "machinery",
+    "name": "기계학",
+    "description": "복잡한 기계 장치를 만드는 기술로, 더 강력한 원거리 무기를 생산할 수 있습니다.",
+    "category": "military",
+    "tier": 2,
+    "cost": {
+      "research_points": 35
+    },
+    "prerequisites": ["archery"],
+    "effects": {
+      "ranged_attack": 30,
+      "production_efficiency": 15
+    },
+    "unlocksBuildings": ["workshop"],
+    "unlocksUnits": ["crossbowman"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/machinery.png"
+  },
+  {
+    "id": "military_tactics",
+    "name": "군사 전술",
+    "description": "조직적인 전투 전술로, 군사 유닛의 효율성을 높입니다.",
+    "category": "military",
+    "tier": 1,
+    "cost": {
+      "research_points": 20
+    },
+    "prerequisites": [],
+    "effects": {
+      "unit_attack": 10,
+      "unit_defense": 10,
+      "army_morale": 15
+    },
+    "unlocksBuildings": ["barracks"],
+    "unlocksUnits": ["spearman"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/military_tactics.png"
+  },
+  {
+    "id": "horseback_riding",
+    "name": "승마",
+    "description": "말을 타고 전투하는 기술로, 기동성이 높은 유닛을 생산할 수 있습니다.",
+    "category": "military",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["military_tactics", "animal_husbandry"],
+    "effects": {
+      "unit_movement": 50,
+      "cavalry_attack": 20
+    },
+    "unlocksBuildings": ["stable"],
+    "unlocksUnits": ["cavalry"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/horseback_riding.png"
+  },
+  {
+    "id": "chivalry",
+    "name": "기사도",
+    "description": "기사의 전투 기술과 명예 규범으로, 강력한 중갑 기병을 생산할 수 있습니다.",
+    "category": "military",
+    "tier": 3,
+    "cost": {
+      "research_points": 45
+    },
+    "prerequisites": ["horseback_riding", "iron_working"],
+    "effects": {
+      "cavalry_attack": 30,
+      "cavalry_defense": 20,
+      "loyalty": 10
+    },
+    "unlocksBuildings": ["castle"],
+    "unlocksUnits": ["knight"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/chivalry.png"
+  },
+  {
+    "id": "engineering",
+    "name": "공학",
+    "description": "건축과 기계 설계 기술로, 더 나은 건물과 공성 무기를 만들 수 있습니다.",
+    "category": "military",
+    "tier": 2,
+    "cost": {
+      "research_points": 35
+    },
+    "prerequisites": ["mathematics", "iron_working"],
+    "effects": {
+      "building_durability": 30,
+      "construction_speed": 20
+    },
+    "unlocksBuildings": ["siege_workshop", "aqueduct"],
+    "unlocksUnits": ["catapult"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/engineering.png"
+  },
+  {
+    "id": "physics",
+    "name": "물리학",
+    "description": "자연 법칙을 이해하는 학문으로, 더 발전된 기계와 무기를 만들 수 있습니다.",
+    "category": "science",
+    "tier": 3,
+    "cost": {
+      "research_points": 50
+    },
+    "prerequisites": ["engineering", "mathematics"],
+    "effects": {
+      "research_efficiency": 20,
+      "siege_attack": 30
+    },
+    "unlocksBuildings": ["university"],
+    "unlocksUnits": ["trebuchet"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/physics.png"
+  },
+  {
+    "id": "sailing",
+    "name": "항해",
+    "description": "배를 만들고 조종하는 기술로, 해상 이동과 어업이 가능해집니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": [],
+    "effects": {
+      "naval_movement": 30,
+      "food_from_fishing": 20
+    },
+    "unlocksBuildings": ["harbor"],
+    "unlocksUnits": ["fishing_boat"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/sailing.png"
+  },
+  {
+    "id": "shipbuilding",
+    "name": "조선",
+    "description": "더 큰 배를 만드는 기술로, 해상 전투와 무역이 가능해집니다.",
+    "category": "military",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["sailing"],
+    "effects": {
+      "naval_attack": 20,
+      "naval_defense": 20,
+      "naval_capacity": 30
+    },
+    "unlocksBuildings": ["shipyard"],
+    "unlocksUnits": ["galley"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/shipbuilding.png"
+  },
+  {
+    "id": "navigation",
+    "name": "항법",
+    "description": "바다에서 방향을 찾는 기술로, 더 효율적인 해상 이동과 전투가 가능해집니다.",
+    "category": "science",
+    "tier": 3,
+    "cost": {
+      "research_points": 45
+    },
+    "prerequisites": ["shipbuilding", "astronomy"],
+    "effects": {
+      "naval_movement": 50,
+      "naval_attack": 30,
+      "trade_efficiency": 20
+    },
+    "unlocksBuildings": ["lighthouse"],
+    "unlocksUnits": ["warship"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/navigation.png"
+  },
+  {
+    "id": "trade",
+    "name": "무역",
+    "description": "상품을 교환하는 체계적인 방법으로, 경제 발전을 촉진합니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": [],
+    "effects": {
+      "gold_income": 20,
+      "diplomatic_influence": 10
+    },
+    "unlocksBuildings": ["marketplace"],
+    "unlocksUnits": ["trade_ship"],
+    "unlocksResources": ["luxury_goods"],
+    "iconPath": "icons/tech/trade.png"
+  },
+  {
+    "id": "currency",
+    "name": "화폐",
+    "description": "가치 교환의 표준화된 수단으로, 경제 활동을 더욱 효율적으로 만듭니다.",
+    "category": "economy",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["trade"],
+    "effects": {
+      "gold_income": 30,
+      "trade_efficiency": 25,
+      "tax_efficiency": 20
+    },
+    "unlocksBuildings": ["bank"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/currency.png"
+  },
+  {
+    "id": "banking",
+    "name": "은행업",
+    "description": "자금을 관리하고 대출하는 시스템으로, 경제 성장을 가속화합니다.",
+    "category": "economy",
+    "tier": 3,
+    "cost": {
+      "research_points": 40
+    },
+    "prerequisites": ["currency"],
+    "effects": {
+      "gold_income": 40,
+      "trade_efficiency": 30,
+      "interest_income": 15
+    },
+    "unlocksBuildings": ["national_bank"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/banking.png"
+  },
+  {
+    "id": "writing",
+    "name": "문자",
+    "description": "정보를 기록하고 전달하는 시스템으로, 지식의 축적과 전파가 가능해집니다.",
+    "category": "science",
+    "tier": 1,
+    "cost": {
+      "research_points": 10
+    },
+    "prerequisites": [],
+    "effects": {
+      "research_efficiency": 20,
+      "diplomatic_influence": 15
+    },
+    "unlocksBuildings": ["library"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/writing.png"
+  },
+  {
+    "id": "mathematics",
+    "name": "수학",
+    "description": "수와 공간을 연구하는 학문으로, 과학과 공학의 기초가 됩니다.",
+    "category": "science",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["writing"],
+    "effects": {
+      "research_efficiency": 25,
+      "construction_efficiency": 15,
+      "tax_efficiency": 10
+    },
+    "unlocksBuildings": ["academy"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/mathematics.png"
+  },
+  {
+    "id": "astronomy",
+    "name": "천문학",
+    "description": "천체를 관측하고 연구하는 학문으로, 항해와 시간 측정에 도움이 됩니다.",
+    "category": "science",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["mathematics"],
+    "effects": {
+      "research_efficiency": 20,
+      "naval_movement": 20,
+      "exploration_speed": 30
+    },
+    "unlocksBuildings": ["observatory"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/astronomy.png"
+  },
+  {
+    "id": "philosophy",
+    "name": "철학",
+    "description": "지식, 현실, 존재의 본질을 탐구하는 학문으로, 사회와 문화 발전에 기여합니다.",
+    "category": "culture",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["writing"],
+    "effects": {
+      "research_efficiency": 20,
+      "happiness": 10,
+      "cultural_influence": 20
+    },
+    "unlocksBuildings": ["temple"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/philosophy.png"
+  },
+  {
+    "id": "education",
+    "name": "교육",
+    "description": "지식과 기술을 체계적으로 전수하는 시스템으로, 사회 발전의 핵심입니다.",
+    "category": "culture",
+    "tier": 3,
+    "cost": {
+      "research_points": 40
+    },
+    "prerequisites": ["philosophy", "mathematics"],
+    "effects": {
+      "research_efficiency": 30,
+      "happiness": 15,
+      "population_growth": 10
+    },
+    "unlocksBuildings": ["school", "university"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/education.png"
+  },
+  {
+    "id": "magic",
+    "name": "마법",
+    "description": "자연의 신비한 힘을 다루는 기술로, 특수한 능력과 유닛을 얻을 수 있습니다.",
+    "category": "arcane",
+    "tier": 2,
+    "cost": {
+      "research_points": 35,
+      "mana": 50
+    },
+    "prerequisites": ["mysticism"],
+    "effects": {
+      "mana_production": 30,
+      "magical_attack": 20,
+      "spell_efficiency": 20
+    },
+    "unlocksBuildings": ["mage_tower"],
+    "unlocksUnits": ["mage"],
+    "unlocksResources": ["magical_essence"],
+    "iconPath": "icons/tech/magic.png"
+  },
+  {
+    "id": "mysticism",
+    "name": "신비주의",
+    "description": "초자연적인 현상과 영적 세계를 탐구하는 학문으로, 마법의 기초가 됩니다.",
+    "category": "arcane",
+    "tier": 1,
+    "cost": {
+      "research_points": 20,
+      "mana": 20
+    },
+    "prerequisites": [],
+    "effects": {
+      "mana_production": 20,
+      "happiness": 10,
+      "cultural_influence": 15
+    },
+    "unlocksBuildings": ["shrine"],
+    "unlocksUnits": [],
+    "unlocksResources": ["mana"],
+    "iconPath": "icons/tech/mysticism.png"
+  },
+  {
+    "id": "advanced_magic",
+    "name": "고급 마법",
+    "description": "더 강력하고 복잡한 마법을 다루는 기술로, 최상급 마법 유닛과 건물을 얻을 수 있습니다.",
+    "category": "arcane",
+    "tier": 3,
+    "cost": {
+      "research_points": 60,
+      "mana": 100
+    },
+    "prerequisites": ["magic", "philosophy"],
+    "effects": {
+      "mana_production": 50,
+      "magical_attack": 40,
+      "spell_efficiency": 40,
+      "magical_defense": 30
+    },
+    "unlocksBuildings": ["arcane_sanctuary"],
+    "unlocksUnits": ["archmage"],
+    "unlocksResources": ["arcane_crystal"],
+    "iconPath": "icons/tech/advanced_magic.png"
+  },
+  {
+    "id": "alchemy",
+    "name": "연금술",
+    "description": "물질의 변환과 특수한 약품을 만드는 기술로, 자원 생산과 유닛 강화에 도움이 됩니다.",
+    "category": "arcane",
+    "tier": 2,
+    "cost": {
+      "research_points": 30,
+      "mana": 40
+    },
+    "prerequisites": ["mysticism", "mining"],
+    "effects": {
+      "resource_conversion": 20,
+      "unit_health": 15,
+      "potion_efficiency": 30
+    },
+    "unlocksBuildings": ["alchemy_lab"],
+    "unlocksUnits": [],
+    "unlocksResources": ["elixir"],
+    "iconPath": "icons/tech/alchemy.png"
+  },
+  {
+    "id": "enchanting",
+    "name": "마법 부여",
+    "description": "물체에 마법적 특성을 부여하는 기술로, 강력한 장비와 아이템을 만들 수 있습니다.",
+    "category": "arcane",
+    "tier": 3,
+    "cost": {
+      "research_points": 45,
+      "mana": 80
+    },
+    "prerequisites": ["magic", "alchemy"],
+    "effects": {
+      "item_power": 40,
+      "unit_attack": 20,
+      "unit_defense": 20,
+      "magical_resistance": 30
+    },
+    "unlocksBuildings": ["enchanter_workshop"],
+    "unlocksUnits": [],
+    "unlocksResources": ["enchanted_material"],
+    "iconPath": "icons/tech/enchanting.png"
+  },
+  {
+    "id": "masonry",
+    "name": "석공",
+    "description": "돌을 다루는 기술로, 더 튼튼한 건물을 지을 수 있습니다.",
+    "category": "economy",
+    "tier": 1,
+    "cost": {
+      "research_points": 15
+    },
+    "prerequisites": ["mining"],
+    "effects": {
+      "building_durability": 30,
+      "construction_speed": 20
+    },
+    "unlocksBuildings": ["stone_wall", "watchtower"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/masonry.png"
+  },
+  {
+    "id": "construction",
+    "name": "건축",
+    "description": "대규모 건물을 설계하고 건설하는 기술로, 더 발전된 도시 시설을 지을 수 있습니다.",
+    "category": "economy",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["masonry"],
+    "effects": {
+      "building_durability": 40,
+      "construction_speed": 30,
+      "city_capacity": 20
+    },
+    "unlocksBuildings": ["granary", "courthouse"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/construction.png"
+  },
+  {
+    "id": "architecture",
+    "name": "건축학",
+    "description": "건물의 미학과 기능을 연구하는 학문으로, 아름답고 효율적인 건물을 지을 수 있습니다.",
+    "category": "culture",
+    "tier": 3,
+    "cost": {
+      "research_points": 40
+    },
+    "prerequisites": ["construction", "mathematics"],
+    "effects": {
+      "building_durability": 50,
+      "construction_speed": 40,
+      "happiness": 20,
+      "cultural_influence": 30
+    },
+    "unlocksBuildings": ["palace", "cathedral"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/architecture.png"
+  },
+  {
+    "id": "pottery",
+    "name": "도예",
+    "description": "점토로 용기를 만드는 기술로, 식량 저장과 문화 발전에 기여합니다.",
+    "category": "culture",
+    "tier": 1,
+    "cost": {
+      "research_points": 10
+    },
+    "prerequisites": [],
+    "effects": {
+      "food_storage": 20,
+      "cultural_influence": 10
+    },
+    "unlocksBuildings": ["pottery_workshop"],
+    "unlocksUnits": [],
+    "unlocksResources": ["pottery"],
+    "iconPath": "icons/tech/pottery.png"
+  },
+  {
+    "id": "art",
+    "name": "예술",
+    "description": "미적 표현과 창작 활동으로, 문화 발전과 국민 행복도에 기여합니다.",
+    "category": "culture",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["pottery", "writing"],
+    "effects": {
+      "happiness": 25,
+      "cultural_influence": 30,
+      "diplomatic_influence": 15
+    },
+    "unlocksBuildings": ["artist_guild"],
+    "unlocksUnits": [],
+    "unlocksResources": ["artwork"],
+    "iconPath": "icons/tech/art.png"
+  },
+  {
+    "id": "music",
+    "name": "음악",
+    "description": "소리와 리듬을 통한 예술 표현으로, 문화 발전과 국민 행복도에 기여합니다.",
+    "category": "culture",
+    "tier": 2,
+    "cost": {
+      "research_points": 25
+    },
+    "prerequisites": ["writing"],
+    "effects": {
+      "happiness": 30,
+      "cultural_influence": 25,
+      "diplomatic_influence": 10
+    },
+    "unlocksBuildings": ["music_hall"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/music.png"
+  },
+  {
+    "id": "drama",
+    "name": "연극",
+    "description": "이야기를 연기로 표현하는 예술로, 문화 발전과 국민 행복도에 기여합니다.",
+    "category": "culture",
+    "tier": 3,
+    "cost": {
+      "research_points": 35
+    },
+    "prerequisites": ["art", "music"],
+    "effects": {
+      "happiness": 35,
+      "cultural_influence": 40,
+      "diplomatic_influence": 20
+    },
+    "unlocksBuildings": ["theater"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/drama.png"
+  },
+  {
+    "id": "theology",
+    "name": "신학",
+    "description": "신과 종교에 대한 체계적인 연구로, 문화와 사회 발전에 기여합니다.",
+    "category": "culture",
+    "tier": 3,
+    "cost": {
+      "research_points": 40
+    },
+    "prerequisites": ["philosophy"],
+    "effects": {
+      "happiness": 25,
+      "cultural_influence": 30,
+      "loyalty": 20
+    },
+    "unlocksBuildings": ["cathedral", "monastery"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/theology.png"
+  },
+  {
+    "id": "medicine",
+    "name": "의학",
+    "description": "질병을 치료하고 건강을 유지하는 학문으로, 인구 성장과 군사력 유지에 도움이 됩니다.",
+    "category": "science",
+    "tier": 3,
+    "cost": {
+      "research_points": 45
+    },
+    "prerequisites": ["alchemy", "education"],
+    "effects": {
+      "population_growth": 30,
+      "unit_health": 25,
+      "disease_resistance": 40
+    },
+    "unlocksBuildings": ["hospital"],
+    "unlocksUnits": [],
+    "unlocksResources": ["medicine"],
+    "iconPath": "icons/tech/medicine.png"
+  },
+  {
+    "id": "diplomacy",
+    "name": "외교",
+    "description": "국가 간 관계를 관리하는 기술로, 평화적인 국제 관계와 무역에 도움이 됩니다.",
+    "category": "culture",
+    "tier": 2,
+    "cost": {
+      "research_points": 30
+    },
+    "prerequisites": ["writing"],
+    "effects": {
+      "diplomatic_influence": 40,
+      "trade_efficiency": 20,
+      "alliance_strength": 30
+    },
+    "unlocksBuildings": ["embassy"],
+    "unlocksUnits": [],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/diplomacy.png"
+  },
+  {
+    "id": "espionage",
+    "name": "첩보",
+    "description": "비밀 정보를 수집하고 적의 활동을 방해하는 기술로, 전략적 우위를 확보할 수 있습니다.",
+    "category": "military",
+    "tier": 3,
+    "cost": {
+      "research_points": 50
+    },
+    "prerequisites": ["diplomacy"],
+    "effects": {
+      "intelligence_gathering": 40,
+      "sabotage_efficiency": 30,
+      "counter_intelligence": 25
+    },
+    "unlocksBuildings": ["spy_guild"],
+    "unlocksUnits": ["spy"],
+    "unlocksResources": [],
+    "iconPath": "icons/tech/espionage.png"
+  }
+]
