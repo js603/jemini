@@ -28,8 +28,8 @@ const firebaseConfig = {
 };
 
 // Groq API 호출 함수
-const callGroqLlmApi = async (prompt, systemPrompt, model = "llama3-70b-8192") => {
-    const GROQ_API_KEY = "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";
+const callGroqLlmApi = async (prompt, systemPrompt, model = "llama-3.1-405b-reasoning") => {
+    const GROQ_API_KEY = "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";
     const url = "https://api.groq.com/openai/v1/chat/completions";
     const payload = {
         model,
