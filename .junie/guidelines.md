@@ -17,7 +17,7 @@
 
 ## 프로젝트 개요
 
-Jemini는 Firebase를 백엔드 서비스로 사용하고 게임 메커니즘을 위해 Groq와 같은 AI 서비스와 통합되는 React 기반 전략 게임입니다. 이 게임은 영토 관리, 기술 연구, AI 기반 상대와의 상호작용을 포함합니다.
+Jemini는 Firebase를 백엔드 서비스로 사용하고 게임 메커니즘을 위해 Groq, Gemini와 같은 AI 서비스와 통합되는 React 기반 인터렉티브 시뮬레이션 게임입니다. 이 게임은 AI 마스터(GM)가 행성과 인류창조의 시나리오를 스토리텔링하고 유저는 상호작용을 통해 창조자가 되어 세상을 창조해갑니다.
 
 ## 빌드 및 구성 지침
 
@@ -73,23 +73,135 @@ npm run release
 
 ### Firebase 구성
 
-Firebase 구성은 현재 `App.jsx`에 하드코딩되어 있습니다. 프로덕션의 경우 이를 환경 변수로 이동하는 것을 고려하세요.
+Firebase 구성은 현재 `App.jsx`에 하드코딩되어 있습니다.
 
 ```javascript
 const firebaseConfig = {
-  apiKey: '...',
-  authDomain: '...',
-  projectId: '...',
-  storageBucket: '...',
-  messagingSenderId: '...',
-  appId: '...',
-  measurementId: '...',
+  apiKey: 'AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8',
+  authDomain: 'text-adventure-game-cb731.firebaseapp.com',
+  projectId: 'text-adventure-game-cb731',
+  storageBucket: 'text-adventure-game-cb731.appspot.com',
+  messagingSenderId: '1092941614820',
+  appId: '1:1092941614820:web:5545f36014b73c268026f1',
+  measurementId: 'G-FNGF42T1FP',
 };
 ```
 
 ### API 키
 
-이 프로젝트는 LLM 통합을 위해 Groq API를 사용합니다. API 키는 현재 `App.jsx`에 하드코딩되어 있습니다. 프로덕션의 경우 이를 환경 변수나 안전한 백엔드 서비스로 이동해야 합니다.
+이 프로젝트는 LLM 통합을 위해 Groq API와 Gemini API를 사용합니다. API 키는 현재 `App.jsx`에 하드코딩되어 있습니다.
+
+```javascript
+const callGroqLlmApi = async (prompt, systemPrompt, model = "llama3-70b-8192") => {
+  const GROQ_API_KEY = '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';
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
+  const payload = {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.7,
+    max_tokens: 1024,
+    response_format: { type: 'text' },
+  };
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      console.error(`Groq API 호출 실패 (상태: ${response.status})`);
+      return {
+        chatMessage: `[시스템 오류: Groq API 호출 실패 (상태: ${response.status})]`,
+        playerUpdates: []
+      };
+    }
+    const result = await response.json();
+    const llmOutputText = result.choices?.[0]?.message?.content || '';
+    // JSON 파싱 (코드블록 제거)
+    const cleanedOutput = llmOutputText.replace(/```json/g, '').replace(/```/g, '').trim();
+    try {
+      const parsedOutput = JSON.parse(cleanedOutput);
+      // 기본 구조 검증
+      if (!parsedOutput.chatMessage) {
+        parsedOutput.chatMessage = "시스템: 응답을 처리하는 중 오류가 발생했습니다.";
+      }
+      if (!Array.isArray(parsedOutput.playerUpdates)) {
+        parsedOutput.playerUpdates = [];
+      }
+      return parsedOutput;
+    } catch (parseError) {
+      console.error("Groq API 응답 파싱 오류:", parseError, "원본 텍스트:", cleanedOutput);
+      return {
+        chatMessage: `[시스템 오류: JSON 파싱 실패] ${llmOutputText.substring(0, 100)}...`,
+        playerUpdates: []
+      };
+    }
+  } catch (error) {
+    console.error("Groq API 호출 중 오류:", error);
+    return {
+      chatMessage: `[시스템 오류: Groq API 호출 중 오류: ${error.message}]`,
+      playerUpdates: []
+    };
+  }
+};
+```
+
+```javascript
+    const callGeminiLlmApi = useCallback(
+        async (userPrompt, systemPromptToUse) => {
+            setIsTextLoading(true);
+            const mainApiKey = 'AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8';
+            const backupApiKey = 'AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84';
+            const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+            const payload = {
+                contents: [
+                    { role: 'user', parts: [{ text: systemPromptToUse }] },
+                    { role: 'model', parts: [{ text: '{"response_format": "json"}' }] },
+                    { role: 'user', parts: [{ text: userPrompt }] }
+                ],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                }
+            };
+            const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            try {
+                let response = await tryGeminiCall(mainApiKey);
+                if (!response.ok) response = await tryGeminiCall(backupApiKey);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                const result = await response.json();
+                const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+                const jsonMatch = llmOutputText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+                if (jsonMatch && jsonMatch[0]) {
+                    try {
+                        return JSON.parse(jsonMatch[0]);
+                    } catch (e) {
+                        console.warn('JSON 파싱 실패, 원본 텍스트를 반환하여 재시도 로직에서 처리합니다.', e);
+                        return llmOutputText;
+                    }
+                }
+
+                console.warn('LLM 응답에서 유효한 JSON 객체나 배열을 찾지 못했습니다.');
+                return llmOutputText;
+
+            } catch (error) {
+                console.error('LLM API 호출 중 치명적 오류 발생:', error);
+                setLlmError(error.message || 'LLM 호출에 실패했습니다.');
+                return null;
+            } finally {
+                setIsTextLoading(false);
+            }
+        }
+    );
+```
 
 ## 테스트 정보
 
@@ -179,16 +291,10 @@ describe('MyComponent', () => {
 1. **컴포넌트 구성**: 컴포넌트가 단일 책임에 집중하도록 유지
 2. **상태 관리**: 상태 관리에 React 훅 사용
 3. **Firebase 통합**: 인증 및 데이터 저장을 위한 Firebase 모범 사례 준수
-4. **API 키**: 프로덕션에서는 API 키를 환경 변수로 이동
+4. **API 키**: 프로덕션에서는 API 키를 환경 변수로 이동 (미사용)
 5. **테스트**: 모든 새로운 기능에 대한 테스트 작성
 6. **문서화**: 복잡한 로직에 주석 추가 및 JSDoc로 함수 문서화
 
-### 게임 데이터 처리
-
-게임 데이터는 `App.jsx` 파일에 정의되어 있습니다:
-- 기술 트리: 연구할 수 있는 기술 정의
-- 맵 데이터: 영토와 그 속성 정의
-- 게임 메커니즘: React 컴포넌트 및 함수로 구현
 
 새로운 게임 기능을 추가할 때는 기존 패턴을 따르고 적절히 테스트되었는지 확인하세요.
 
@@ -200,18 +306,15 @@ describe('MyComponent', () => {
 - 한국어 문자의 적절한 표시를 위해 Noto Sans KR 폰트 사용
 - 코드의 주석은 주로 한국어로 작성됨
 
-향후 다국어 지원이 필요한 경우, react-i18next 또는 react-intl과 같은 적절한 i18n 라이브러리 구현을 고려하세요. 이는 다음을 포함합니다:
-1. 모든 텍스트 문자열을 번역 파일로 추출
-2. 언어 감지 및 전환 메커니즘 설정
-3. 날짜, 숫자 등에 대한 로케일별 형식 구현
-
 ## 문제 해결
 
 ### 일반적인 문제
 
 1. **Firebase 인증**: 인증 문제가 발생하면 Firebase 콘솔에서 오류 메시지 확인
 2. **API 속도 제한**: Groq API에는 속도 제한이 있습니다. API 호출에 대한 적절한 오류 처리 구현
-3. **테스트 환경**: 테스트가 예기치 않게 실패하면 테스트 환경이 올바르게 설정되어 있는지 확인
+3. **로딩 순서**: React 방식에 따른 로딩 순서에 의한 랜더링 오류가 발생하는지 확인
+4. **ui디자인**: 구성 디자인 크기와 배치로 인해 인식이 불가능한지 확인 처리 구현 
+5. **테스트 환경**: 테스트가 예기치 않게 실패하면 테스트 환경이 올바르게 설정되어 있는지 확인
 
 ### 디버깅
 
