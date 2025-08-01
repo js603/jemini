@@ -1,13 +1,10 @@
 {
   "files": {
-    "main.css": "/jemini/static/css/main.f87f826e.css",
-    "main.js": "/jemini/static/js/main.38c36597.js",
+    "main.js": "/jemini/static/js/main.00306f58.js",
     "index.html": "/jemini/index.html",
-    "main.f87f826e.css.map": "/jemini/static/css/main.f87f826e.css.map",
-    "main.38c36597.js.map": "/jemini/static/js/main.38c36597.js.map"
+    "main.00306f58.js.map": "/jemini/static/js/main.00306f58.js.map"
   },
   "entrypoints": [
-    "static/css/main.f87f826e.css",
-    "static/js/main.38c36597.js"
+    "static/js/main.00306f58.js"
   ]
 }
