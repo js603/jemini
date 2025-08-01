@@ -1,24 +1,33 @@
 // ChatInterface.jsx - 채팅 인터페이스 컴포넌트
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import useGameStore from '../stores/gameStore';
 import '../styles/ChatInterface.css';
 
 /**
  * 채팅 인터페이스 컴포넌트
  * - 게임 메시지 표시
+ * - 선택지 표시 (채팅 내부)
  * - 자동 스크롤 관리
  * - 메시지 타입별 스타일링
  * - 모바일 친화적 디자인
  */
-const ChatInterface = () => {
-  const { messages, isLoading } = useGameStore();
+const ChatInterface = ({ onChoiceSelect }) => {
+  const { 
+    messages, 
+    isLoading, 
+    currentChoices, 
+    isWaitingForChoice, 
+    selectChoice 
+  } = useGameStore();
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const [selectedChoiceId, setSelectedChoiceId] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // 새 메시지가 추가될 때 자동 스크롤
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, currentChoices]);
 
   const scrollToBottom = () => {
     if (messagesEndRef.current) {
@@ -27,6 +36,62 @@ const ChatInterface = () => {
         block: 'end'
       });
     }
+  };
+
+  // 선택지 클릭 핸들러
+  const handleChoiceClick = async (choice) => {
+    if (isProcessing || isLoading) return;
+
+    try {
+      setIsProcessing(true);
+      setSelectedChoiceId(choice.id);
+
+      // 선택지 선택 처리
+      const selectedChoice = selectChoice(choice.id);
+      
+      if (selectedChoice && onChoiceSelect) {
+        // 부모 컴포넌트에 선택 결과 전달
+        await onChoiceSelect(selectedChoice);
+      }
+
+    } catch (error) {
+      console.error('선택지 처리 중 오류:', error);
+    } finally {
+      setIsProcessing(false);
+      setSelectedChoiceId(null);
+    }
+  };
+
+  // 선택지 아이콘 반환
+  const getChoiceIcon = (choice) => {
+    if (choice.type) {
+      switch (choice.type) {
+        case 'creative': return '🎨';
+        case 'creation': return '✨';
+        case 'wisdom': return '🧠';
+        case 'power': return '⚡';
+        case 'compassion': return '❤️';
+        case 'destruction': return '💥';
+        case 'exploration': return '🔍';
+        case 'protection': return '🛡️';
+        default: return '⭐';
+      }
+    }
+    return '⭐';
+  };
+
+  // 선택지 효과 표시
+  const getChoiceEffect = (choice) => {
+    if (choice.effects && choice.effects.length > 0) {
+      return choice.effects.map(effect => {
+        if (effect.stat) {
+          const sign = effect.value > 0 ? '+' : '';
+          return `${effect.stat} ${sign}${effect.value}`;
+        }
+        return effect.description || '';
+      }).join(', ');
+    }
+    return null;
   };
 
   // 메시지 타입별 아이콘 반환
@@ -144,6 +209,74 @@ const ChatInterface = () => {
               )}
             </div>
           ))
+        )}
+        
+        {/* 선택지 표시 (채팅 내부) */}
+        {isWaitingForChoice && currentChoices.length > 0 && (
+          <div className="chat-choices-container">
+            <div className="choices-header">
+              <div className="choices-title">
+                <span className="choices-icon">🤔</span>
+                <span className="choices-text">어떤 선택을 하시겠습니까?</span>
+              </div>
+            </div>
+            
+            <div className="chat-choices">
+              {currentChoices.map((choice, index) => (
+                <button
+                  key={choice.id}
+                  className={`chat-choice-button ${selectedChoiceId === choice.id ? 'selected' : ''} ${choice.type || 'default'}`}
+                  onClick={() => handleChoiceClick(choice)}
+                  disabled={isProcessing || isLoading}
+                  style={{ animationDelay: `${index * 0.1}s` }}
+                >
+                  <div className="choice-content">
+                    <div className="choice-main">
+                      <span className="choice-emoji">
+                        {getChoiceIcon(choice)}
+                      </span>
+                      <span className="choice-text">
+                        {choice.text}
+                      </span>
+                    </div>
+                    
+                    {choice.description && (
+                      <div className="choice-description">
+                        {choice.description}
+                      </div>
+                    )}
+                    
+                    {getChoiceEffect(choice) && (
+                      <div className="choice-effects">
+                        <span className="effects-label">효과:</span>
+                        <span className="effects-text">
+                          {getChoiceEffect(choice)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 선택 처리 중 로딩 */}
+                  {selectedChoiceId === choice.id && isProcessing && (
+                    <div className="choice-loading">
+                      <div className="choice-spinner"></div>
+                    </div>
+                  )}
+
+                  {/* 호버 효과 */}
+                  <div className="choice-hover-effect"></div>
+                </button>
+              ))}
+            </div>
+
+            {/* 선택 도움말 */}
+            <div className="choices-help">
+              <div className="help-icon">💡</div>
+              <div className="help-text">
+                각 선택지는 당신의 능력치와 세계에 다른 영향을 미칩니다.
+              </div>
+            </div>
+          </div>
         )}
         
         {/* 스크롤 앵커 */}

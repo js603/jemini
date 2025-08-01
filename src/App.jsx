@@ -7,12 +7,14 @@ import { getAnalytics } from "firebase/analytics";
 
 // 컴포넌트 임포트
 import ChatInterface from "./components/ChatInterface";
-import ChoiceButtons from "./components/ChoiceButtons";
 import MessageInput from "./components/MessageInput";
 import useGameMaster from "./components/GameMaster";
 
 // 스토어 임포트
 import useGameStore from "./stores/gameStore";
+
+// 유틸리티 임포트
+import { callGroqLlmApi, callGeminiLlmApi } from "./utils/apiUtils";
 
 // 스타일 임포트
 import "./styles/App.css";
@@ -27,120 +29,7 @@ const firebaseConfig = {
     appId: "1:1092941614820:web:5545f36014b73c268026f1"
 };
 
-// Groq API 호출 함수
-const callGroqLlmApi = async (prompt, systemPrompt, model = "llama-3.1-405b-reasoning") => {
-    const GROQ_API_KEY = "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";
-    const url = "https://api.groq.com/openai/v1/chat/completions";
-    const payload = {
-        model,
-        messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 1024,
-        response_format: { type: "text" },
-    };
-    
-    try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`,
-            },
-            body: JSON.stringify(payload),
-        });
-        
-        if (!response.ok) {
-            console.error(`Groq API 호출 실패 (상태: ${response.status})`);
-            return {
-                chatMessage: `[시스템 오류: Groq API 호출 실패 (상태: ${response.status})]`,
-                playerUpdates: []
-            };
-        }
-        
-        const result = await response.json();
-        const llmOutputText = result.choices?.[0]?.message?.content || '';
-        
-        // JSON 파싱 (코드블록 제거)
-        const cleanedOutput = llmOutputText.replace(/```json/g, '').replace(/```/g, '').trim();
-        
-        try {
-            const parsedOutput = JSON.parse(cleanedOutput);
-            // 기본 구조 검증
-            if (!parsedOutput.chatMessage) {
-                parsedOutput.chatMessage = "시스템: 응답을 처리하는 중 오류가 발생했습니다.";
-            }
-            if (!Array.isArray(parsedOutput.playerUpdates)) {
-                parsedOutput.playerUpdates = [];
-            }
-            return parsedOutput;
-        } catch (parseError) {
-            console.error("Groq API 응답 파싱 오류:", parseError, "원본 텍스트:", cleanedOutput);
-            return {
-                chatMessage: `[시스템 오류: JSON 파싱 실패] ${llmOutputText.substring(0, 100)}...`,
-                playerUpdates: []
-            };
-        }
-    } catch (error) {
-        console.error("Groq API 호출 중 오류:", error);
-        return {
-            chatMessage: `[시스템 오류: Groq API 호출 중 오류: ${error.message}]`,
-            playerUpdates: []
-        };
-    }
-};
 
-// Gemini API 호출 함수
-const callGeminiLlmApi = async (userPrompt, systemPromptToUse) => {
-    const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
-    const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
-    const getApiUrl = (apiKey) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-    
-    const payload = {
-        contents: [
-            { role: "user", parts: [{ text: systemPromptToUse }] },
-            { role: "model", parts: [{ text: "{\"response_format\": \"json\"}" }] },
-            { role: "user", parts: [{ text: userPrompt }] }
-        ],
-        generationConfig: {
-            responseMimeType: "application/json",
-        }
-    };
-    
-    const tryGeminiCall = async (apiKey) => fetch(getApiUrl(apiKey), { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify(payload) 
-    });
-
-    try {
-        let response = await tryGeminiCall(mainApiKey);
-        if (!response.ok) response = await tryGeminiCall(backupApiKey);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-        const result = await response.json();
-        const llmOutputText = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-        const jsonMatch = llmOutputText.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-        if (jsonMatch && jsonMatch[0]) {
-            try {
-                return JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                console.warn("JSON 파싱 실패, 원본 텍스트를 반환하여 재시도 로직에서 처리합니다.", e);
-                return llmOutputText;
-            }
-        }
-
-        console.warn("LLM 응답에서 유효한 JSON 객체나 배열을 찾지 못했습니다.");
-        return llmOutputText;
-
-    } catch (error) {
-        console.error("LLM API 호출 중 치명적 오류 발생:", error);
-        return null;
-    }
-};
 
 // Firebase 초기화
 const app = initializeApp(firebaseConfig);
@@ -301,19 +190,17 @@ function App() {
         ) : (
           // 게임 플레이 화면
           <div className="game-play-screen">
-            {/* 채팅 인터페이스 */}
+            {/* 채팅 인터페이스 (선택지 포함) */}
             <div className="chat-section">
-              <ChatInterface />
+              <ChatInterface onChoiceSelect={handleChoiceSelect} />
             </div>
             
-            {/* 선택지 또는 입력창 */}
-            <div className="interaction-section">
-              {isWaitingForChoice ? (
-                <ChoiceButtons onChoiceSelect={handleChoiceSelect} />
-              ) : (
+            {/* 메시지 입력창 */}
+            {!isWaitingForChoice && (
+              <div className="interaction-section">
                 <MessageInput onSendMessage={handleSendMessage} />
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
