@@ -1,16 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.jsx'; // 메인 앱 컴포넌트 import
+import App from './App.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
+import './styles.css'; // 스타일 시트 불러오기
 
-// 'root' id를 가진 DOM 요소를 찾습니다.
 const rootElement = document.getElementById('root');
-
-// React 18의 새로운 createRoot API를 사용하여 root를 생성합니다.
 const root = ReactDOM.createRoot(rootElement);
 
-// App 컴포넌트를 렌더링합니다.
+// StrictMode 제거 및 ErrorBoundary 추가
 root.render(
-    <React.StrictMode>
-        <App />
-    </React.StrictMode>
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
 );

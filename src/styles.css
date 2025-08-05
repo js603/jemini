@@ -1,0 +1,46 @@
+/* 애니메이션 관련 스타일 */
+.fade-in {
+  animation: fadeIn 0.6s ease-in-out;
+  will-change: opacity; /* 브라우저 렌더링 최적화 */
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 타이핑 커서 효과 개선 */
+.typing-cursor::after {
+  content: '|';
+  display: inline-block;
+  color: #fff;
+  margin-left: 2px;
+  font-weight: bold;
+  animation: blink 1s step-end infinite;
+  position: relative;
+  top: 0;
+  left: 0;
+  z-index: 10; /* 커서가 항상 보이도록 z-index 설정 */
+}
+
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 타이핑 텍스트 컨테이너에 최적화 추가 */
+.typing-text-container {
+  position: relative;
+  will-change: contents;
+}
+
+/* 호버 효과 추가 */
+.choice-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* 스크롤 부드럽게 적용 */
+html {
+  scroll-behavior: smooth;
+}
