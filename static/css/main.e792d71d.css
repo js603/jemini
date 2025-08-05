@@ -1,0 +1,2 @@
+.fade-in{animation:fadeIn .6s ease-in-out;will-change:opacity}@keyframes fadeIn{0%{opacity:0}to{opacity:1}}.typing-cursor:after{animation:blink 1s step-end infinite;color:#fff;content:"|";display:inline-block;font-weight:700;left:0;margin-left:2px;position:relative;top:0;z-index:10}@keyframes blink{0%,to{opacity:1}50%{opacity:0}}.typing-text-container{position:relative;will-change:contents}.choice-button:hover{box-shadow:0 10px 15px -3px #0000001a,0 4px 6px -2px #0000000d;transform:translateY(-2px)}html{scroll-behavior:smooth}
+/*# sourceMappingURL=main.e792d71d.css.map*/
