@@ -12,6 +12,35 @@ const SendIcon = (props) => (
         <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
     </svg>
 );
+
+// --- 로딩 스피너 컴포넌트 ---
+const LoadingSpinner = ({ size = "w-6 h-6", color = "text-purple-400" }) => (
+    <div className={`${size} ${color} animate-spin`}>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+    </div>
+);
+
+// --- 귀여운 로딩 애니메이션 컴포넌트 ---
+const CuteLoadingAnimation = () => (
+    <div className="flex items-center justify-center space-x-2 py-4">
+        <div className="flex space-x-1">
+            <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+            <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+            <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+        </div>
+        <span className="text-purple-300 text-sm ml-3 animate-pulse">✨ AI가 마법을 부리는 중... ✨</span>
+    </div>
+);
+
+// --- 반짝이는 별 아이콘 ---
+const SparkleIcon = (props) => (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0l3.09 6.26L22 9l-6.91 2.74L12 18l-3.09-6.26L2 9l6.91-2.74L12 0z"/>
+    </svg>
+);
 const QuoteIcon = (props) => (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 2v6c0 7 4 8 7 8Z"/><path d="M14 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2h-4c-1.25 0-2 .75-2 2v6c0 7 4 8 7 8Z"/>
@@ -220,7 +249,7 @@ const NextConversationButton = ({ onClick }) => {
 
 
 // StoryLogItem 컴포넌트 수정
-const StoryLogItem = ({ item, onChoiceClick, isLatest, onTypingComplete, isTyping }) => {
+const StoryLogItem = ({ item, onChoiceClick, isLatest, onTypingComplete, isTyping, storyOnlyMode }) => {
     if (item.type === 'narrative') {
         const paragraphs = item.text.split(/\n\s*\n/).filter(p => p.trim());
 
@@ -242,6 +271,11 @@ const StoryLogItem = ({ item, onChoiceClick, isLatest, onTypingComplete, isTypin
     if (item.type === 'choice') {
         // 타이핑 중일 때는 선택지를 숨김
         if (isTyping) {
+            return null;
+        }
+
+        // 스토리 전용 모드일 때는 선택지를 숨김
+        if (storyOnlyMode) {
             return null;
         }
 
@@ -298,11 +332,14 @@ const StoryLogItem = ({ item, onChoiceClick, isLatest, onTypingComplete, isTypin
                                 }}
                                 className="group w-full text-left transition-all duration-300 transform hover:scale-102 hover:-translate-y-1 choice-button"
                             >
-                                <div className="bg-gradient-to-r from-slate-800/70 to-slate-700/70 group-hover:from-slate-700/90 group-hover:to-slate-600/90 border border-slate-600 group-hover:border-purple-400 rounded-xl px-8 py-6 shadow-lg group-hover:shadow-purple-500/20 backdrop-blur-sm">
+                                <div className="bg-gradient-to-r from-slate-800/70 via-purple-900/30 to-slate-700/70 group-hover:from-purple-800/80 group-hover:via-pink-800/40 group-hover:to-purple-700/80 border border-slate-600 group-hover:border-purple-400 rounded-xl px-8 py-6 shadow-lg group-hover:shadow-purple-500/30 backdrop-blur-sm relative overflow-hidden">
+                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                        <SparkleIcon className="w-4 h-4 text-yellow-400 animate-pulse" />
+                                    </div>
                                     <div className="flex items-start">
                                         <div className="flex-1">
-                                            <p className="text-white text-lg font-serif leading-relaxed">
-                                                {choiceText}
+                                            <p className="text-white text-lg font-serif leading-relaxed group-hover:text-purple-100 transition-colors duration-300">
+                                                ✨ {choiceText}
                                             </p>
                                         </div>
                                     </div>
@@ -329,7 +366,7 @@ const StoryLogItem = ({ item, onChoiceClick, isLatest, onTypingComplete, isTypin
 };
 
 // --- 컴포넌트: 하단 인터페이스 ---
-const BottomInterface = ({ onSubmit, isProcessing, tendency, onResetData, isTyping }) => {
+const BottomInterface = ({ onSubmit, isProcessing, tendency, onResetData, isTyping, storyOnlyMode, onStoryOnlyModeChange }) => {
     const [message, setMessage] = useState('');
     const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -385,6 +422,22 @@ const BottomInterface = ({ onSubmit, isProcessing, tendency, onResetData, isTypi
         <div className="mx-auto">
             <div className="text-center mb-2 flex justify-center items-center space-x-4">
                 <p className="text-xs text-purple-300">현재 성향: <span className="font-bold">{tendency}</span></p>
+                <div className="flex items-center space-x-2">
+                    <span className="text-xs text-purple-300">스토리 전용</span>
+                    <button
+                        onClick={() => onStoryOnlyModeChange(!storyOnlyMode)}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+                            storyOnlyMode ? 'bg-purple-600' : 'bg-gray-600'
+                        }`}
+                        title="스토리 전용 모드 - 선택지 없이 이야기만 보기"
+                    >
+                        <span
+                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                                storyOnlyMode ? 'translate-x-5' : 'translate-x-1'
+                            }`}
+                        />
+                    </button>
+                </div>
                 <button
                     onClick={handleResetClick}
                     className="flex items-center space-x-1 text-xs text-red-300 hover:text-red-200 transition-colors"
@@ -394,31 +447,41 @@ const BottomInterface = ({ onSubmit, isProcessing, tendency, onResetData, isTypi
                     <span>초기화</span>
                 </button>
             </div>
-            <form onSubmit={handleSubmit} className="flex items-center bg-slate-800/80 backdrop-blur-sm rounded-full p-3 shadow-inner border border-slate-700">
-                <SmileIcon className="w-6 h-6 mx-3 text-gray-400" />
+            <form onSubmit={handleSubmit} className="flex items-center bg-gradient-to-r from-slate-800/80 to-purple-900/60 backdrop-blur-sm rounded-full p-3 shadow-inner border border-purple-500/30 hover:border-purple-400/50 transition-all duration-300">
+                <SmileIcon className={`w-6 h-6 mx-3 transition-colors duration-300 ${isProcessing || isTyping ? 'text-yellow-400 animate-pulse' : 'text-purple-400 hover:text-yellow-300'}`} />
+                {(isProcessing || isTyping) && (
+                    <div className="flex items-center mr-2">
+                        <LoadingSpinner size="w-4 h-4" color="text-purple-400" />
+                        <SparkleIcon className="w-3 h-3 text-yellow-400 animate-pulse ml-1" />
+                    </div>
+                )}
                 <input
                     type="text"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder={isProcessing ? "AI가 응답을 생성 중입니다..." : isTyping ? "AI가 응답을 입력 중입니다..." : "메시지를 입력하세요."}
+                    placeholder={isProcessing ? "✨ AI가 마법을 부리는 중이에요... ✨" : isTyping ? "🎭 AI가 이야기를 들려주고 있어요... 🎭" : "🌟 창조주님, 어떤 선택을 하시겠어요? 🌟"}
                     disabled={isProcessing || isTyping}
-                    className="flex-grow bg-transparent text-white placeholder-gray-500 focus:outline-none text-lg"
+                    className="flex-grow bg-transparent text-white placeholder-purple-300 focus:outline-none text-lg"
                 />
-                <QuoteIcon className="w-6 h-6 mx-3 text-gray-400 hover:text-white cursor-pointer transition-colors" />
-                <UserIcon className="w-6 h-6 mx-3 text-gray-400 hover:text-white cursor-pointer transition-colors" />
+                <QuoteIcon className="w-6 h-6 mx-3 text-purple-400 hover:text-pink-300 cursor-pointer transition-colors duration-300" />
+                <UserIcon className="w-6 h-6 mx-3 text-purple-400 hover:text-blue-300 cursor-pointer transition-colors duration-300" />
                 <button
                     type="submit"
                     disabled={isProcessing || isTyping || !message.trim()}
-                    className="bg-purple-600 hover:bg-purple-700 rounded-full p-3 ml-2 transition-colors disabled:bg-slate-600 disabled:opacity-50"
+                    className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 rounded-full p-3 ml-2 transition-all duration-300 disabled:from-slate-600 disabled:to-slate-700 disabled:opacity-50 transform hover:scale-105 active:scale-95 shadow-lg hover:shadow-purple-500/25"
                 >
-                    <SendIcon className="w-5 h-5 text-white" />
+                    {isProcessing || isTyping ? (
+                        <LoadingSpinner size="w-5 h-5" color="text-white" />
+                    ) : (
+                        <SendIcon className="w-5 h-5 text-white" />
+                    )}
                 </button>
             </form>
         </div>
     );
 };
 
-// --- 메인 앱 컴포넌트 ---
+    // --- 메인 앱 컴포넌트 ---
 export default function App() {
     const [log, setLog] = useState([]);
     const [playerTendency, setPlayerTendency] = useState('미정');
@@ -429,9 +492,27 @@ export default function App() {
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [lastProcessedLogLength, setLastProcessedLogLength] = useState(0); // 마지막으로 처리된 로그 길이 추적
     const [typedNarrativeIds, setTypedNarrativeIds] = useState(new Set()); // 타이핑 완료된 내러티브 ID 추적
+    const [storyOnlyMode, setStoryOnlyMode] = useState(false); // 스토리 전용 모드 상태
 
     const scrollRef = useRef(null);
     const docRef = useRef(null);
+
+    // 초기 로딩 화면 컴포넌트
+    const InitialLoadingScreen = () => (
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white flex flex-col items-center justify-center p-4">
+            <div className="bg-black bg-opacity-50 backdrop-blur-sm rounded-xl p-10 shadow-2xl border border-purple-500/30 max-w-lg text-center">
+                <h1 className="text-3xl font-bold text-purple-300 mb-6 flex items-center justify-center">
+                    <SparkleIcon className="w-8 h-8 text-yellow-400 mr-3 animate-pulse" />
+                    마법의 세계로 초대합니다
+                    <SparkleIcon className="w-8 h-8 text-yellow-400 ml-3 animate-pulse" />
+                </h1>
+                <CuteLoadingAnimation />
+                <p className="text-purple-200 mt-4">
+                    🌟 창조주님을 위한 특별한 모험이 준비되고 있어요! 🌟
+                </p>
+            </div>
+        </div>
+    );
 
     // --- Firebase 초기화 및 인증 (개선된 오류 처리) ---
     useEffect(() => {
@@ -698,6 +779,44 @@ export default function App() {
         }
     }, [log, isProcessing, isTyping]);
 
+    // --- 새로운 이야기 등장 시 자동 스크롤 (향상된 버전) ---
+    useEffect(() => {
+        if (scrollRef.current && log.length > 0) {
+            const lastItem = log[log.length - 1];
+            
+            // 새로운 narrative 또는 choice가 추가되었을 때 즉시 스크롤
+            if (lastItem && (lastItem.type === 'narrative' || lastItem.type === 'choice')) {
+                const scrollToBottom = () => {
+                    scrollRef.current.scrollTo({
+                        top: scrollRef.current.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                };
+
+                // 즉시 스크롤 (DOM 업데이트 대기 없이)
+                scrollToBottom();
+                
+                // 추가적으로 약간의 지연 후 다시 스크롤 (타이핑 애니메이션 고려)
+                const timeoutId = setTimeout(scrollToBottom, 200);
+                return () => clearTimeout(timeoutId);
+            }
+        }
+    }, [log.length, log]);
+
+    // --- 타이핑 진행 중 지속적인 스크롤 ---
+    useEffect(() => {
+        if (scrollRef.current && isTyping) {
+            const scrollInterval = setInterval(() => {
+                scrollRef.current.scrollTo({
+                    top: scrollRef.current.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }, 500); // 타이핑 중 0.5초마다 스크롤 확인
+
+            return () => clearInterval(scrollInterval);
+        }
+    }, [isTyping]);
+
     // 타이핑 완료 핸들러
     const handleTypingComplete = () => {
         // eslint-disable-next-line no-console
@@ -724,6 +843,19 @@ export default function App() {
                     behavior: 'smooth'
                 });
             }, 300);
+        }
+
+        // 스토리 전용 모드일 때 자동으로 다음 이야기 생성
+        if (storyOnlyMode && !isProcessing) {
+            // eslint-disable-next-line no-console
+            console.log('스토리 전용 모드: 자동 이야기 계속 생성');
+            
+            // 자연스러운 흐름을 위해 2초 후 다음 이야기 생성
+            setTimeout(() => {
+                if (storyOnlyMode && !isProcessing) { // 다시 한번 확인
+                    requestIntegratedContent(log, playerTendency, true);
+                }
+            }, 2000);
         }
     };
 
@@ -769,70 +901,118 @@ export default function App() {
     const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
 
     // --- 통합된 내러티브 및 선택지 API 호출 ---
-    const callGeminiIntegratedAPI = async (currentLog, currentTendency) => {
-        const integratedPrompt = `
-        당신은 텍스트 기반 RPG의 게임 마스터(GM)입니다.
-        스타일:
-        신화적 판타지 세계 창조
+    const callGeminiIntegratedAPI = async (currentLog, currentTendency, isStoryOnlyMode = false) => {
+        let prompt;
         
-        신화적 판타지: 고대 신과 불사의 존재가 등장하며, 그들이 만든 세계에서 생명과 죽음, 창조와 파괴를 주제로 한 이야기.
-        
-        이계의 신 스타일: 신이 다른 세계를 창조하고, 그 안에서 생명체들이 발전하는 과정에서 신이 등장하고 그들과 상호작용하는 이야기.
-        
-        이 프롬프트를 사용해 세계를 설정하고, 이야기를 점차적으로 만들어가며 각 생명체들의 성장과 진화를 다룬 신화적 판타지 세계를 창조해 보세요!
+        if (isStoryOnlyMode) {
+            // 스토리 전용 모드: 연속적인 내러티브만 생성
+            prompt = `
+            당신은 텍스트 기반 RPG의 게임 마스터(GM)입니다.
+            스타일:
+            신화적 판타지 세계 창조
+            
+            신화적 판타지: 고대 신과 불사의 존재가 등장하며, 그들이 만든 세계에서 생명과 죽음, 창조와 파괴를 주제로 한 이야기.
+            
+            이계의 신 스타일: 신이 다른 세계를 창조하고, 그 안에서 생명체들이 발전하는 과정에서 신이 등장하고 그들과 상호작용하는 이야기.
+            
+            **중요: 스토리 전용 모드**
+            현재 스토리 전용 모드가 활성화되어 있습니다. 선택지나 플레이어 입력을 기다리지 말고, 연속적으로 흘러가는 이야기만 생성하세요.
+            이야기는 자연스럽게 다음 장면으로 이어져야 하며, 멈춤 없이 계속 진행되어야 합니다.
+            
+            **스토리텔링 규칙:**
+            1. 각 문단은 반드시 두 개의 줄바꿈(\n\n)으로 구분하여 작성하세요.
+            2. 한 문단 안에서 문장들은 하나의 줄바꿈(\n)으로 구분하세요.
+            3. 감정적 몰입도를 높이기 위해 섬세한 묘사와 장면 전환을 사용하세요.
+            4. 시각적, 청각적, 촉각적 세부사항을 포함하여 생생한 장면을 연출하세요.
+            5. 각 문단은 하나의 완결된 장면이나 상황을 담아야 합니다.
+            6. 대화와 상황 묘사를 적절히 조합하여 드라마틱한 효과를 만들어주세요.
+            7. **연속성 중시:** 이야기가 멈추지 않고 자연스럽게 다음 상황으로 흘러가도록 하세요.
+            8. **능동적 전개:** 창조주의 의지나 세계의 변화가 자동으로 일어나도록 서술하세요.
+            
+            **성향 시스템:**
+            플레이어의 현재 성향은 [${currentTendency}] 입니다.
+            이 성향을 바탕으로 창조주의 행동과 세계의 변화를 자연스럽게 이어가세요.
+            
+            **응답 형식:**
+            
+            **타입: story-only**
+            내용: "첫 번째 문단입니다.\n세부 내용이 있습니다.\n\n두 번째 문단입니다.\n추가 설명이 있습니다.\n\n세 번째 문단에서 이야기가 자연스럽게 계속됩니다."
+            성향: "${currentTendency}"
+            
+            다음은 지금까지의 게임 로그입니다:
+            ${currentLog.map(item => {
+                if (item.type === 'narrative') return `[내러티브] ${item.text}`;
+                if (item.type === 'user') return `[플레이어] ${item.text}`;
+                return '';
+            }).join('\n\n')}
+            
+            위 로그를 바탕으로 연속적으로 흘러가는 다음 이야기를 생성해주세요. 선택지는 생성하지 마세요.`;
+        } else {
+            // 일반 모드: 내러티브와 선택지 함께 생성
+            prompt = `
+            당신은 텍스트 기반 RPG의 게임 마스터(GM)입니다.
+            스타일:
+            신화적 판타지 세계 창조
+            
+            신화적 판타지: 고대 신과 불사의 존재가 등장하며, 그들이 만든 세계에서 생명과 죽음, 창조와 파괴를 주제로 한 이야기.
+            
+            이계의 신 스타일: 신이 다른 세계를 창조하고, 그 안에서 생명체들이 발전하는 과정에서 신이 등장하고 그들과 상호작용하는 이야기.
+            
+            이 프롬프트를 사용해 세계를 설정하고, 이야기를 점차적으로 만들어가며 각 생명체들의 성장과 진화를 다룬 신화적 판타지 세계를 창조해 보세요!
 
-        
-        플레이어는 '창조주'입니다. 플레이어의 선택에 따라 흥미진진한 이야기를 만들어주세요.
-        
-        **스토리텔링 규칙:**
-        1. 각 문단은 반드시 두 개의 줄바꿈(\n\n)으로 구분하여 작성하세요.
-        2. 한 문단 안에서 문장들은 하나의 줄바꿈(\n)으로 구분하세요.
-        3. 감정적 몰입도를 높이기 위해 섬세한 묘사와 장면 전환을 사용하세요.
-        4. 시각적, 청각적, 촉각적 세부사항을 포함하여 생생한 장면을 연출하세요.
-        5. 각 문단은 하나의 완결된 장면이나 상황을 담아야 합니다.
-        6. 대화와 상황 묘사를 적절히 조합하여 드라마틱한 효과를 만들어주세요.
-        7. 문단 구조 예시:
-           "첫 번째 문단의 첫 번째 문장입니다.\n두 번째 문장으로 장면을 확장합니다.\n\n두 번째 문단이 시작됩니다.\n새로운 장면이나 상황을 묘사합니다.\n\n세 번째 문단에서 절정이나 결론을 맺습니다."
-        
-        **선택지 작성 규칙:**
-        각 선택지는 다음과 같은 요소를 포함해야 합니다:
-        1. 창조주의 의도와 목적
-        2. 예상되는 결과나 변화
-        3. **소설적 문체:** 모든 서술은 판타지 소설처럼 문학적이고 서사적인 문체를 사용해야 합니다. 감각적인 묘사(시각, 청각, 후각 등)와 인물의 내면 묘사를 풍부하게 사용하여 몰입감을 극대화하세요.
-        4. **장대한 서사:** 플레이어의 작은 의지나 관찰로부터 시작하여, 세계의 숨겨진 역사, 잊혀진 마법, 고대 존재들의 갈등 등 거대한 이야기로 확장시켜 나가세요.
-        
-        각 선택지는 최소 15-30단어 이상의 상세한 설명을 포함해야 하며,
-        신화적 판타지: 고대 신과 불사의 존재가 등장하며, 그들이 만든 세계에서 생명과 죽음, 창조와 파괴를 주제로 한 이야기.
-        이계의 신 스타일: 신이 다른 세계를 창조하고, 그 안에서 생명체들이 발전하는 과정에서 신이 등장하고 그들과 상호작용하는 이야기.
-        같은 스타일에 선택지를 제시해야 합니다.
-        
-        **성향 시스템:**
-        당신은 플레이어의 선택과 입력 내용을 분석하여 그의 성향을 판단해야 합니다. 성향은 '자비로운 창조주', '냉정한 설계자', '혼돈의 관찰자', '파괴적인 폭군', '완벽주의 건축가', '자연주의 수호자' 등과 같이 명확해야 합니다.
-        플레이어의 현재 성향은 [${currentTendency}] 입니다.
-        당신은 플레이어의 최근 행동을 바탕으로 이 성향을 유지하거나, 더 적절한 성향으로 변경하여 응답에 포함해야 합니다.
-        
-        **응답 형식:**
-        
-        **타입: integrated**
-        내용: "첫 번째 문단입니다.\n세부 내용이 있습니다.\n\n두 번째 문단입니다.\n추가 설명이 있습니다."
-        스피커: "창조주"
-        선택지:
-        1. "첫 번째 선택지에 대한 상세한 설명입니다."
-        2. "두 번째 선택지에 대한 상세한 설명입니다."
-        3. "세 번째 선택지에 대한 상세한 설명입니다."
-        성향: "자비로운 창조주"
-        
-        다음은 지금까지의 게임 로그입니다:
-        ${currentLog.map(item => {
-            if (item.type === 'narrative') return `[내러티브] ${item.text}`;
-            if (item.type === 'choice') return `[선택지] ${item.speaker}: ${item.choices.join(', ')}`;
-            if (item.type === 'user') return `[플레이어] ${item.text}`;
-            return '';
-        }).join('\n\n')}
-        
-        위 로그를 바탕으로 다음 이야기와 선택지를 함께 생성해주세요.`;
+            
+            플레이어는 '창조주'입니다. 플레이어의 선택에 따라 흥미진진한 이야기를 만들어주세요.
+            
+            **스토리텔링 규칙:**
+            1. 각 문단은 반드시 두 개의 줄바꿈(\n\n)으로 구분하여 작성하세요.
+            2. 한 문단 안에서 문장들은 하나의 줄바꿈(\n)으로 구분하세요.
+            3. 감정적 몰입도를 높이기 위해 섬세한 묘사와 장면 전환을 사용하세요.
+            4. 시각적, 청각적, 촉각적 세부사항을 포함하여 생생한 장면을 연출하세요.
+            5. 각 문단은 하나의 완결된 장면이나 상황을 담아야 합니다.
+            6. 대화와 상황 묘사를 적절히 조합하여 드라마틱한 효과를 만들어주세요.
+            7. 문단 구조 예시:
+               "첫 번째 문단의 첫 번째 문장입니다.\n두 번째 문장으로 장면을 확장합니다.\n\n두 번째 문단이 시작됩니다.\n새로운 장면이나 상황을 묘사합니다.\n\n세 번째 문단에서 절정이나 결론을 맺습니다."
+            
+            **선택지 작성 규칙:**
+            각 선택지는 다음과 같은 요소를 포함해야 합니다:
+            1. 창조주의 의도와 목적
+            2. 예상되는 결과나 변화
+            3. **소설적 문체:** 모든 서술은 판타지 소설처럼 문학적이고 서사적인 문체를 사용해야 합니다. 감각적인 묘사(시각, 청각, 후각 등)와 인물의 내면 묘사를 풍부하게 사용하여 몰입감을 극대화하세요.
+            4. **장대한 서사:** 플레이어의 작은 의지나 관찰로부터 시작하여, 세계의 숨겨진 역사, 잊혀진 마법, 고대 존재들의 갈등 등 거대한 이야기로 확장시켜 나가세요.
+            
+            각 선택지는 최소 15-30단어 이상의 상세한 설명을 포함해야 하며,
+            신화적 판타지: 고대 신과 불사의 존재가 등장하며, 그들이 만든 세계에서 생명과 죽음, 창조와 파괴를 주제로 한 이야기.
+            이계의 신 스타일: 신이 다른 세계를 창조하고, 그 안에서 생명체들이 발전하는 과정에서 신이 등장하고 그들과 상호작용하는 이야기.
+            같은 스타일에 선택지를 제시해야 합니다.
+            
+            **성향 시스템:**
+            당신은 플레이어의 선택과 입력 내용을 분석하여 그의 성향을 판단해야 합니다. 성향은 '자비로운 창조주', '냉정한 설계자', '혼돈의 관찰자', '파괴적인 폭군', '완벽주의 건축가', '자연주의 수호자' 등과 같이 명확해야 합니다.
+            플레이어의 현재 성향은 [${currentTendency}] 입니다.
+            당신은 플레이어의 최근 행동을 바탕으로 이 성향을 유지하거나, 더 적절한 성향으로 변경하여 응답에 포함해야 합니다.
+            
+            **응답 형식:**
+            
+            **타입: integrated**
+            내용: "첫 번째 문단입니다.\n세부 내용이 있습니다.\n\n두 번째 문단입니다.\n추가 설명이 있습니다."
+            스피커: "창조주"
+            선택지:
+            1. "첫 번째 선택지에 대한 상세한 설명입니다."
+            2. "두 번째 선택지에 대한 상세한 설명입니다."
+            3. "세 번째 선택지에 대한 상세한 설명입니다."
+            성향: "자비로운 창조주"
+            
+            다음은 지금까지의 게임 로그입니다:
+            ${currentLog.map(item => {
+                if (item.type === 'narrative') return `[내러티브] ${item.text}`;
+                if (item.type === 'choice') return `[선택지] ${item.speaker}: ${item.choices.join(', ')}`;
+                if (item.type === 'user') return `[플레이어] ${item.text}`;
+                return '';
+            }).join('\n\n')}
+            
+            위 로그를 바탕으로 다음 이야기와 선택지를 함께 생성해주세요.`;
+        }
 
-        return await callGeminiAPI(integratedPrompt);
+        return await callGeminiAPI(prompt);
     };
 
 
@@ -937,7 +1117,7 @@ export default function App() {
             setIsProcessing(true);
 
             // 통합된 API 호출로 게임 시작 (내러티브와 선택지 함께 생성)
-            const response = await callGeminiIntegratedAPI([], '미정');
+            const response = await callGeminiIntegratedAPI([], '미정', false);
             const parsedResponse = parseIntegratedResponse(response);
 
             const newLog = [];
@@ -1001,7 +1181,29 @@ export default function App() {
             }
 
             // 내러티브 추출
-            if (text.includes('**타입: integrated**') || text.includes('타입: integrated')) {
+            if (text.includes('**타입: story-only**') || text.includes('타입: story-only')) {
+                // 스토리 전용 모드 응답 처리
+                const contentMatch = text.match(/내용:\s*["']?(.*?)["']?(?=\n성향:|성향:|$)/s);
+                if (contentMatch) {
+                    result.narrative = contentMatch[1].trim().replace(/\\n/g, '\n');
+                } else {
+                    // 내용 태그가 없는 경우 전체 텍스트에서 타입과 성향 부분을 제외한 내용을 추출
+                    let narrativeText = text
+                        .replace(/\*\*타입: story-only\*\*|\*\*타입:story-only\*\*|타입: story-only|타입:story-only/g, '')
+                        .replace(/성향:\s*["']?([^"'\n]+)["']?/g, '')
+                        .trim();
+
+                    // "내용:" 태그가 있으면 제거
+                    narrativeText = narrativeText.replace(/내용:\s*/g, '').trim();
+
+                    result.narrative = narrativeText;
+                }
+                
+                // 스토리 전용 모드에서는 선택지를 생성하지 않음
+                // eslint-disable-next-line no-console
+                console.log("스토리 전용 모드 응답 파싱 완료");
+                
+            } else if (text.includes('**타입: integrated**') || text.includes('타입: integrated')) {
                 const contentMatch = text.match(/내용:\s*["']?(.*?)["']?(?=\n스피커:|스피커:|$)/s);
                 if (contentMatch) {
                     result.narrative = contentMatch[1].trim().replace(/\\n/g, '\n');
@@ -1123,7 +1325,7 @@ export default function App() {
 
 
     // --- 통합된 내러티브 및 선택지 요청 함수 (개선된 오류 처리) ---
-    const requestIntegratedContent = async (currentLog, currentTendency) => {
+    const requestIntegratedContent = async (currentLog, currentTendency, isStoryOnlyMode = false) => {
         if (!docRef.current) {
             // eslint-disable-next-line no-console
             console.error("Firestore 문서 참조가 없습니다.");
@@ -1132,14 +1334,14 @@ export default function App() {
         }
 
         // eslint-disable-next-line no-console
-        console.log("통합된 내용 요청 시작:", { logLength: currentLog.length, tendency: currentTendency });
+        console.log("통합된 내용 요청 시작:", { logLength: currentLog.length, tendency: currentTendency, storyOnlyMode: isStoryOnlyMode });
 
         const newItems = [];
         let updatedTendency = currentTendency;
 
         try {
-            // 통합된 API 호출 (내러티브와 선택지 함께 요청)
-            const response = await callGeminiIntegratedAPI(currentLog, currentTendency);
+            // 통합된 API 호출 (스토리 전용 모드에 따라 다른 프롬프트 사용)
+            const response = await callGeminiIntegratedAPI(currentLog, currentTendency, isStoryOnlyMode);
             const parsedResponse = parseIntegratedResponse(response);
 
             if (parsedResponse.narrative && parsedResponse.narrative.trim()) {
@@ -1170,34 +1372,40 @@ export default function App() {
                 newItems.push(narrativeItem);
             }
 
-            if (parsedResponse.choice && parsedResponse.choice.choices && parsedResponse.choice.choices.length > 0) {
-                // eslint-disable-next-line no-console
-                console.log("선택지 파싱 성공:", {
-                    choiceCount: parsedResponse.choice.choices.length,
-                    speaker: parsedResponse.choice.speaker
-                });
+            // 스토리 전용 모드가 아닐 때만 선택지 생성
+            if (!isStoryOnlyMode) {
+                if (parsedResponse.choice && parsedResponse.choice.choices && parsedResponse.choice.choices.length > 0) {
+                    // eslint-disable-next-line no-console
+                    console.log("선택지 파싱 성공:", {
+                        choiceCount: parsedResponse.choice.choices.length,
+                        speaker: parsedResponse.choice.speaker
+                    });
 
-                const choiceItem = {
-                    id: Date.now() + Math.random() + 1,
-                    type: 'choice',
-                    speaker: parsedResponse.choice.speaker,
-                    choices: parsedResponse.choice.choices,
-                    timestamp: new Date().toISOString()
-                };
-                newItems.push(choiceItem);
+                    const choiceItem = {
+                        id: Date.now() + Math.random() + 1,
+                        type: 'choice',
+                        speaker: parsedResponse.choice.speaker,
+                        choices: parsedResponse.choice.choices,
+                        timestamp: new Date().toISOString()
+                    };
+                    newItems.push(choiceItem);
+                } else {
+                    // eslint-disable-next-line no-console
+                    console.warn("선택지 생성 실패: 유효한 선택지가 없습니다. 기본 선택지를 사용합니다.");
+
+                    // 폴백 선택지 사용
+                    const choiceItem = {
+                        id: Date.now() + Math.random() + 1,
+                        type: 'choice',
+                        speaker: '창조주',
+                        choices: getFallbackChoices(),
+                        timestamp: new Date().toISOString()
+                    };
+                    newItems.push(choiceItem);
+                }
             } else {
                 // eslint-disable-next-line no-console
-                console.warn("선택지 생성 실패: 유효한 선택지가 없습니다. 기본 선택지를 사용합니다.");
-
-                // 폴백 선택지 사용
-                const choiceItem = {
-                    id: Date.now() + Math.random() + 1,
-                    type: 'choice',
-                    speaker: '창조주',
-                    choices: getFallbackChoices(),
-                    timestamp: new Date().toISOString()
-                };
-                newItems.push(choiceItem);
+                console.log("스토리 전용 모드: 선택지 생성 건너뜀");
             }
 
             // 성향 업데이트
@@ -1215,14 +1423,19 @@ export default function App() {
                 text: getFallbackNarrative(),
                 timestamp: new Date().toISOString()
             };
-            const choiceItem = {
-                id: Date.now() + Math.random() + 1,
-                type: 'choice',
-                speaker: '창조주',
-                choices: getFallbackChoices(),
-                timestamp: new Date().toISOString()
-            };
-            newItems.push(narrativeItem, choiceItem);
+            newItems.push(narrativeItem);
+            
+            // 스토리 전용 모드가 아닐 때만 폴백 선택지 생성
+            if (!isStoryOnlyMode) {
+                const choiceItem = {
+                    id: Date.now() + Math.random() + 1,
+                    type: 'choice',
+                    speaker: '창조주',
+                    choices: getFallbackChoices(),
+                    timestamp: new Date().toISOString()
+                };
+                newItems.push(choiceItem);
+            }
         }
 
         try {
@@ -1272,8 +1485,8 @@ export default function App() {
                 lastUpdated: new Date().toISOString()
             });
 
-            // 사용자 입력 후 통합된 내용 요청 (내러티브와 선택지 함께 생성)
-            await requestIntegratedContent(updatedLog, playerTendency);
+            // 사용자 입력 후 통합된 내용 요청 (스토리 전용 모드에 따라 다른 내용 생성)
+            await requestIntegratedContent(updatedLog, playerTendency, storyOnlyMode);
 
         } catch (error) {
             // eslint-disable-next-line no-console
@@ -1286,6 +1499,46 @@ export default function App() {
     const handleChoiceClick = async (choiceText) => {
         await handleSubmit(choiceText);
     };
+
+    // --- 스토리 전용 모드 토글 처리 ---
+    const handleStoryOnlyModeChange = (newMode) => {
+        // eslint-disable-next-line no-console
+        console.log('스토리 전용 모드 변경:', newMode ? '활성화' : '비활성화');
+        setStoryOnlyMode(newMode);
+        
+        if (newMode && !isTyping && !isProcessing && log.length > 0) {
+            // 스토리 전용 모드가 활성화되고, 현재 타이핑 중이 아니며, 처리 중이 아닐 때
+            // 마지막 아이템이 내러티브라면 자동으로 다음 이야기 생성 시작
+            const lastItem = log[log.length - 1];
+            if (lastItem && lastItem.type === 'narrative') {
+                // eslint-disable-next-line no-console
+                console.log('스토리 전용 모드 활성화: 즉시 다음 이야기 생성');
+                setTimeout(() => {
+                    if (storyOnlyMode && !isProcessing) {
+                        requestIntegratedContent(log, playerTendency, true);
+                    }
+                }, 1000);
+            }
+        } else if (!newMode && !isTyping && !isProcessing && log.length > 0) {
+            // 스토리 전용 모드가 비활성화될 때의 처리
+            const lastItem = log[log.length - 1];
+            if (lastItem && lastItem.type === 'narrative') {
+                // eslint-disable-next-line no-console
+                console.log('스토리 전용 모드 비활성화: 현재 이야기 맥락을 유지하면서 선택지 생성');
+                // 현재 이야기 맥락을 유지하면서 선택지 생성
+                setTimeout(() => {
+                    if (!storyOnlyMode && !isProcessing) {
+                        requestIntegratedContent(log, playerTendency, false);
+                    }
+                }, 1000);
+            }
+        }
+    };
+
+    // 초기 로딩 상태 (인증이 준비되지 않았거나 초기 데이터 로딩 중)
+    if (!isAuthReady || (isProcessing && log.length === 0)) {
+        return <InitialLoadingScreen />;
+    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white h-screen w-full flex flex-col font-sans" style={{
@@ -1319,14 +1572,19 @@ export default function App() {
                                 isLatest={isLatest}
                                 onTypingComplete={handleTypingComplete}
                                 isTyping={isTyping}
+                                storyOnlyMode={storyOnlyMode}
                             />
                         );
                     })}
 
-                    {isProcessing && (
-                        <div className="text-center py-8">
-                            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400"></div>
-                            <p className="mt-4 text-purple-300">AI가 응답을 생성 중입니다...</p>
+                    {isProcessing && log.length > 0 && (
+                        <div className="mx-auto mb-8 fade-in">
+                            <div className="bg-black bg-opacity-50 backdrop-blur-sm rounded-xl p-8 shadow-2xl border border-purple-500/30 text-center">
+                                <CuteLoadingAnimation />
+                                <p className="text-purple-200 mt-2">
+                                    🎭 창조주님의 선택을 바탕으로 새로운 이야기를 만들고 있어요! 🎭
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>
@@ -1337,6 +1595,8 @@ export default function App() {
                     tendency={playerTendency}
                     onResetData={resetGameData}
                     isTyping={isTyping}
+                    storyOnlyMode={storyOnlyMode}
+                    onStoryOnlyModeChange={handleStoryOnlyModeChange}
                 />
             </div>
         </div>
