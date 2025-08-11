@@ -44,3 +44,72 @@
 html {
   scroll-behavior: smooth;
 }
+
+/* 반응형 웹 디자인 및 모바일 최적화 */
+* {
+  box-sizing: border-box;
+}
+
+/* 터치 스크롤 최적화 */
+body {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: none;
+}
+
+/* 모바일 터치 최적화 */
+button, input, select, textarea {
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* 모바일 키보드 대응 */
+@media screen and (max-width: 768px) {
+  /* 모바일에서 뷰포트 높이 조정 */
+  .mobile-viewport-fix {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+  
+  /* 터치 친화적 버튼 크기 */
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* 입력 필드 확대 방지 */
+  input[type="text"], 
+  input[type="email"], 
+  input[type="password"], 
+  textarea {
+    font-size: 16px !important;
+  }
+  
+  /* 스크롤바 숨김 (모바일) */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* 터치 스크롤 영역 */
+  .touch-scroll {
+    -webkit-overflow-scrolling: touch;
+    overflow-scrolling: touch;
+  }
+}
+
+/* 태블릿 최적화 */
+@media screen and (min-width: 769px) and (max-width: 1024px) {
+  /* 태블릿 전용 스타일 */
+  .tablet-optimized {
+    padding: 16px;
+  }
+}
+
+/* 데스크톱 최적화 */
+@media screen and (min-width: 1025px) {
+  /* 데스크톱 전용 스타일 */
+  .desktop-optimized {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+}

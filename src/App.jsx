@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useMediaQuery } from "react-responsive";
 import { initializeApp } from "firebase/app";
+import "./styles.css";
 import {
     getFirestore,
     doc,
@@ -817,6 +819,12 @@ function getOrCreateSessionId() {
 
 // 8) 메인 컴포넌트
 export default function App() {
+    // 반응형 미디어 쿼리 훅들
+    const isMobile = useMediaQuery({ maxWidth: 768 });
+    const isTablet = useMediaQuery({ minWidth: 769, maxWidth: 1024 });
+    const isDesktop = useMediaQuery({ minWidth: 1025 });
+    const isLandscape = useMediaQuery({ orientation: 'landscape' });
+    
     const [sessionId, setSessionId] = useState(getOrCreateSessionId);
     const [history, setHistory] = useState([]); // {role:'user'|'assistant', text, model?, ts}
     const [choices, setChoices] = useState([]);
@@ -1169,76 +1177,94 @@ export default function App() {
         });
     }
 
-    // 스타일(네 베이스 기준선 유지)
+    // 반응형 스타일
     const styles = {
         app: {
             height: "100vh",
+            width: "100vw",
             display: "flex",
             flexDirection: "column",
             background: "#0b0f14",
             color: "#f1f5f9",
             fontFamily:
                 '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans KR","Apple SD Gothic Neo",sans-serif',
+            overflow: "hidden",
         },
         header: {
-            padding: "12px 16px",
+            padding: isMobile ? "8px 12px" : "12px 16px",
             borderBottom: "1px solid #1f2937",
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: isMobile ? 8 : 12,
             flexWrap: "wrap",
+            fontSize: isMobile ? 14 : 16,
+            minHeight: isMobile ? "auto" : "60px",
         },
         badge: {
-            fontSize: 12,
+            fontSize: isMobile ? 11 : 12,
             background: "#1f2937",
-            padding: "4px 8px",
+            padding: isMobile ? "3px 6px" : "4px 8px",
             borderRadius: 6,
+            whiteSpace: isMobile ? "nowrap" : "normal",
+            overflow: isMobile ? "hidden" : "visible",
+            textOverflow: isMobile ? "ellipsis" : "clip",
         },
         main: {
             flex: 1,
             display: "flex",
+            flexDirection: isMobile ? "column" : "row",
             minHeight: 0,
+            overflow: "hidden",
         },
         log: {
             flex: 1,
-            padding: 16,
+            padding: isMobile ? 12 : 16,
             overflowY: "auto",
             lineHeight: 1.6,
+            fontSize: isMobile ? 14 : 16,
         },
         bubbleUser: {
             background: "#1f2937",
             borderRadius: 8,
-            padding: "8px 12px",
-            margin: "6px 0",
+            padding: isMobile ? "10px 14px" : "8px 12px",
+            margin: isMobile ? "8px 0" : "6px 0",
             alignSelf: "flex-end",
-            maxWidth: 720,
+            maxWidth: isMobile ? "90%" : 720,
+            fontSize: isMobile ? 15 : 14,
         },
         bubbleAi: {
             background: "#111827",
             borderRadius: 8,
-            padding: "10px 12px",
-            margin: "8px 0",
-            maxWidth: 800,
+            padding: isMobile ? "12px 14px" : "10px 12px",
+            margin: isMobile ? "10px 0" : "8px 0",
+            maxWidth: isMobile ? "95%" : 800,
             whiteSpace: "pre-wrap",
+            fontSize: isMobile ? 15 : 14,
+            lineHeight: isMobile ? 1.5 : 1.4,
         },
         footer: {
             borderTop: "1px solid #1f2937",
-            padding: 12,
-            display: "grid",
-            gridTemplateColumns: "1fr 360px",
-            gap: 12,
+            padding: isMobile ? 8 : 12,
+            display: isMobile ? "flex" : "grid",
+            flexDirection: isMobile ? "column" : undefined,
+            gridTemplateColumns: isMobile ? undefined : isTablet ? "1fr 300px" : "1fr 360px",
+            gap: isMobile ? 8 : 12,
             alignItems: "start",
+            maxHeight: isMobile ? "50vh" : "auto",
+            overflow: isMobile ? "hidden" : "visible",
         },
         choicePanel: {
             background: "#0f172a",
             border: "1px solid #1f2937",
             borderRadius: 10,
-            padding: 12,
+            padding: isMobile ? 8 : 12,
             display: "flex",
             flexDirection: "column",
-            gap: 8,
+            gap: isMobile ? 6 : 8,
             position: "sticky",
-            bottom: 12,
+            bottom: isMobile ? 0 : 12,
+            maxHeight: isMobile ? "40vh" : "auto",
+            overflowY: isMobile ? "auto" : "visible",
         },
         auxRow: {
             display: "flex",
@@ -1250,19 +1276,27 @@ export default function App() {
             background: "#0b1220",
             border: "1px solid #233046",
             color: "#e5e7eb",
-            padding: "6px 8px",
+            padding: isMobile ? "8px 12px" : "6px 8px",
             borderRadius: 6,
             cursor: "pointer",
-            fontSize: 12,
+            fontSize: isMobile ? 14 : 12,
+            minHeight: isMobile ? "36px" : "auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
         },
         choiceBtn: {
             background: "#111827",
             border: "1px solid #374151",
             color: "#e5e7eb",
-            padding: "10px 12px",
+            padding: isMobile ? "12px 14px" : "10px 12px",
             borderRadius: 8,
             cursor: "pointer",
             textAlign: "left",
+            fontSize: isMobile ? 16 : 14,
+            minHeight: isMobile ? "48px" : "auto",
+            display: "flex",
+            alignItems: "center",
         },
         form: {
             display: "flex",
@@ -1274,17 +1308,22 @@ export default function App() {
             border: "1px solid #1f2937",
             color: "#e5e7eb",
             borderRadius: 8,
-            padding: "12px 14px",
+            padding: isMobile ? "14px 16px" : "12px 14px",
             outline: "none",
+            fontSize: isMobile ? 16 : 14,
+            minHeight: isMobile ? "48px" : "auto",
         },
         send: {
             background: busy ? "#334155" : "#22c55e",
             border: "none",
             color: "#0b0f14",
-            padding: "0 16px",
+            padding: isMobile ? "14px 20px" : "0 16px",
             borderRadius: 8,
             cursor: busy ? "not-allowed" : "pointer",
             fontWeight: 700,
+            fontSize: isMobile ? 16 : 14,
+            minHeight: isMobile ? "48px" : "auto",
+            minWidth: isMobile ? "80px" : "auto",
         },
         metaRow: {
             display: "flex",
@@ -1309,25 +1348,33 @@ export default function App() {
             background: "#0b1220",
             border: "1px solid #233046",
             color: "#cbd5e1",
-            padding: "6px 10px",
+            padding: isMobile ? "10px 14px" : "6px 10px",
             borderRadius: 6,
             cursor: "pointer",
-            fontSize: 12,
-            marginBottom: 8,
+            fontSize: isMobile ? 14 : 12,
+            marginBottom: isMobile ? 12 : 8,
+            minHeight: isMobile ? "40px" : "auto",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
         },
     };
 
     return (
-        <div style={styles.app}>
+        <div style={styles.app} className={isMobile ? "mobile-viewport-fix" : ""}>
             <header style={styles.header}>
                 <div style={{ fontWeight: 800 }}>TEXT LLM</div>
-                <div style={styles.badge}>세션: {sessionId}</div>
-                <div style={styles.badge}>
-                    최근 라우팅: {routeStats.last} / M:{routeStats.geminiMain} · B:{routeStats.geminiBackup} · G:{routeStats.groq}
-                </div>
-                <div style={styles.badge}>
-                    지연: {routeStats.lastLatencyMs || 0}ms / 사유: {routeStats.lastReason || "-"}
-                </div>
+                {!isMobile && <div style={styles.badge}>세션: {sessionId}</div>}
+                {!isMobile && (
+                    <div style={styles.badge}>
+                        최근 라우팅: {routeStats.last} / M:{routeStats.geminiMain} · B:{routeStats.geminiBackup} · G:{routeStats.groq}
+                    </div>
+                )}
+                {!isMobile && (
+                    <div style={styles.badge}>
+                        지연: {routeStats.lastLatencyMs || 0}ms / 사유: {routeStats.lastReason || "-"}
+                    </div>
+                )}
                 {busy ? <div style={styles.badge}>생성 중...</div> : null}
                 <div style={styles.grow} />
                 <button
@@ -1336,27 +1383,36 @@ export default function App() {
                         background: "#0ea5e9",
                         color: "#0b0f14",
                         border: "none",
-                        padding: "8px 12px",
+                        padding: isMobile ? "10px 14px" : "8px 12px",
                         borderRadius: 8,
                         cursor: "pointer",
                         fontWeight: 700,
+                        fontSize: isMobile ? 14 : 13,
+                        minHeight: isMobile ? "40px" : "auto",
                     }}
                 >
-                    새 세션 시작
+                    {isMobile ? "새 세션" : "새 세션 시작"}
                 </button>
             </header>
 
             <main style={styles.main}>
-                <div style={{ padding: 16 }}>
+                <div style={{ padding: isMobile ? 12 : 16 }}>
                     {hasMore ? (
                         <button onClick={loadMoreOlder} style={styles.moreBtn} disabled={busy}>
-                            이전 로그 더 보기
+                            {isMobile ? "이전 로그" : "이전 로그 더 보기"}
                         </button>
                     ) : (
-                        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>모든 로그를 불러왔어요</div>
+                        <div style={{ 
+                            fontSize: isMobile ? 11 : 12, 
+                            color: "#64748b", 
+                            marginBottom: isMobile ? 6 : 8,
+                            textAlign: isMobile ? "center" : "left"
+                        }}>
+                            {isMobile ? "모든 로그 로드됨" : "모든 로그를 불러왔어요"}
+                        </div>
                     )}
                 </div>
-                <div style={styles.log} ref={logRef}>
+                <div style={styles.log} ref={logRef} className="touch-scroll">
                     {history.map((h, i) =>
                         h.role === "user" ? (
                             <div key={i} style={styles.bubbleUser}>{h.text}</div>
@@ -1377,7 +1433,7 @@ export default function App() {
                 <form onSubmit={onSubmit} style={styles.form}>
                     <input
                         style={styles.input}
-                        placeholder="자유 행동을 입력해 모험을 이끌어봐 (예: '안개 속 노랫소리를 따라간다')"
+                        placeholder={isMobile ? "자유 행동 입력..." : "자유 행동을 입력해 모험을 이끌어봐 (예: '안개 속 노랫소리를 따라간다')"}
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         disabled={busy}
@@ -1397,8 +1453,13 @@ export default function App() {
                         <div style={{ ...styles.summaryBox, marginBottom: 4 }}>{previousScene}</div>
                     ) : null}
 
-                    <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>
-                        선택지 (숫자 1/2/3/4 단축키 지원)
+                    <div style={{ 
+                        fontSize: isMobile ? 11 : 12, 
+                        color: "#94a3b8", 
+                        marginBottom: 4,
+                        textAlign: isMobile ? "center" : "left"
+                    }}>
+                        {isMobile ? "선택지" : "선택지 (숫자 1/2/3/4 단축키 지원)"}
                     </div>
                     {choices && choices.length > 0 ? (
                         choices.map((c, idx) => (
