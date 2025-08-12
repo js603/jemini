@@ -1,13 +1,15 @@
 {
   "files": {
-    "main.css": "/jemini/static/css/main.e792d71d.css",
-    "main.js": "/jemini/static/js/main.b124b188.js",
+    "main.css": "/jemini/static/css/main.11373d89.css",
+    "main.js": "/jemini/static/js/main.0b2aa546.js",
+    "static/js/945.7b50816c.chunk.js": "/jemini/static/js/945.7b50816c.chunk.js",
     "index.html": "/jemini/index.html",
-    "main.e792d71d.css.map": "/jemini/static/css/main.e792d71d.css.map",
-    "main.b124b188.js.map": "/jemini/static/js/main.b124b188.js.map"
+    "main.11373d89.css.map": "/jemini/static/css/main.11373d89.css.map",
+    "main.0b2aa546.js.map": "/jemini/static/js/main.0b2aa546.js.map",
+    "945.7b50816c.chunk.js.map": "/jemini/static/js/945.7b50816c.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.e792d71d.css",
-    "static/js/main.b124b188.js"
+    "static/css/main.11373d89.css",
+    "static/js/main.0b2aa546.js"
   ]
 }

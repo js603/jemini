@@ -1,1479 +1,873 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useMediaQuery } from "react-responsive";
-import { initializeApp } from "firebase/app";
-import "./styles.css";
-import {
-    getFirestore,
-    doc,
-    setDoc,
-    getDoc,
-    updateDoc,
-    serverTimestamp,
-    collection,
-    addDoc,
-    getDocs,
-    query,
-    orderBy,
-    limit,
-    startAfter,
-} from "firebase/firestore";
 
-// 1) Firebase 하드코딩 설정
+/* ========== Firebase 초기화(옵션) ========== */
+// 설치 안 했으면 이 블록은 그대로 둬도 앱 동작엔 영향 없음(try/catch로 보호)
 const firebaseConfig = {
     apiKey: "AIzaSyBNJtmpRWzjobrY556bnHkwbZmpFJqgPX8",
     authDomain: "text-adventure-game-cb731.firebaseapp.com",
     projectId: "text-adventure-game-cb731",
     storageBucket: "text-adventure-game-cb731.appspot.com",
     messagingSenderId: "1092941614820",
-    appId: "1:1092941614820:web:5545f36014b73c268026f1",
+    appId: "1:1092941614820:web:5545f36014b73c268026f1"
+};
+(async () => {
+    try {
+        const { initializeApp, getApps } = await import("firebase/app");
+        if (!getApps().length) initializeApp(firebaseConfig);
+    } catch (_) { /* firebase 미설치 시 무시 */ }
+})();
+
+/* ========== LLM 키(하드코딩) ========== */
+const GEMINI_MAIN = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";
+const GEMINI_BACKUP = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84";
+const GROQ_KEY = "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";
+
+/* ========== RNG (시드 고정) ========== */
+function xmur3(str) { let h = 1779033703 ^ str.length; for (let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353); h=(h<<13)|(h>>>19);} return function(){h=Math.imul(h^(h>>>16),2246822507); h=Math.imul(h^(h>>>13),3266489909); return (h^=h>>>16)>>>0;};}
+function mulberry32(a){ return function(){ let t=(a+=0x6d2b79f5); t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61); return ((t^(t>>>14))>>>0)/4294967296; }; }
+function rngFromSeed(seed){ const h=xmur3(seed||String(Date.now()))(); return mulberry32(h); }
+
+/* ========== 로컬 저장/프리셋 ========== */
+const LS_CFG="camp_game_config_v1"; const LS_RUN="camp_game_run_v1";
+const load=(k,fallback=null)=>{ try{const v=localStorage.getItem(k); return v?JSON.parse(v):fallback;}catch{return fallback;} };
+const save=(k,v)=>localStorage.setItem(k, JSON.stringify(v));
+function encodePreset(cfg){ try{ return btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))); }catch{return "";} }
+function decodePreset(code){ try{ return JSON.parse(decodeURIComponent(escape(atob(code)))); }catch{return null;} }
+
+/* ========== 안전 복제 헬퍼 ========== */
+function sclone(obj){
+    if (typeof globalThis!=="undefined" && typeof globalThis.structuredClone==="function") return globalThis.structuredClone(obj);
+    return JSON.parse(JSON.stringify(obj));
+}
+
+/* ========== 기본 프리셋 ========== */
+const defaultConfig = {
+    mode: "standard",
+    season: "ruin",                // ruin | ice_age | sandstorm | plague
+    difficulty: "standard",        // casual | standard | hard
+    tempo: "normal",               // short | normal | long
+    narrative: { tone: "omniscient_hint", foreshadow: "medium" }, // observer | omniscient_hint | dry_log
+    costProfile: "balanced",       // frugal | balanced | rich
+    campTraits: ["engineering", "community"],
+    starter: "toolkit",            // food | toolkit | medkit | fuel | extra_hand
+    advanced: { seed: "", ironman: false, eventCooldown: "normal", banTags: [], llm: true },
+    createdAt: Date.now()
 };
 
-// 2) LLM 키 하드코딩
-const mainApiKey = "AIzaSyDC11rqjU30OJnLjaBFOaazZV0klM5raU8";   // Gemini main
-const backupApiKey = "AIzaSyAhscNjW8GmwKPuKzQ47blCY_bDanR-B84"; // Gemini backup
-const groqApiKey = "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"; // Groq
-
-// 3) Firebase init
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// 4) 유틸
-const PAGE_SIZE = 50;
-const AUTO_SAVE_MS = 5 * 60 * 1000;
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function fetchWithTimeout(url, options = {}, timeout = 20000) {
-    return Promise.race([
-        fetch(url, options),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), timeout)),
-    ]);
-}
-
-function stripCodeFences(s) {
-    if (!s) return s;
-    return s.replace(/^```(?:json)?/gi, "").replace(/```$/gi, "").trim();
-}
-
-function extractJSON(text) {
-    if (!text) return null;
-    const fenced = text.match(/```json([\s\S]*?)```/i);
-    if (fenced && fenced[1]) return fenced[1].trim();
-    const curly = text.match(/\{[\s\S]*\}$/m);
-    if (curly && curly[0]) return curly[0];
-    return text.trim();
-}
-
-function safeParseLLM(text) {
-    try {
-        const j = extractJSON(text);
-        if (!j) throw new Error("No JSON found");
-        const parsed = JSON.parse(stripCodeFences(j));
-        if (!Array.isArray(parsed.choices)) parsed.choices = [];
-        if (parsed.choices.length === 0) {
-            const lines = text
-                .split("\n")
-                .map((l) => l.trim())
-                .filter((l) => l);
-            const guesses = lines
-                .filter((l) => /^[-•\d]/.test(l))
-                .map((l) => l.replace(/^[-•\d.)]\s*/, ""))
-                .slice(0, 3);
-            parsed.choices = guesses.length
-                ? guesses
-                : ["주위를 살핀다", "앞으로 전진한다", "잠시 숨을 고른다"];
-        }
-        if (!parsed.narration || typeof parsed.narration !== "string") {
-            parsed.narration =
-                "서늘한 바람이 스친다. 당신의 선택이 모험의 방향을 정할 것이다. 긴장을 늦추지 마라.";
-        }
-        if (!parsed.state || typeof parsed.state !== "object") {
-            parsed.state = {};
-        }
-        return parsed;
-    } catch (_) {
-        return {
-            narration:
-                "먼 안개 너머에서 낮은 북소리가 울린다. 당신은 작은 등불을 움켜쥐고 다음 발걸음을 고른다.",
-            choices: [
-                "등불을 높이 들어 주변을 살핀다",
-                "안개 속으로 천천히 걸어간다",
-                "잠시 멈춰 귀를 기울인다",
-            ],
-            state: {},
-        };
-    }
-}
-
-// 경량 한 줄 요약기(로컬 처리, 비용 없음)
-function oneLineSummary(history, maxLen = 60) {
-    const last = [...history].reverse().find((h) => h.role === "assistant");
-    if (!last) return "요약 없음";
-    const txt = last.text.replace(/\s+/g, " ").trim();
-    if (txt.length <= maxLen) return txt;
-    // 핵심 키워드 단위로 자르기
-    const cuts = ["그러나", "하지만", "결국", "곧", "그때", "그리고", "이어"];
-    let best = txt.slice(0, maxLen);
-    for (const c of cuts) {
-        const i = txt.indexOf(c);
-        if (i > 0 && i <= maxLen) {
-            best = txt.slice(0, i + c.length);
-            break;
-        }
-    }
-    return best + "…";
-}
-
-// 5) 시스템 프롬프트들 - 3개로 분리
-// 5-1) 메인 스토리 및 퀘스트 생성용 프롬프트
-function composeMainStoryPrompt({ storyState, history, userAction }) {
-    const recent = history.slice(-6).map((h) => {
-        const role = h.role === "user" ? "플레이어" : "서술";
-        return `- ${role}: ${h.text}`;
-    });
-
-    // 현재 진행 중인 퀘스트 정보 구성
-    const currentQuest = storyState.currentQuest || storyState.availableQuest;
-    const questContext = currentQuest ? `
-<Current_Quest_Context>
-진행 중인 퀘스트: ${currentQuest.title || "없음"}
-퀘스트 목표: ${currentQuest.objective || "없음"}
-퀘스트 진행도: ${currentQuest.progress || "시작 단계"}
-퀘스트 관련 NPC: ${currentQuest.npc || "없음"}
-퀘스트 배경: ${currentQuest.description || "없음"}
-</Current_Quest_Context>` : `
-<Current_Quest_Context>
-진행 중인 퀘스트: 없음
-</Current_Quest_Context>`;
-
-    // 최근 완료된 퀘스트의 영향 분석
-    const recentQuestImpact = storyState.recentQuestImpact ? `
-<Recent_Quest_Impact>
-최근 완료 퀘스트: ${storyState.recentQuestImpact.questTitle}
-스토리에 미친 영향: ${storyState.recentQuestImpact.storyImpact}
-변화된 관계: ${storyState.recentQuestImpact.relationshipChanges || "없음"}
-획득한 명성/악명: ${storyState.recentQuestImpact.reputationChange || "없음"}
-</Recent_Quest_Impact>` : "";
-
-    const systemSpec = `
-당신은 판타지 웹소설 스타일의 텍스트 어드벤처 게임의 GM(Game Master)이자, 전지적 독자 시점 웹소설 작가입니다.
-
-<Player_Data>
-직업: \${storyState.player?.job || "모험가"}
-레벨: \${storyState.player?.level || 1}
-능력치: 힘 \${storyState.player?.stats?.strength || 10}, 민첩 \${storyState.player?.stats?.dexterity || 10}, 지능 \${storyState.player?.stats?.intelligence || 10}, 매력 \${storyState.player?.stats?.charm || 10}
-소지품: \${storyState.player?.inventory?.join(", ") || "없음"}
-현재 HP: \${storyState.player?.hp || 100}/\${storyState.player?.maxHp || 100}, 마나: \${storyState.player?.mp || 50}/\${storyState.player?.maxMp || 50}
-주요 특성/스킬: \${storyState.player?.skills?.join(", ") || "없음"}
-완료한 퀘스트: \${storyState.player?.completedQuests?.join(", ") || "없음"}
-</Player_Data>
-
-<World_Context>
-현재 위치: \${storyState.location || "알 수 없는 곳"}
-시간: \${storyState.currentTime || "낮"}
-날씨: \${storyState.weather || "맑음"}
-주변 환경: \${storyState.environment || "아늑한 여관"}
-주변 NPC: \${storyState.nearbyNPCs?.join(", ") || "없음"}
-최근 주요 이벤트: \${storyState.lastEvent || "없음"}
-</World_Context>
-
-${questContext}
-
-${recentQuestImpact}
-
-<Character_Emotional_State>
-현재 감정: 피로 (\${storyState.emotionalState?.fatigue || 3}/10), 호기심 (\${storyState.emotionalState?.curiosity || 7}/10), 경계심 (\${storyState.emotionalState?.wariness || 5}/10), 짜증 (\${storyState.emotionalState?.irritation || 2}/10)
-</Character_Emotional_State>
-
-지시사항:
-1. 모든 서술은 '전지적 독자 시점 웹소설' 문체로 작성하세요. 시니컬하거나 유머러스한 내면 독백, 재치 있는 표현을 적극 활용하세요.
-2. 현재 상황을 생생하게 묘사하고, 플레이어의 감정 상태를 반영한 내면의 독백을 포함하세요.
-3. 진행 중인 퀘스트가 있다면 자연스럽게 스토리에 연결하고, 퀘스트 진행 상황을 반영하세요.
-4. 최근 완료된 퀘스트의 영향이 있다면 그 결과가 현재 상황에 어떻게 반영되는지 보여주세요.
-5. 플레이어가 선택할 수 있는 '내면의 생각' 형태의 선택지를 3~4개 제공하세요. 각 선택지는 따옴표로 묶어 표시하세요.
-6. 선택지는 번호 없이 제시하고, 각 선택지는 플레이어 캐릭터의 성격과 현재 감정 상태를 반영해야 합니다.
-7. 유쾌한 모험 판타지 분위기를 유지하되, 플레이어의 감정 상태에 따라 서술 톤을 조절하세요.
-8. 응답은 항상 200단어 이내로 간결하게 유지하세요.
-
-응답 형식은 반드시 다음 JSON 구조를 따르세요:
-{
-  "narration": "웹소설 스타일의 상황 서술",
-  "choices": ["선택지1", "선택지2", "선택지3", "선택지4"],
-  "state": {
-    "location": "현재 위치",
-    "flags": {},
-    "notes": "상황 메모"
-  }
-}
-`;
-
-    const stateSnapshot = `
-현재 상태:
-- location: ${storyState.location || "여관"}
-- flags: ${JSON.stringify(storyState.flags || {})}
-- notes: ${storyState.notes ? JSON.stringify(storyState.notes) : "없음"}
-`;
-
-    const actionLine = userAction
-        ? `플레이어 입력: "${userAction}" 를 반영해 장면을 갱신하라.`
-        : `플레이어 자유 입력 없음. 최근 선택을 반영해 장면을 전개하라.`;
-
-    const historyBlock = recent.length
-        ? `최근 로그:\n${recent.join("\n")}\n`
-        : `최근 로그: 없음\n`;
-
-    return `
-${systemSpec}
-
-${stateSnapshot}
-
-${historyBlock}
-${actionLine}
-`.trim();
-}
-
-// 5-2) 전투 시스템용 프롬프트 (수동전투/자동전투)
-function composeCombatPrompt({ storyState, history, userAction, combatType }) {
-    const recent = history.slice(-6).map((h) => {
-        const role = h.role === "user" ? "플레이어" : "서술";
-        return `- ${role}: ${h.text}`;
-    });
-
-    const systemSpec = combatType === 'manual' ? `
-<전투_상황>
-플레이어: \${storyState.player?.job || "모험가"} (Lv.\${storyState.player?.level || 1})
-HP: \${storyState.player?.hp || 100}/\${storyState.player?.maxHp || 100}
-적: \${storyState.combat?.enemyName || "알 수 없는 적"} (\${storyState.combat?.enemyLevel || "Lv.1"})
-적 HP: \${storyState.combat?.enemyHp || 100}/\${storyState.combat?.enemyMaxHp || 100}
-전투 특이사항: \${storyState.combat?.specialConditions || "없음"}
-</전투_상황>
-
-지시사항:
-1. 수동 전투를 진행합니다.
-2. 모든 서술은 '전지적 독자 시점 웹소설' 문체로 작성하세요.
-3. 현재 전투 턴을 생생하게 묘사하고, 플레이어가 취할 수 있는 3~4개의 전략적 행동을 '내면의 생각' 형태로 제시하세요. 각 선택지는 따옴표로 묶어 표시하세요.
-4. 전투 묘사에는 플레이어의 감정 상태와 전투 스타일을 반영하세요.
-5. 과도하게 잔혹하거나 그로테스크한 묘사는 피하세요.
-
-응답 형식은 반드시 다음 JSON 구조를 따르세요:
-{
-  "narration": "전투 상황 서술",
-  "choices": ["전투 선택지1", "전투 선택지2", "전투 선택지3", "전투 선택지4"],
-  "state": {
-    "combat": {
-      "enemyHp": 현재적HP,
-      "playerHp": 현재플레이어HP,
-      "turn": 턴수
-    },
-    "flags": {}
-  }
-}
-` : `
-<전투_상황>
-플레이어: \${storyState.player?.job || "모험가"} (Lv.\${storyState.player?.level || 1})
-HP: \${storyState.player?.hp || 100}/\${storyState.player?.maxHp || 100}
-적: \${storyState.combat?.enemyName || "알 수 없는 적"} (\${storyState.combat?.enemyLevel || "Lv.1"})
-적 HP: \${storyState.combat?.enemyHp || 100}/\${storyState.combat?.enemyMaxHp || 100}
-전투 특이사항: \${storyState.combat?.specialConditions || "없음"}
-</전투_상황>
-
-지시사항:
-1. 자동 전투를 진행합니다.
-2. 모든 서술은 '전지적 독자 시점 웹소설' 문체로 작성하세요.
-3. 전투 전체 과정을 간결하고 박진감 있게 서술하고, 주요 공격과 방어 행동에 내면 독백을 추가하세요. 전투 결과와 획득한 전리품을 요약해주세요.
-4. 전투 묘사에는 플레이어의 감정 상태와 전투 스타일을 반영하세요.
-5. 과도하게 잔혹하거나 그로테스크한 묘사는 피하세요.
-
-응답 형식은 반드시 다음 JSON 구조를 따르세요:
-{
-  "narration": "자동 전투 전체 과정 서술",
-  "choices": ["전투 후 행동1", "전투 후 행동2", "전투 후 행동3"],
-  "state": {
-    "combat": null,
-    "player": {
-      "hp": 전투후HP,
-      "exp": 획득경험치,
-      "inventory": ["획득아이템들"]
-    },
-    "flags": {
-      "battleEnded": true
-    }
-  }
-}
-`;
-
-    const stateSnapshot = `
-현재 상태:
-- location: ${storyState.location || "여관"}
-- flags: ${JSON.stringify(storyState.flags || {})}
-- notes: ${storyState.notes ? JSON.stringify(storyState.notes) : "없음"}
-- combatType: ${combatType || "manual"}
-`;
-
-    const actionLine = userAction
-        ? `플레이어 입력: "${userAction}" 를 반영해 전투를 진행하라.`
-        : `전투 상황을 자동으로 진행하라.`;
-
-    const historyBlock = recent.length
-        ? `최근 로그:\n${recent.join("\n")}\n`
-        : `최근 로그: 없음\n`;
-
-    return `
-${systemSpec}
-
-${stateSnapshot}
-
-${historyBlock}
-${actionLine}
-`.trim();
-}
-
-// 5-3) 아이템 사용용 프롬프트
-function composeItemPrompt({ storyState, history, userAction, itemInfo }) {
-    const recent = history.slice(-6).map((h) => {
-        const role = h.role === "user" ? "플레이어" : "서술";
-        return `- ${role}: ${h.text}`;
-    });
-
-    const systemSpec = `
-<아이템_사용>
-사용 아이템: \${itemInfo?.name || "알 수 없는 아이템"}
-아이템 효과: \${itemInfo?.effect || "효과 불명"}
-현재 상황: \${storyState.currentSituation || storyState.notes || "평범한 상황"}
-플레이어 상태: HP \${storyState.player?.hp || 100}/\${storyState.player?.maxHp || 100}, 상태이상 \${storyState.player?.status || "없음"}
-</아이템_사용>
-
-지시사항:
-1. 플레이어가 \${itemInfo?.name || "아이템"}을(를) 사용하는 장면을 웹소설 문체로 생생하게 묘사하세요.
-2. 아이템 사용 효과와 플레이어의 반응을 내면 독백이 포함되도록 서술하세요.
-3. 응답은 50단어 이내로 간결하게 유지하세요.
-
-응답 형식은 반드시 다음 JSON 구조를 따르세요:
-{
-  "narration": "아이템 사용 장면 서술 (50단어 이내)",
-  "choices": ["사용 후 행동1", "사용 후 행동2", "사용 후 행동3"],
-  "state": {
-    "player": {
-      "hp": 변경된HP,
-      "mp": 변경된MP,
-      "status": "상태변화",
-      "inventory": ["남은아이템들"]
-    },
-    "flags": {
-      "itemUsed": true
-    }
-  }
-}
-`;
-
-    const stateSnapshot = `
-현재 상태:
-- location: ${storyState.location || "여관"}
-- flags: ${JSON.stringify(storyState.flags || {})}
-- notes: ${storyState.notes ? JSON.stringify(storyState.notes) : "없음"}
-- itemInfo: ${JSON.stringify(itemInfo || {})}
-`;
-
-    const actionLine = userAction
-        ? `플레이어가 아이템을 사용: "${userAction}"`
-        : `아이템 사용 상황을 처리하라.`;
-
-    const historyBlock = recent.length
-        ? `최근 로그:\n${recent.join("\n")}\n`
-        : `최근 로그: 없음\n`;
-
-    return `
-${systemSpec}
-
-${stateSnapshot}
-
-${historyBlock}
-${actionLine}
-`.trim();
-}
-
-// 5-4) 퀘스트 생성용 프롬프트
-function composeQuestPrompt({ storyState, history, userAction }) {
-    const recent = history.slice(-6).map((h) => {
-        const role = h.role === "user" ? "플레이어" : "서술";
-        return `- ${role}: ${h.text}`;
-    });
-
-    // 메인 스토리 컨텍스트 구성
-    const mainStoryContext = `
-<Main_Story_Context>
-현재 스토리 상황: ${storyState.notes || "평범한 상황"}
-최근 주요 이벤트: ${storyState.lastEvent || "특별한 일 없음"}
-현재 위치의 특성: ${storyState.environment || "아늑한 여관"}
-플레이어 감정 상태: 피로 (${storyState.emotionalState?.fatigue || 3}/10), 호기심 (${storyState.emotionalState?.curiosity || 7}/10), 경계심 (${storyState.emotionalState?.wariness || 5}/10)
-스토리 진행 단계: ${storyState.storyPhase || "초기 모험"}
-</Main_Story_Context>`;
-
-    // 기존 퀘스트 연관성 분석
-    const questHistory = storyState.player?.completedQuests?.length > 0 ? `
-<Quest_History_Analysis>
-완료한 퀘스트들: ${storyState.player.completedQuests.join(", ")}
-퀘스트 완료로 인한 변화: ${storyState.recentQuestImpact?.storyImpact || "아직 큰 변화 없음"}
-획득한 명성/관계: ${storyState.recentQuestImpact?.reputationChange || "평범한 모험가"}
-</Quest_History_Analysis>` : `
-<Quest_History_Analysis>
-완료한 퀘스트: 없음 (새로운 모험가)
-</Quest_History_Analysis>`;
-
-    const systemSpec = `
-<Quest_Generation>
-플레이어 레벨: \${storyState.player?.level || 1}
-현재 위치: \${storyState.location || "알 수 없는 곳"}
-주변 NPC: \${storyState.nearbyNPCs?.join(", ") || "없음"}
-플레이어 능력치: 힘 \${storyState.player?.stats?.strength || 10}, 민첩 \${storyState.player?.stats?.dexterity || 10}, 지능 \${storyState.player?.stats?.intelligence || 10}, 매력 \${storyState.player?.stats?.charm || 10}
-</Quest_Generation>
-
-${mainStoryContext}
-
-${questHistory}
-
-지시사항:
-1. 현재 메인 스토리 상황과 자연스럽게 연결되는 퀘스트를 생성하세요.
-2. 플레이어의 감정 상태, 최근 이벤트, 현재 위치의 특성을 반영한 퀘스트를 만드세요.
-3. 이전에 완료한 퀘스트들과의 연관성을 고려하여 스토리의 연속성을 유지하세요.
-4. 퀘스트는 다음 요소를 포함해야 합니다:
-   - 제목: 현재 스토리 상황을 반영한 흥미로운 퀘스트 제목
-   - 설명: 메인 스토리와 연결된 퀘스트 배경과 목적
-   - 목표: 명확하고 수치화된 완료 조건 (예: "오크 5마리 처치", "마법 수정 3개 수집")
-   - 보상: 퀘스트 완료 시 얻을 수 있는 보상 (스토리 진행에 도움이 되는 것 포함)
-   - 스토리 영향: 이 퀘스트 완료가 메인 스토리에 미칠 영향 예상
-5. 퀘스트는 웹소설 문체로 NPC의 대화나 상황 묘사를 통해 자연스럽게 소개하세요.
-6. 퀘스트는 플레이어 레벨과 현재 능력치에 적합한 난이도를 가져야 합니다.
-7. 모든 퀘스트는 명확한 종료 조건을 가져야 합니다. 애매하거나 주관적인 완료 조건은 피하세요.
-8. 유쾌한 모험 판타지 분위기를 유지하면서, 현재 스토리 톤에 맞는 분위기를 조성하세요.
-9. 퀘스트 설명은 150단어 이내로 간결하게 유지하세요.
-
-응답 형식은 반드시 다음 JSON 구조를 따르세요:
-{
-  "narration": "퀘스트 소개 장면 서술 (150단어 이내)",
-  "choices": ["퀘스트 수락", "퀘스트 거절", "더 자세히 묻기"],
-  "state": {
-    "availableQuest": {
-      "title": "퀘스트 제목",
-      "description": "퀘스트 설명",
-      "objective": "완료 조건",
-      "reward": "보상 내용",
-      "storyImpact": "이 퀘스트 완료가 메인 스토리에 미칠 영향",
-      "npc": "퀘스트 관련 NPC",
-      "progress": "시작 단계"
-    },
-    "flags": {
-      "questOffered": true
-    }
-  }
-}
-`;
-
-    const stateSnapshot = `
-현재 상태:
-- location: ${storyState.location || "여관"}
-- flags: ${JSON.stringify(storyState.flags || {})}
-- notes: ${storyState.notes ? JSON.stringify(storyState.notes) : "없음"}
-`;
-
-    const actionLine = userAction
-        ? `플레이어 입력: "${userAction}" 를 반영해 퀘스트를 생성하라.`
-        : `현재 상황에 맞는 퀘스트를 생성하라.`;
-
-    const historyBlock = recent.length
-        ? `최근 로그:\n${recent.join("\n")}\n`
-        : `최근 로그: 없음\n`;
-
-    return `
-${systemSpec}
-
-${stateSnapshot}
-
-${historyBlock}
-${actionLine}
-`.trim();
-}
-
-// 6) LLM 호출들
-async function callGemini(prompt, apiKey, model) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const t0 = performance.now();
-    const res = await fetchWithTimeout(
-        url,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ role: "user", parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.85,
-                    topP: 0.9,
-                    maxOutputTokens: 600,
-                },
-            }),
-        },
-        25000
-    );
-    const t1 = performance.now();
-    if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        const err = new Error(`Gemini error ${res.status}: ${t.slice(0, 200)}`);
-        err.latencyMs = Math.round(t1 - t0);
-        throw err;
-    }
-    const data = await res.json();
-    const cand = data?.candidates?.[0];
-    const parts = cand?.content?.parts || [];
-    const text = parts.map((p) => p.text || "").join("\n").trim();
-    if (!text) {
-        const err = new Error("Gemini 응답 비어있음");
-        err.latencyMs = Math.round(t1 - t0);
-        throw err;
-    }
-    return {
-        provider: "Gemini",
-        model,
-        raw: text,
-        latencyMs: Math.round(t1 - t0),
-        reason: "OK",
+/* ========== 초기 캠프 생성 ========== */
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function mkSurvivor(name,role,traits,rng){ return { id:`${name}_${Math.floor(rng()*1e6)}`, name, role, traits, hp:100, mood:60 }; }
+function makeInitialCamp(cfg,rng){
+    const base = {
+        day:1,
+        weather: cfg.season==="ice_age"?"강풍":cfg.season==="sandstorm"?"먼지바람":cfg.season==="plague"?"침침함":"흐림",
+        resources:{ food:16, water:10, fuel:2, parts:3 },
+        morale:55, durability:70,
+        survivors:[ mkSurvivor("윤하","정찰",["신중함"],rng), mkSurvivor("도현","기술",["기계덕후"],rng), mkSurvivor("세인","의무",["낙천적"],rng) ],
+        foreshadows:[], recentEventIds:[], recentCats:[], tempMods:{ scout:0, repair:0, craft:0, rest:0 }
     };
+    if (cfg.difficulty==="casual"){ base.resources.food+=6; base.resources.water+=6; base.morale+=5; }
+    else if (cfg.difficulty==="hard"){ base.resources.food-=4; base.resources.water-=4; base.morale-=5; base.durability-=5; }
+    switch(cfg.starter){
+        case "food": base.resources.food+=10; break;
+        case "toolkit": base.resources.parts+=4; base.durability+=5; break;
+        case "medkit": base.survivors.push(mkSurvivor("가빈","보조",["응급처치"],rng)); break;
+        case "fuel": base.resources.fuel+=4; break;
+        case "extra_hand": base.survivors.push(mkSurvivor("루카","보조",["근성"],rng)); break;
+    }
+    if (cfg.campTraits.includes("engineering")) base.durability+=3;
+    if (cfg.campTraits.includes("community")) base.morale+=3;
+    base.morale=clamp(base.morale,0,100); base.durability=clamp(base.durability,0,100);
+    return base;
 }
 
-async function callGroq(prompt) {
-    const url = "https://api.groq.com/openai/v1/chat/completions";
-    const t0 = performance.now();
-    const res = await fetchWithTimeout(
-        url,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${groqApiKey}`,
-            },
-            body: JSON.stringify({
-                model: "llama3-70b-8192",
-                temperature: 0.85,
-                max_tokens: 600,
-                messages: [
-                    {
-                        role: "system",
-                        content:
-                            "너는 텍스트 어드벤처 RPG의 게임 마스터다. 반드시 JSON만 반환한다.",
-                    },
-                    { role: "user", content: prompt },
-                ],
-            }),
-        },
-        30000
-    );
-    const t1 = performance.now();
-    if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        const err = new Error(`Groq error ${res.status}: ${t.slice(0, 200)}`);
-        err.latencyMs = Math.round(t1 - t0);
-        throw err;
+/* ========== 템플릿 10종 ========== */
+const TEMPLATES = [
+    { id:"inter_conflict_01", cat:"internal", pickWeight:1, gen:(ctx)=>({
+            id:"inter_conflict_01", title:"몰래 감춘 상자",
+            narration:"창고 구석에서 낡은 상자가 나왔다. 모두의 시선이 같은 방향으로 굳어졌다.",
+            foreshadow:"의심",
+            options:[
+                { key:"A", label:"즉시 개봉해 모두에게 배분", risk:"사기↑/불신↑", hint:"질서 유지", calc:{ morale:+2, trust:-2 } },
+                { key:"B", label:"용의자를 특정해 조사", risk:"사기↓/정보↑", hint:"균열 위험", calc:{ morale:-2, info:+1 } }
+            ]
+        })},
+    { id:"weather_hazard_02", cat:"weather", pickWeight:1, gen:(ctx)=>({
+            id:"weather_hazard_02", title:"강풍에 흔들리는 안테나",
+            narration:"천막 위 안테나가 기울었다. 지금 손대면 밤이 길어진다.",
+            foreshadow:"금속음",
+            options:[
+                { key:"A", label:"지금 보수 시도", risk:"부상↑/정보↑", hint:"기술 보너스", calc:{ parts:-1, info:+1 } },
+                { key:"B", label:"아침까지 기다린다", risk:"기회↓/안전↑", hint:"보수적", calc:{ chance:-5 } }
+            ]
+        })},
+    { id:"supply_short_03", cat:"supply", pickWeight:1, gen:(ctx)=>({
+            id:"supply_short_03", title:"희미한 통조림 냄새",
+            narration:"바람결에 금속과 기름 냄새가 섞여 들어왔다. 근처 어딘가 저장고가 있다.",
+            foreshadow:"약한 빛",
+            options:[
+                { key:"A", label:"정찰 두 명을 보내본다", risk:"피로↑/식량↑", hint:"정찰 보너스", calc:{ food:+4, fatigue:+8 } },
+                { key:"B", label:"위치만 표시하고 다음 날 시도", risk:"기회↓", hint:"안전", calc:{ chance:-3 } }
+            ]
+        })},
+    { id:"outsider_04", cat:"outsider", pickWeight:1, gen:(ctx)=>({
+            id:"outsider_04", title:"천막 밖의 발자국",
+            narration:"새벽녘 눈발 위로 얕은 발자국이 이어졌다. 누군가 근처에 있다.",
+            foreshadow:"낮은 휘파람",
+            options:[
+                { key:"A", label:"불빛을 줄이고 잠시 숨는다", risk:"정보↓/안전↑", hint:"보수적", calc:{ morale:-1 } },
+                { key:"B", label:"신호를 보내 접촉 시도", risk:"부상↑/동맹↑", hint:"대담", calc:{ morale:+1 } }
+            ]
+        })},
+    { id:"med_incident_05", cat:"medical", pickWeight:1, gen:(ctx)=>({
+            id:"med_incident_05", title:"가벼운 감염 의심",
+            narration:"기침과 열이 번졌다. 대수롭지 않게 넘기기엔 타이밍이 나쁘다.",
+            foreshadow:"희미한 열기",
+            options:[
+                { key:"A", label:"격리 후 상태 관찰", risk:"사기↓/안전↑", hint:"확산 차단", calc:{ morale:-2 } },
+                { key:"B", label:"의료 키트로 즉시 처치", risk:"자원↓/회복↑", hint:"의무 보너스", calc:{ parts:-1 } }
+            ]
+        })},
+    { id:"internal_speech_06", cat:"internal", pickWeight:1, gen:(ctx)=>({
+            id:"internal_speech_06", title:"짧은 격려 연설",
+            narration:"모닥불 주위가 조용해졌다. 누군가 입을 열 타이밍이다.",
+            foreshadow:"따뜻한 숨",
+            options:[
+                { key:"A", label:"규율과 절차를 강조", risk:"사기±/효율↑", hint:"규율", calc:{ morale:+1 } },
+                { key:"B", label:"공동체와 신뢰를 강조", risk:"사기↑/갈등↓", hint:"연대", calc:{ morale:+2 } }
+            ]
+        })},
+    { id:"weather_coldfront_07", cat:"weather", pickWeight:1, gen:(ctx)=>({
+            id:"weather_coldfront_07", title:"갑작스러운 한기",
+            narration:"바람이 방향을 바꿨다. 천막 이음새가 떨었다.",
+            foreshadow:"서늘한 금기",
+            options:[
+                { key:"A", label:"천막 보강", risk:"자원↓/안전↑", hint:"수리 보너스", calc:{ parts:-1 } },
+                { key:"B", label:"난방 유지 위해 연료 사용", risk:"연료↓/사기↑", hint:"편안함", calc:{} }
+            ]
+        })},
+    { id:"gear_malfunc_08", cat:"weather", pickWeight:1, gen:(ctx)=>({
+            id:"gear_malfunc_08", title:"발전기의 심한 떨림",
+            narration:"규칙적이던 소음이 불규칙하게 갈라졌다.",
+            foreshadow:"끊긴 박동",
+            options:[
+                { key:"A", label:"야간 분해 점검", risk:"부상↑/내구↑", hint:"기술 보너스", calc:{ parts:-1 } },
+                { key:"B", label:"하루만 전력 제한", risk:"정보↓/안전↑", hint:"저위험", calc:{ chance:-3 } }
+            ]
+        })},
+    { id:"trade_rumor_09", cat:"outsider", pickWeight:1, gen:(ctx)=>({
+            id:"trade_rumor_09", title:"남쪽의 거래 소문",
+            narration:"낡은 전파 속에서 물물교환 얘기가 흘러들었다.",
+            foreshadow:"간헐적 잡음",
+            options:[
+                { key:"A", label:"좌표를 기록해둔다", risk:"기회↓", hint:"신중", calc:{} },
+                { key:"B", label:"내일 바로 길을 튼다", risk:"부상↑/자원↑", hint:"공세적", calc:{} }
+            ]
+        })},
+    { id:"beast_sign_10", cat:"outsider", pickWeight:1, gen:(ctx)=>({
+            id:"beast_sign_10", title:"짐승의 흔적",
+            narration:"울타리 아래로 진흙이 파였다. 발톱 자국이 겹쳐 있다.",
+            foreshadow:"낮은 포효",
+            options:[
+                { key:"A", label:"덫을 설치한다", risk:"부상↓/정보↑", hint:"제작 보너스", calc:{ parts:-1 } },
+                { key:"B", label:"불을 더 피워 쫓아낸다", risk:"연료↓/안전↑", hint:"소극적", calc:{} }
+            ]
+        })}
+];
+
+/* ========== 규칙 엔진(낮 보정 포함) ========== */
+function hasTrait(camp,trait){ return camp.survivors.some(s=>s.traits.includes(trait)); }
+function hasRole(camp,role){ return camp.survivors.some(s=>s.role===role); }
+function computeResolution(camp,cfg,event,pickedKey,rng){
+    const opt = event.options.find(o=>o.key===pickedKey);
+    const base=0.55; const diffAdj = cfg.difficulty==="casual"?+0.1:cfg.difficulty==="hard"?-0.1:0;
+    let traitAdj=0;
+    if (event.id==="weather_hazard_02" && hasTrait(camp,"기계덕후")) traitAdj+=0.08;
+    if (event.id==="supply_short_03" && hasRole(camp,"정찰")) traitAdj+=0.06;
+    let dayAdj=0; const mods=camp.tempMods||{scout:0,repair:0,craft:0,rest:0};
+    const cat=(TEMPLATES.find(t=>t.id===event.id)?.cat)||null;
+    if (cat==="supply") dayAdj+=Math.min(0.03*mods.scout,0.09);
+    if (cat==="weather") dayAdj+=Math.min(0.02*(mods.repair+mods.craft),0.08);
+    if (cat==="internal") dayAdj+=Math.min(0.02*mods.rest,0.06);
+    if (cat==="outsider" && mods.craft>0) dayAdj+=0.02;
+    if (cat==="medical" && hasRole(camp,"의무")) dayAdj+=0.05;
+    const chanceAdj=(opt.calc?.chance||0)/100;
+    const successChance=clamp(base+diffAdj+traitAdj+dayAdj+chanceAdj,0.05,0.92);
+    const success = Math.random()<successChance;
+
+    let delta={ food:0, water:0, fuel:0, parts:0, morale:0, durability:0, injuries:0 };
+    if (event.id==="inter_conflict_01"){ delta.morale += success?+2:-3; if (pickedKey==="B" && !success) delta.injuries+=1; }
+    else if (event.id==="weather_hazard_02"){ delta.parts += pickedKey==="A"?-1:0; delta.durability += success?+5:(pickedKey==="A"?-5:-2); if (pickedKey==="A" && !success) delta.injuries+=1; }
+    else if (event.id==="supply_short_03"){ delta.food += success?+4:+1; delta.morale += success?+1:0; if (pickedKey==="A" && !success) delta.injuries+=1; }
+    else if (event.id==="outsider_04"){ delta.morale += pickedKey==="B"?(success?+3:-2):0; if (pickedKey==="B" && !success) delta.injuries+=1; }
+    else if (event.id==="med_incident_05"){ delta.morale += pickedKey==="A"?-1:(success?+1:-2); }
+    else if (event.id==="internal_speech_06"){ delta.morale += pickedKey==="A"?+1:+2; }
+    else if (event.id==="weather_coldfront_07"){ if (pickedKey==="A"){ delta.parts-=1; delta.durability+=success?+4:-2; } if (pickedKey==="B"){ delta.fuel-=1; delta.morale+=+1; } }
+    else if (event.id==="gear_malfunc_08"){ if (pickedKey==="A"){ delta.parts-=1; delta.durability+=success?+5:-4; if (!success) delta.injuries+=1; } if (pickedKey==="B"){ delta.durability+=-1; } }
+    else if (event.id==="trade_rumor_09"){ if (pickedKey==="B"){ delta.morale += success?+1:-1; } }
+    else if (event.id==="beast_sign_10"){ if (pickedKey==="A"){ delta.parts-=1; delta.morale += success?+1:0; } if (pickedKey==="B"){ delta.fuel-=1; } }
+
+    if (!success) delta.morale -= 1;
+    if (opt.calc?.fatigue) delta.morale -= Math.round(opt.calc.fatigue/8);
+
+    const next=sclone(camp);
+    next.resources.food=Math.max(0,(camp.resources.food+delta.food));
+    next.resources.water=Math.max(0,(camp.resources.water+delta.water));
+    next.resources.fuel=Math.max(0,(camp.resources.fuel+delta.fuel));
+    next.resources.parts=Math.max(0,(camp.resources.parts+delta.parts));
+    next.morale=clamp(camp.morale+delta.morale,0,100);
+    next.durability=clamp(camp.durability+delta.durability,0,100);
+
+    const injuredNames=[];
+    for(let i=0;i<(delta.injuries||0);i++){
+        const idx=Math.floor(Math.random()*next.survivors.length);
+        next.survivors[idx].hp=Math.max(1, next.survivors[idx].hp - (20 + Math.floor(Math.random()*15)));
+        injuredNames.push(next.survivors[idx].name);
     }
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content?.trim();
-    if (!text) {
-        const err = new Error("Groq 응답 비어있음");
-        err.latencyMs = Math.round(t1 - t0);
-        throw err;
-    }
-    return {
-        provider: "Groq",
-        model: "llama3-70b-8192",
-        raw: text,
-        latencyMs: Math.round(t1 - t0),
-        reason: "OK",
-    };
+    return { success, successChance, delta, nextCamp:next, injuredNames };
 }
 
-function isRetryableError(err) {
-    const m = String(err?.message || "").toLowerCase();
-    return (
-        m.includes("timeout") ||
-        m.includes("429") ||
-        m.includes("502") ||
-        m.includes("503") ||
-        m.includes("overloaded") ||
-        m.includes("exhausted")
-    );
-}
+/* ========== 낮 처리(수동 배치) ========== */
+function processDay(camp,cfg,rng,assignments=null){
+    let summary=[]; let delta={ food:0, water:0, fuel:0, parts:0, morale:0, durability:0, heal:0 };
+    const eat=Math.ceil(camp.survivors.length/2), drink=Math.ceil(camp.survivors.length/2);
+    camp.resources.food=Math.max(0, camp.resources.food - eat);
+    camp.resources.water=Math.max(0, camp.resources.water - drink);
+    camp.durability=clamp(camp.durability-1,0,100);
+    summary.push(`식량 ${-eat}, 물 ${-drink}`);
 
-async function tryWithBackoff(task, attempts = 2, baseDelay = 250) {
-    let lastErr = null;
-    for (let i = 0; i < attempts; i++) {
-        try {
-            return await task();
-        } catch (e) {
-            lastErr = e;
-            if (i === attempts - 1 || !isRetryableError(e)) break;
-            const delay = baseDelay * Math.pow(3, i); // 250ms → 750ms
-            await sleep(delay);
+    camp.tempMods={ scout:0, repair:0, craft:0, rest:0 };
+    const useManual = assignments && Object.keys(assignments).length>0;
+    if (!useManual){
+        if (cfg.campTraits.includes("engineering") && camp.resources.parts>0 && rng()<0.6){
+            camp.resources.parts-=1; delta.parts-=1; camp.durability=clamp(camp.durability+4,0,100); delta.durability+=4;
+            summary.push("수리 +4(부품 -1)"); camp.tempMods.repair+=1;
         }
-    }
-    throw lastErr;
-}
-
-// 6-1) 메인 스토리 LLM 호출
-async function callMainStoryLLM(prompt, setRouteStats) {
-    // 1) Gemini main (1.5-pro, 2회 백오프 재시도)
-    try {
-        const r1 = await tryWithBackoff(
-            () => callGemini(prompt, mainApiKey, "gemini-2.0-flash-lite"),
-            2,
-            250
-        );
-        setRouteStats((s) => ({
-            ...s,
-            geminiMain: s.geminiMain + 1,
-            last: `${r1.provider}(Story)`,
-            lastLatencyMs: r1.latencyMs,
-            lastReason: r1.reason,
-        }));
-        return r1;
-    } catch (e1) {
-        // 2) Gemini backup (1.5-flash, 1회 재시도)
-        try {
-            const r2 = await tryWithBackoff(
-                () => callGemini(prompt, backupApiKey, "gemini-2.5-flash"),
-                1,
-                300
-            );
-            setRouteStats((s) => ({
-                ...s,
-                geminiBackup: s.geminiBackup + 1,
-                last: `${r2.provider}(Story)`,
-                lastLatencyMs: r2.latencyMs,
-                lastReason: r2.reason,
-            }));
-            return r2;
-        } catch (e2) {
-            // 3) 최종 Groq 폴백
-            const r3 = await callGroq(prompt);
-            setRouteStats((s) => ({
-                ...s,
-                groq: s.groq + 1,
-                last: `${r3.provider}(Story)`,
-                lastLatencyMs: r3.latencyMs,
-                lastReason: r3.reason,
-            }));
-            return r3;
+        if (cfg.campTraits.includes("stealth") && rng()<0.4){
+            const w=1+Math.floor(rng()*2); camp.resources.water+=w; delta.water+=w; summary.push(`정찰 획득: 물 +${w}`); camp.tempMods.scout+=1;
         }
-    }
-}
-
-// 6-2) 전투 시스템 LLM 호출
-async function callCombatLLM(prompt, setRouteStats) {
-    // 1) Gemini main (1.5-pro, 2회 백오프 재시도)
-    try {
-        const r1 = await tryWithBackoff(
-            () => callGemini(prompt, mainApiKey, "gemini-2.0-flash-lite"),
-            2,
-            250
-        );
-        setRouteStats((s) => ({
-            ...s,
-            geminiMain: s.geminiMain + 1,
-            last: `${r1.provider}(Combat)`,
-            lastLatencyMs: r1.latencyMs,
-            lastReason: r1.reason,
-        }));
-        return r1;
-    } catch (e1) {
-        // 2) Gemini backup (1.5-flash, 1회 재시도)
-        try {
-            const r2 = await tryWithBackoff(
-                () => callGemini(prompt, backupApiKey, "gemini-2.5-flash"),
-                1,
-                300
-            );
-            setRouteStats((s) => ({
-                ...s,
-                geminiBackup: s.geminiBackup + 1,
-                last: `${r2.provider}(Combat)`,
-                lastLatencyMs: r2.latencyMs,
-                lastReason: r2.reason,
-            }));
-            return r2;
-        } catch (e2) {
-            // 3) 최종 Groq 폴백
-            const r3 = await callGroq(prompt);
-            setRouteStats((s) => ({
-                ...s,
-                groq: s.groq + 1,
-                last: `${r3.provider}(Combat)`,
-                lastLatencyMs: r3.latencyMs,
-                lastReason: r3.reason,
-            }));
-            return r3;
+        if (cfg.campTraits.includes("medic")){
+            const targets=camp.survivors.filter(s=>s.hp<100);
+            if (targets.length && rng()<0.7){ const t=targets[Math.floor(rng()*targets.length)]; const heal=6+Math.floor(rng()*7); t.hp=clamp(t.hp+heal,1,100); delta.heal+=heal; summary.push(`치료: ${t.name} +${heal}HP`); }
         }
-    }
-}
-
-// 6-3) 아이템 사용 LLM 호출
-async function callItemLLM(prompt, setRouteStats) {
-    // 1) Gemini main (1.5-pro, 2회 백오프 재시도)
-    try {
-        const r1 = await tryWithBackoff(
-            () => callGemini(prompt, mainApiKey, "gemini-2.0-flash-lite"),
-            2,
-            250
-        );
-        setRouteStats((s) => ({
-            ...s,
-            geminiMain: s.geminiMain + 1,
-            last: `${r1.provider}(Item)`,
-            lastLatencyMs: r1.latencyMs,
-            lastReason: r1.reason,
-        }));
-        return r1;
-    } catch (e1) {
-        // 2) Gemini backup (1.5-flash, 1회 재시도)
-        try {
-            const r2 = await tryWithBackoff(
-                () => callGemini(prompt, backupApiKey, "gemini-2.5-flash"),
-                1,
-                300
-            );
-            setRouteStats((s) => ({
-                ...s,
-                geminiBackup: s.geminiBackup + 1,
-                last: `${r2.provider}(Item)`,
-                lastLatencyMs: r2.latencyMs,
-                lastReason: r2.reason,
-            }));
-            return r2;
-        } catch (e2) {
-            // 3) 최종 Groq 폴백
-            const r3 = await callGroq(prompt);
-            setRouteStats((s) => ({
-                ...s,
-                groq: s.groq + 1,
-                last: `${r3.provider}(Item)`,
-                lastLatencyMs: r3.latencyMs,
-                lastReason: r3.reason,
-            }));
-            return r3;
-        }
-    }
-}
-
-// 6-4) 퀘스트 생성 LLM 호출
-async function callQuestLLM(prompt, setRouteStats) {
-    // 1) Gemini main (1.5-pro, 2회 백오프 재시도)
-    try {
-        const r1 = await tryWithBackoff(
-            () => callGemini(prompt, mainApiKey, "gemini-2.0-flash-lite"),
-            2,
-            250
-        );
-        setRouteStats((s) => ({
-            ...s,
-            geminiMain: s.geminiMain + 1,
-            last: `${r1.provider}(Quest)`,
-            lastLatencyMs: r1.latencyMs,
-            lastReason: r1.reason,
-        }));
-        return r1;
-    } catch (e1) {
-        // 2) Gemini backup (1.5-flash, 1회 재시도)
-        try {
-            const r2 = await tryWithBackoff(
-                () => callGemini(prompt, backupApiKey, "gemini-2.5-flash"),
-                1,
-                300
-            );
-            setRouteStats((s) => ({
-                ...s,
-                geminiBackup: s.geminiBackup + 1,
-                last: `${r2.provider}(Quest)`,
-                lastLatencyMs: r2.latencyMs,
-                lastReason: r2.reason,
-            }));
-            return r2;
-        } catch (e2) {
-            // 3) 최종 Groq 폴백
-            const r3 = await callGroq(prompt);
-            setRouteStats((s) => ({
-                ...s,
-                groq: s.groq + 1,
-                last: `${r3.provider}(Quest)`,
-                lastLatencyMs: r3.latencyMs,
-                lastReason: r3.reason,
-            }));
-            return r3;
-        }
-    }
-}
-
-// 7) 세션 유틸
-function getOrCreateSessionId() {
-    const existing = window.localStorage.getItem("sessionId");
-    if (existing) return existing;
-    const sid = `sess_${Date.now()}`;
-    window.localStorage.setItem("sessionId", sid);
-    return sid;
-}
-
-// 8) 메인 컴포넌트
-export default function App() {
-    // 반응형 미디어 쿼리 훅들
-    const isMobile = useMediaQuery({ maxWidth: 768 });
-    const isTablet = useMediaQuery({ minWidth: 769, maxWidth: 1024 });
-    const isDesktop = useMediaQuery({ minWidth: 1025 });
-    const isLandscape = useMediaQuery({ orientation: 'landscape' });
-    
-    const [sessionId, setSessionId] = useState(getOrCreateSessionId);
-    const [history, setHistory] = useState([]); // {role:'user'|'assistant', text, model?, ts}
-    const [choices, setChoices] = useState([]);
-    const [input, setInput] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [routeStats, setRouteStats] = useState({
-        geminiMain: 0,
-        geminiBackup: 0,
-        groq: 0,
-        last: "-",
-        lastLatencyMs: 0,
-        lastReason: "-",
-    });
-    const [storyState, setStoryState] = useState({
-        location: "여관",
-        flags: { started: true },
-        notes: "따뜻한 난로 불빛이 어른거리는 아늑한 여관, 모험의 시작점이다.",
-    });
-    const [hasMore, setHasMore] = useState(false);
-    const lastDocDescRef = useRef(null);
-    const logRef = useRef(null);
-    const [showPrev, setShowPrev] = useState(false);
-    const [cachedSummary, setCachedSummary] = useState("요약 없음");
-
-    // 파생 값: 이전 장면
-    const previousScene = useMemo(() => {
-        const lastIdx = [...history].reverse().findIndex((h) => h.role === "assistant");
-        if (lastIdx === -1) return "이전 장면 없음";
-        // reverse index → 원본 index 계산
-        const idxFromEnd = lastIdx;
-        const idx = history.length - 1 - idxFromEnd;
-        return history[idx]?.text || "이전 장면 없음";
-    }, [history]);
-
-    // Firestore 세션 초기화/복구 + 로그 페이지네이션
-    useEffect(() => {
-        const init = async () => {
-            const ref = doc(db, "sessions", sessionId);
-            const snap = await getDoc(ref);
-            if (!snap.exists()) {
-                await setDoc(ref, {
-                    sessionId,
-                    createdAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                    routeStats,
-                    storyState,
-                    lastChoices: [],
-                    summary: "",
-                });
-            } else {
-                const data = snap.data();
-                if (data?.routeStats) setRouteStats((s) => ({ ...s, ...data.routeStats }));
-                if (data?.storyState) setStoryState((prev) => ({ ...prev, ...data.storyState }));
-                if (Array.isArray(data?.lastChoices)) setChoices(data.lastChoices.slice(0, 4));
-                if (typeof data?.summary === "string") setCachedSummary(data.summary || "요약 없음");
-            }
-
-            // 최근 로그부터 페이지네이션 로드 (desc → reverse로 표시)
-            const logsCol = collection(db, "sessions", sessionId, "logs");
-            const q1 = query(logsCol, orderBy("createdAt", "desc"), limit(PAGE_SIZE));
-            const snap1 = await getDocs(q1);
-            const docs = snap1.docs;
-            const descItems = docs.map((d) => d.data());
-            const ascItems = descItems.reverse();
-            setHistory(ascItems);
-            lastDocDescRef.current = docs[docs.length - 1] || null;
-            setHasMore(docs.length === PAGE_SIZE);
-
-            if (ascItems.length === 0) {
-                await nextTurn();
-            }
-        };
-        init().catch(() => {});
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sessionId]);
-
-    async function loadMoreOlder() {
-        const lastDoc = lastDocDescRef.current;
-        if (!lastDoc) return;
-        const logsCol = collection(db, "sessions", sessionId, "logs");
-        const qMore = query(
-            logsCol,
-            orderBy("createdAt", "desc"),
-            startAfter(lastDoc),
-            limit(PAGE_SIZE)
-        );
-        const snapMore = await getDocs(qMore).catch(() => null);
-        if (!snapMore) return;
-        const docs = snapMore.docs;
-        const olderAsc = docs.map((d) => d.data()).reverse();
-        setHistory((prev) => [...olderAsc, ...prev]);
-        lastDocDescRef.current = docs[docs.length - 1] || null;
-        setHasMore(docs.length === PAGE_SIZE);
-    }
-
-    // 스크롤 아래로
-    useEffect(() => {
-        if (logRef.current) {
-            logRef.current.scrollTop = logRef.current.scrollHeight;
-        }
-    }, [history, choices]);
-
-    // 가시성/AUTO SAVE/언로드
-    useEffect(() => {
-        const onVis = () => {
-            if (document.visibilityState !== "visible") {
-                saveMeta().catch(() => {});
-            }
-        };
-        document.addEventListener("visibilitychange", onVis);
-        const onUnload = () => {
-            navigator.sendBeacon?.(
-                "/noop",
-                new Blob(["x"], { type: "text/plain" })
-            );
-        };
-        window.addEventListener("beforeunload", onUnload);
-        const timer = setInterval(() => saveMeta({ auto: "interval" }).catch(() => {}), AUTO_SAVE_MS);
-        return () => {
-            document.removeEventListener("visibilitychange", onVis);
-            window.removeEventListener("beforeunload", onUnload);
-            clearInterval(timer);
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [routeStats, storyState, choices]);
-
-    // 선택지 단축키 1/2/3/4
-    useEffect(() => {
-        const handler = (e) => {
-            const tag = (e.target && e.target.tagName) || "";
-            if (tag === "INPUT" || tag === "TEXTAREA" || (e.target && e.target.isContentEditable)) return;
-            if (busy) return;
-            if (e.key === "1") onChoose(0);
-            else if (e.key === "2") onChoose(1);
-            else if (e.key === "3") onChoose(2);
-            else if (e.key === "4") onChoose(3);
-        };
-        window.addEventListener("keydown", handler);
-        return () => window.removeEventListener("keydown", handler);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [busy, choices]);
-
-    // 요약 캐시 업데이트
-    useEffect(() => {
-        const sum = oneLineSummary(history);
-        setCachedSummary(sum);
-        // 세션 요약 필드 경량 업데이트(부하 방지: 실패 무시)
-        saveMeta({ summary: sum }).catch(() => {});
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [history]);
-
-    async function saveMeta(extra = {}) {
-        const ref = doc(db, "sessions", sessionId);
-        await updateDoc(ref, {
-            updatedAt: serverTimestamp(),
-            routeStats,
-            storyState,
-            lastChoices: choices || [],
-            ...extra,
-        }).catch(() => {});
-    }
-
-    async function addLogDoc(entry) {
-        const col = collection(db, "sessions", sessionId, "logs");
-        await addDoc(col, {
-            ...entry,
-            createdAt: serverTimestamp(),
-        }).catch(() => {});
-    }
-
-    async function nextTurn({ userAction, llmType, combatType, itemInfo } = {}) {
-        if (busy) return;
-        setBusy(true);
-
-        // LLM 타입 결정 로직
-        let determinedLLMType = llmType;
-        if (!determinedLLMType) {
-            // 자동 감지 로직
-            if (storyState.flags?.inCombat || userAction?.includes('전투') || userAction?.includes('공격') || userAction?.includes('방어')) {
-                determinedLLMType = 'combat';
-            } else if (storyState.flags?.usingItem || userAction?.includes('아이템') || userAction?.includes('사용') || itemInfo) {
-                determinedLLMType = 'item';
-            } else if (storyState.flags?.needQuest || userAction?.includes('퀘스트') || userAction?.includes('의뢰') || userAction?.includes('임무')) {
-                determinedLLMType = 'quest';
-            } else {
-                determinedLLMType = 'story'; // 기본값
-            }
-        }
-
-        // 적절한 프롬프트 생성
-        let prompt;
-        switch (determinedLLMType) {
-            case 'combat':
-                prompt = composeCombatPrompt({ storyState, history, userAction, combatType: combatType || 'manual' });
-                break;
-            case 'item':
-                prompt = composeItemPrompt({ storyState, history, userAction, itemInfo });
-                break;
-            case 'quest':
-                prompt = composeQuestPrompt({ storyState, history, userAction });
-                break;
-            case 'story':
-            default:
-                prompt = composeMainStoryPrompt({ storyState, history, userAction });
-                break;
-        }
-
-        try {
-            // 적절한 LLM 호출
-            let routed;
-            switch (determinedLLMType) {
-                case 'combat':
-                    routed = await callCombatLLM(prompt, setRouteStats);
-                    break;
-                case 'item':
-                    routed = await callItemLLM(prompt, setRouteStats);
-                    break;
-                case 'quest':
-                    routed = await callQuestLLM(prompt, setRouteStats);
-                    break;
-                case 'story':
-                default:
-                    routed = await callMainStoryLLM(prompt, setRouteStats);
-                    break;
-            }
-            
-            const parsed = safeParseLLM(routed.raw);
-
-            // 상태/선택지 갱신(2~4개)
-            const nextChoices = parsed.choices.slice(0, 4);
-            setChoices(nextChoices);
-            setStoryState((prev) => {
-                const merged = {
-                    ...prev,
-                    ...parsed.state,
-                    flags: { ...(prev.flags || {}), ...((parsed.state || {}).flags || {}) },
-                };
-                
-                // 퀘스트 수락 처리: availableQuest를 currentQuest로 이동
-                if (parsed.state?.flags?.questAccepted && parsed.state?.availableQuest) {
-                    merged.currentQuest = {
-                        ...parsed.state.availableQuest,
-                        progress: "진행 중"
-                    };
-                    merged.availableQuest = null;
-                    merged.lastEvent = `퀘스트 '${parsed.state.availableQuest.title}' 수락`;
-                }
-                
-                // 퀘스트 거절 처리
-                if (parsed.state?.flags?.questRejected) {
-                    merged.availableQuest = null;
-                    merged.lastEvent = "퀘스트를 거절했다";
-                }
-                
-                return merged;
-            });
-
-            // 로그 추가
-            const assistantEntry = {
-                role: "assistant",
-                text: parsed.narration,
-                provider: routed.provider,
-                model: routed.model,
-                ts: Date.now(),
-            };
-            setHistory((prev) => [...prev, assistantEntry]);
-            await addLogDoc(assistantEntry);
-
-            // 자동 저장 트리거: 전투/퀘 완료 플래그 감지
-            const f = (parsed.state || {}).flags || {};
-            if (f.battleEnded || f.questCompleted) {
-                // 퀘스트 완료 시 메인 스토리에 영향 반영
-                if (f.questCompleted && storyState.currentQuest) {
-                    const completedQuest = storyState.currentQuest;
-                    setStoryState((prev) => ({
-                        ...prev,
-                        recentQuestImpact: {
-                            questTitle: completedQuest.title,
-                            storyImpact: completedQuest.storyImpact || "모험 경험이 쌓였다",
-                            relationshipChanges: completedQuest.relationshipChanges || "없음",
-                            reputationChange: completedQuest.reputationChange || "평범한 모험가"
-                        },
-                        lastEvent: `퀘스트 '${completedQuest.title}' 완료`,
-                        player: {
-                            ...prev.player,
-                            completedQuests: [
-                                ...(prev.player?.completedQuests || []),
-                                completedQuest.title
-                            ]
-                        },
-                        currentQuest: null // 현재 퀘스트 초기화
-                    }));
-                }
-                await saveMeta({ trigger: f.battleEnded ? "battleEnded" : "questCompleted" });
-            }
-
-            // 메타 저장
-            await saveMeta({
-                lastProvider: routed.provider,
-                lastModel: routed.model,
-                lastChoices: nextChoices,
-            });
-        } catch (_) {
-            const failMsg = "요청이 불안정해 장면 생성에 실패했어. 잠시 뒤 다시 시도해줘.";
-            const assistantEntry = {
-                role: "assistant",
-                text: failMsg,
-                provider: "N/A",
-                model: "N/A",
-                ts: Date.now(),
-            };
-            setHistory((prev) => [...prev, assistantEntry]);
-            await addLogDoc(assistantEntry);
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function onChoose(idx) {
-        const choice = choices[idx];
-        if (!choice) return;
-        const userEntry = { role: "user", text: `[선택] ${choice}`, ts: Date.now() };
-        setHistory((prev) => [...prev, userEntry]);
-        await addLogDoc(userEntry);
-        await nextTurn({ userAction: choice });
-    }
-
-    async function onSubmit(e) {
-        e.preventDefault();
-        const val = input.trim();
-        if (!val) return;
-        setInput("");
-        const userEntry = { role: "user", text: val, ts: Date.now() };
-        setHistory((prev) => [...prev, userEntry]);
-        await addLogDoc(userEntry);
-        await nextTurn({ userAction: val });
-    }
-
-    function newSession() {
-        window.localStorage.removeItem("sessionId");
-        const sid = `sess_${Date.now()}`;
-        window.localStorage.setItem("sessionId", sid);
-        setSessionId(sid);
-        setHistory([]);
-        setChoices([]);
-        setStoryState({
-            location: "여관",
-            flags: { started: true },
-            notes: "따뜻한 난로 불빛이 어른거리는 아늑한 여관, 모험의 시작점이다.",
+    } else {
+        const count={ scout:0,repair:0,craft:0,rest:0 };
+        camp.survivors.forEach(s=>{
+            const task=assignments[s.id]; if(!task) return; count[task]=(count[task]||0)+1;
+            if (task==="scout"){ if (Math.random()<0.55){ const g=1+Math.floor(Math.random()*2); camp.resources.water+=g; delta.water+=g; } if (Math.random()<0.35){ camp.resources.food+=1; delta.food+=1; } camp.tempMods.scout+=1; }
+            if (task==="repair"){ if (camp.resources.parts>0){ camp.resources.parts-=1; delta.parts-=1; camp.durability=clamp(camp.durability+3,0,100); delta.durability+=3; } camp.tempMods.repair+=1; }
+            if (task==="craft"){ if (camp.resources.parts>0){ camp.resources.parts-=1; delta.parts-=1; } camp.tempMods.craft+=1; }
+            if (task==="rest"){ const heal=5+Math.floor(Math.random()*6); s.hp=clamp(s.hp+heal,1,100); delta.heal+=heal; camp.tempMods.rest+=1; }
         });
+        summary.push(`배치: 정찰 ${count.scout} · 수리 ${count.repair} · 제작 ${count.craft} · 휴식 ${count.rest}`);
+        if (camp.tempMods.rest>=2){ camp.morale=clamp(camp.morale+1,0,100); delta.morale+=1; }
+    }
+    return { delta, line: summary.join(", ") };
+}
+
+/* ========== LLM 어댑터(브라우저에서 직접 호출) ========== */
+const LLM_TIMEOUT_MS=8000;
+async function withTimeout(promise, ms){
+    let id; const timeout = new Promise((_,rej)=> id=setTimeout(()=>rej(new Error("timeout")), ms));
+    try{ return await Promise.race([promise, timeout]); } finally{ clearTimeout(id); }
+}
+function safeJSON(s){ try{
+    // ```json ... ``` 제거
+    const m = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const raw = m ? m[1] : s;
+    return JSON.parse(raw);
+} catch { return null; } }
+function makeHintLine(tag){
+    const hints={ "의심":"누군가 말하지 않은 것이 있다.","금속음":"밤바람에 금속이 울렸다.","약한 빛":"어둠 사이로 희미한 불빛이 깜빡였다.","낮은 휘파람":"호흡은 일정했고, 발걸음은 더 가벼워졌다.","희미한 열기":"작은 열기만 남아 밤을 버텼다.","끊긴 박동":"소리는 잠깐 멈췄다가 다시 뛰었다." };
+    return hints[tag] || "기록은 아직 끝나지 않았다.";
+}
+const clip=(s,n)=>(s.length>n? s.slice(0,n-1)+"…": s);
+function extraFlavor(season){ if(season==="ice_age")return "찬 기류가 말의 끝을 얼렸다."; if(season==="sandstorm")return "먼지가 혀끝에 달라붙었다."; if(season==="plague")return "뿌연 냄새가 숨을 얕게 만들었다."; return "바람은 방향을 바꾸지 않았다."; }
+
+async function llmEventsDirect(ctx,cfg){
+    const keys=[GEMINI_MAIN, GEMINI_BACKUP].filter(Boolean);
+    const want = cfg.costProfile==="rich"?3:2;
+    const prompt = [
+        "역할: 생존 캠프 밤 사건 작가. 건조한 관찰자 톤.",
+        `제약: 문장 2개, 150자 내. 길이=${cfg.costProfile}.`,
+        `컨텍스트: 시즌=${cfg.season}, 자원=${JSON.stringify(ctx.resources)}, 사기=${ctx.morale}, 날씨=${ctx.weather}, 특성=${JSON.stringify(ctx.survivors.flatMap(s=>s.traits).slice(0,2))}.`,
+        `복선 강도=${cfg.narrative.foreshadow}, 금칙 태그=${(cfg.advanced.banTags||[]).join(",")||"없음"}.`,
+        `출력 JSON: { "events":[ { "id":"...", "title":"...", "narration":"...", "foreshadow":"...", "options":[{"key":"A","label":"..."},{"key":"B","label":"..."}] } ... ] }`,
+        `개수: ${want}`
+    ].join("\n");
+
+    for (const key of keys){
+        try{
+            const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
+            const r = await withTimeout(fetch(endpoint,{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ contents:[{ parts:[{ text: prompt }] }] }) }), LLM_TIMEOUT_MS);
+            const data=await r.json();
+            const text=data?.candidates?.[0]?.content?.parts?.[0]?.text||"";
+            const parsed=safeJSON(text);
+            if (parsed?.events?.length) return parsed.events;
+        }catch(e){ /* try backup */ }
     }
 
-    // 반응형 스타일
-    const styles = {
-        app: {
-            height: "100vh",
-            width: "100vw",
-            display: "flex",
-            flexDirection: "column",
-            background: "#0b0f14",
-            color: "#f1f5f9",
-            fontFamily:
-                '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans KR","Apple SD Gothic Neo",sans-serif',
-            overflow: "hidden",
-        },
-        header: {
-            padding: isMobile ? "8px 12px" : "12px 16px",
-            borderBottom: "1px solid #1f2937",
-            display: "flex",
-            alignItems: "center",
-            gap: isMobile ? 8 : 12,
-            flexWrap: "wrap",
-            fontSize: isMobile ? 14 : 16,
-            minHeight: isMobile ? "auto" : "60px",
-        },
-        badge: {
-            fontSize: isMobile ? 11 : 12,
-            background: "#1f2937",
-            padding: isMobile ? "3px 6px" : "4px 8px",
-            borderRadius: 6,
-            whiteSpace: isMobile ? "nowrap" : "normal",
-            overflow: isMobile ? "hidden" : "visible",
-            textOverflow: isMobile ? "ellipsis" : "clip",
-        },
-        main: {
-            flex: 1,
-            display: "flex",
-            flexDirection: isMobile ? "column" : "row",
-            minHeight: 0,
-            overflow: "hidden",
-        },
-        log: {
-            flex: 1,
-            padding: isMobile ? 12 : 16,
-            overflowY: "auto",
-            lineHeight: 1.6,
-            fontSize: isMobile ? 14 : 16,
-        },
-        bubbleUser: {
-            background: "#1f2937",
-            borderRadius: 8,
-            padding: isMobile ? "10px 14px" : "8px 12px",
-            margin: isMobile ? "8px 0" : "6px 0",
-            alignSelf: "flex-end",
-            maxWidth: isMobile ? "90%" : 720,
-            fontSize: isMobile ? 15 : 14,
-        },
-        bubbleAi: {
-            background: "#111827",
-            borderRadius: 8,
-            padding: isMobile ? "12px 14px" : "10px 12px",
-            margin: isMobile ? "10px 0" : "8px 0",
-            maxWidth: isMobile ? "95%" : 800,
-            whiteSpace: "pre-wrap",
-            fontSize: isMobile ? 15 : 14,
-            lineHeight: isMobile ? 1.5 : 1.4,
-        },
-        footer: {
-            borderTop: "1px solid #1f2937",
-            padding: isMobile ? 8 : 12,
-            display: isMobile ? "flex" : "grid",
-            flexDirection: isMobile ? "column" : undefined,
-            gridTemplateColumns: isMobile ? undefined : isTablet ? "1fr 300px" : "1fr 360px",
-            gap: isMobile ? 8 : 12,
-            alignItems: "start",
-            maxHeight: isMobile ? "50vh" : "auto",
-            overflow: isMobile ? "hidden" : "visible",
-        },
-        choicePanel: {
-            background: "#0f172a",
-            border: "1px solid #1f2937",
-            borderRadius: 10,
-            padding: isMobile ? 8 : 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: isMobile ? 6 : 8,
-            position: "sticky",
-            bottom: isMobile ? 0 : 12,
-            maxHeight: isMobile ? "40vh" : "auto",
-            overflowY: isMobile ? "auto" : "visible",
-        },
-        auxRow: {
-            display: "flex",
-            gap: 8,
-            marginBottom: 4,
-            flexWrap: "wrap",
-        },
-        auxBtn: {
-            background: "#0b1220",
-            border: "1px solid #233046",
-            color: "#e5e7eb",
-            padding: isMobile ? "8px 12px" : "6px 8px",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: isMobile ? 14 : 12,
-            minHeight: isMobile ? "36px" : "auto",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-        },
-        choiceBtn: {
-            background: "#111827",
-            border: "1px solid #374151",
-            color: "#e5e7eb",
-            padding: isMobile ? "12px 14px" : "10px 12px",
-            borderRadius: 8,
-            cursor: "pointer",
-            textAlign: "left",
-            fontSize: isMobile ? 16 : 14,
-            minHeight: isMobile ? "48px" : "auto",
-            display: "flex",
-            alignItems: "center",
-        },
-        form: {
-            display: "flex",
-            gap: 8,
-        },
-        input: {
-            flex: 1,
-            background: "#0f172a",
-            border: "1px solid #1f2937",
-            color: "#e5e7eb",
-            borderRadius: 8,
-            padding: isMobile ? "14px 16px" : "12px 14px",
-            outline: "none",
-            fontSize: isMobile ? 16 : 14,
-            minHeight: isMobile ? "48px" : "auto",
-        },
-        send: {
-            background: busy ? "#334155" : "#22c55e",
-            border: "none",
-            color: "#0b0f14",
-            padding: isMobile ? "14px 20px" : "0 16px",
-            borderRadius: 8,
-            cursor: busy ? "not-allowed" : "pointer",
-            fontWeight: 700,
-            fontSize: isMobile ? 16 : 14,
-            minHeight: isMobile ? "48px" : "auto",
-            minWidth: isMobile ? "80px" : "auto",
-        },
-        metaRow: {
-            display: "flex",
-            gap: 8,
-            fontSize: 12,
-            color: "#94a3b8",
-            marginTop: 4,
-            flexWrap: "wrap",
-        },
-        summaryBox: {
-            fontSize: 12,
-            color: "#9ca3af",
-            background: "#0b1220",
-            border: "1px solid #233046",
-            padding: "8px",
-            borderRadius: 6,
-        },
-        grow: {
-            flexGrow: 1,
-        },
-        moreBtn: {
-            background: "#0b1220",
-            border: "1px solid #233046",
-            color: "#cbd5e1",
-            padding: isMobile ? "10px 14px" : "6px 10px",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: isMobile ? 14 : 12,
-            marginBottom: isMobile ? 12 : 8,
-            minHeight: isMobile ? "40px" : "auto",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-        },
+    if (GROQ_KEY){
+        try{
+            const body={
+                model:"llama3-70b-8192",
+                messages:[
+                    { role:"system", content:"역할: 생존 캠프 밤 사건 작가. 건조하고 간결한 3인칭 관찰자. 출력은 JSON만." },
+                    { role:"user", content: prompt }
+                ],
+                temperature:0.7, max_tokens:300
+            };
+            const r=await withTimeout(fetch("https://api.groq.com/openai/v1/chat/completions",{ method:"POST", headers:{ "Content-Type":"application/json", Authorization:`Bearer ${GROQ_KEY}` }, body:JSON.stringify(body) }), LLM_TIMEOUT_MS);
+            const data=await r.json(); const text=data?.choices?.[0]?.message?.content||""; const parsed=safeJSON(text);
+            if (parsed?.events?.length) return parsed.events;
+        }catch(e){ /* ignore */ }
+    }
+    throw new Error("llm_direct_failed");
+}
+
+async function llmResolveDirect({ event, pickedKey, res, cfg }){
+    const change = Object.entries(res.delta||{}).filter(([,v])=>v).map(([k,v])=>`${k} ${v>0?"+":""}${v}`).join(", ");
+    const basePrompt=[
+        "역할: 생존 캠프 사건 결과 요약가. 건조한 관찰자 톤.",
+        "제약: 2문장 이내, 150자 내. 과장 금지.",
+        `입력: {id:${event.id}, title:${event.title}, 선택:${pickedKey}, 성공:${res.success}, 확률:${Math.round(res.successChance*100)}%, 변화:[${change}], 부상:${(res.injuredNames||[]).join(",")||"없음"}, 톤:${cfg.narrative.tone}, 복선:${cfg.narrative.foreshadow}}`,
+        '출력: { "summary": "문장" }'
+    ].join("\n");
+
+    const keys=[GEMINI_MAIN, GEMINI_BACKUP].filter(Boolean);
+    for (const key of keys){
+        try{
+            const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
+            const r=await withTimeout(fetch(endpoint,{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ contents:[{ parts:[{ text: basePrompt }] }] }) }), LLM_TIMEOUT_MS);
+            const data=await r.json(); const text=data?.candidates?.[0]?.content?.parts?.[0]?.text||""; const parsed=safeJSON(text);
+            if (parsed?.summary) return parsed.summary;
+        }catch(e){ /* try backup */ }
+    }
+
+    if (GROQ_KEY){
+        try{
+            const body={ model:"llama3-70b-8192", messages:[ {role:"system", content:"역할: 생존 캠프 사건 결과 요약가. JSON만."}, {role:"user", content: basePrompt} ], temperature:0.4, max_tokens:160 };
+            const r=await withTimeout(fetch("https://api.groq.com/openai/v1/chat/completions",{ method:"POST", headers:{ "Content-Type":"application/json", Authorization:`Bearer ${GROQ_KEY}` }, body:JSON.stringify(body) }), LLM_TIMEOUT_MS);
+            const data=await r.json(); const text=data?.choices?.[0]?.message?.content||""; const parsed=safeJSON(text);
+            if (parsed?.summary) return parsed.summary;
+        }catch(e){ /* ignore */ }
+    }
+    throw new Error("llm_direct_failed");
+}
+
+/* ========== 후보/결과 생성 래퍼(LLM/템플릿) ========== */
+function postProcessEvents(events,cfg,ctx){
+    const banned=new Set((cfg.advanced.banTags||[]).map(String));
+    const filtered=events.filter(ev=>!banned.has(ev.foreshadow));
+    const final=filtered.length?filtered:events;
+    final.forEach(ev=>{
+        if (cfg.narrative.tone==="omniscient_hint" && cfg.narrative.foreshadow!=="low") ev.narration=`${ev.narration} ${makeHintLine(ev.foreshadow||"약한 빛")}`;
+        if (cfg.costProfile==="frugal") ev.narration=clip(ev.narration,120);
+        else if (cfg.costProfile==="rich") ev.narration=`${ev.narration} ${extraFlavor(cfg.season)}`;
+    });
+    return final;
+}
+function templateEvents(ctx,rng,cfg){
+    const want=cfg.costProfile==="rich"?3:2;
+    const cooldown={low:1,normal:2,high:3}[cfg.advanced.eventCooldown]??2;
+    const recentSet=new Set((ctx.recentEventIds||[]).slice(-cooldown));
+    const recentCats=ctx.recentCats||[];
+    const pool=TEMPLATES
+        .filter(t=>!recentSet.has(t.id))
+        .map(t=>{ let w=t.pickWeight + rng()*0.5; if (recentCats.includes(t.cat)) w-=0.3; return {t,w}; })
+        .sort((a,b)=>b.w-a.w);
+    const chosen=pool.slice(0,want).map(x=>x.t.gen(ctx));
+    return postProcessEvents(chosen,cfg,ctx);
+}
+async function generateEventCandidates(ctx,rng,cfg){
+    if (cfg?.advanced?.llm){
+        try{ const events=await llmEventsDirect(ctx,cfg); return postProcessEvents(events,cfg,ctx); }
+        catch(e){ console.warn("LLM 후보 실패 → 템플릿 폴백", e); }
+    }
+    return templateEvents(ctx,rng,cfg);
+}
+function localSummary(event,pickedKey,res,cfg){
+    const change=[]; const d=res.delta;
+    if (d.food) change.push(`식량 ${d.food>0?"+":""}${d.food}`);
+    if (d.water) change.push(`물 ${d.water>0?"+":""}${d.water}`);
+    if (d.parts) change.push(`부품 ${d.parts>0?"+":""}${d.parts}`);
+    if (d.fuel) change.push(`연료 ${d.fuel>0?"+":""}${d.fuel}`);
+    if (d.durability) change.push(`내구도 ${d.durability>0?"+":""}${d.durability}`);
+    if (d.morale) change.push(`사기 ${d.morale>0?"+":""}${d.morale}`);
+    const inj=res.injuredNames.length?`부상: ${res.injuredNames.join(", ")}`:"";
+    const tail=change.length?`(${change.join(", ")})`:"";
+    let line=`${res.success?"성공":"실패"}. ${inj} ${tail}`.trim();
+    if (cfg.narrative.tone==="omniscient_hint" && cfg.narrative.foreshadow==="high") line+=` ${makeHintLine("약한 빛")}`;
+    return line;
+}
+async function narrateResolution(event,pickedKey,res,cfg){
+    if (cfg?.advanced?.llm){
+        try{ return await llmResolveDirect({ event, pickedKey, res, cfg }); }
+        catch(e){ console.warn("LLM 결과 실패 → 로컬 요약 폴백", e); }
+    }
+    return localSummary(event,pickedKey,res,cfg);
+}
+
+/* ========== 텔레메트리(콘솔) ========== */
+function track(ev,p){ console.log("[telemetry]", ev, p); }
+
+/* ========== 앱 루트 ========== */
+export default function App(){
+    const [config,setConfig]=useState(load(LS_CFG)||null);
+    const [started,setStarted]=useState(!!load(LS_RUN));
+    const startRun=(cfg)=>{
+        const seed=(cfg.advanced.seed?.trim()||makeSeed(cfg)).toUpperCase();
+        const rng=rngFromSeed(seed);
+        const camp=makeInitialCamp({ ...cfg, advanced:{ ...cfg.advanced, seed } }, rng);
+        const run={ cfg:{ ...cfg, advanced:{ ...cfg.advanced, seed } }, rngSeed:seed, camp, phase:"day", dayLog:[], currentEvents:[], picked:null, resolution:null };
+        save(LS_CFG, run.cfg); save(LS_RUN, run); setConfig(run.cfg); setStarted(true);
+        track("start_run", { seed, cfg:{ ...cfg, advanced:undefined } });
+    };
+    if (!started || !load(LS_RUN)) return <InitialSetup initial={load(LS_CFG)||defaultConfig} onStart={startRun} />;
+    return <Game onExit={()=>setStarted(false)} />;
+}
+
+/* ========== 게임 화면 ========== */
+function Game({ onExit }){
+    const [run,setRun]=useState(load(LS_RUN));
+    const rng=useMemo(()=>rngFromSeed(run.rngSeed),[run.rngSeed]);
+    const [assignments,setAssignments]=useState({});
+    const canChoose = run.phase==="night" && !run.picked && (run.currentEvents?.length>0);
+
+    useEffect(()=>{
+        const h=(e)=>{
+            if (["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+            if (e.code==="Space"){ e.preventDefault(); nextPhase(); }
+            if (canChoose && ["Digit1","Digit2","Digit3"].includes(e.code)){
+                const idx=Number(e.code.slice(-1))-1;
+                const ev=run.currentEvents[idx];
+                if (ev){ const key=e.shiftKey?"B":"A"; pickOption(ev,key); }
+            }
+        };
+        window.addEventListener("keydown", h);
+        return ()=>window.removeEventListener("keydown", h);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [run, canChoose]);
+
+    const nextPhase=()=>{ setRun(prev=>{
+        const cur=sclone(prev);
+        if (cur.phase==="day"){
+            const dayRes=processDay(cur.camp, cur.cfg, rng, assignments);
+            cur.dayLog.push({ day:cur.camp.day, kind:"day", summary:`낮 정리: ${dayRes.line}` });
+            if (assignments && Object.keys(assignments).length){ cur.dayLog.push({ day:cur.camp.day, kind:"day_note", summary:"배치 확정" }); }
+            setAssignments({}); cur.phase="dusk";
+        } else if (cur.phase==="dusk"){
+            const ctx={ ...cur.camp, season:cur.cfg.season };
+            cur.currentEvents=[]; cur.phase="night";
+            (async ()=>{
+                const events=await generateEventCandidates(ctx, rng, cur.cfg);
+                setRun(prev2=>{
+                    const copy=sclone(prev2);
+                    if (copy.camp.day===cur.camp.day && copy.phase==="night" && !copy.picked){ copy.currentEvents=events; save(LS_RUN, copy); return copy; }
+                    return prev2;
+                });
+            })();
+        } else if (cur.phase==="night"){
+            if (!cur.picked) return cur;
+            cur.phase="dawn";
+        } else if (cur.phase==="dawn"){
+            const last=cur.dayLog.filter(l=>l.event).at(-1);
+            const eid=last?.event?.id; const ecat=last?.eventCat;
+            if (eid) cur.camp.recentEventIds=[...(cur.camp.recentEventIds||[]), eid].slice(-3);
+            if (ecat) cur.camp.recentCats=[...(cur.camp.recentCats||[]), ecat].slice(-2);
+            cur.camp.tempMods={ scout:0, repair:0, craft:0, rest:0 };
+            cur.camp.day+=1;
+            cur.phase="day"; cur.currentEvents=[]; cur.picked=null; cur.resolution=null;
+        }
+        save(LS_RUN, cur); return cur;
+    }); };
+
+    const pickOption=async(event,key)=>{
+        setRun(prev=>{
+            const cur=sclone(prev);
+            const res=computeResolution(cur.camp, cur.cfg, event, key, rng);
+            cur.dayLog=[...cur.dayLog, { day:cur.camp.day, event, eventCat:TEMPLATES.find(t=>t.id===event.id)?.cat||null, picked:key, success:res.success, successChance:res.successChance, delta:res.delta, injured:res.injuredNames, summary:"결과 생성 중..." }];
+            cur.camp=res.nextCamp; cur.picked={ eventId:event.id, key }; cur.resolution={ summary:"결과 생성 중...", success:res.success };
+            save(LS_RUN, cur); return cur;
+        });
+        const latest=load(LS_RUN); const idx=latest.dayLog.length-1;
+        // 재계산 없이 이전 결과를 그대로 사용해도 무방하지만, 표시 일관성 위해 로컬 요약만 재사용
+        const lastEntry=latest.dayLog[idx];
+        const summary=await narrateResolution(event, key, { success:lastEntry.success, successChance:lastEntry.successChance, delta:lastEntry.delta, injuredNames:lastEntry.injured }, latest.cfg);
+        setRun(prev=>{ const cur=sclone(prev); if (cur.dayLog[idx]) cur.dayLog[idx].summary=summary; if (cur.resolution) cur.resolution.summary=summary; save(LS_RUN, cur); return cur; });
     };
 
+    const resetRun=()=>{ if (run.cfg.advanced.ironman){ alert("철인 모드: 런 중 리셋 불가입니다."); return; } if (!window.confirm("정말 런을 초기화할까요?")) return; localStorage.removeItem(LS_RUN); onExit(); };
+    const backToSetup=()=>{ if (run.cfg.advanced.ironman){ alert("철인 모드: 런 중 설정 화면으로 돌아갈 수 없습니다."); return; } onExit(); };
+
     return (
-        <div style={styles.app} className={isMobile ? "mobile-viewport-fix" : ""}>
-            <header style={styles.header}>
-                <div style={{ fontWeight: 800 }}>TEXT LLM</div>
-                {!isMobile && <div style={styles.badge}>세션: {sessionId}</div>}
-                {!isMobile && (
-                    <div style={styles.badge}>
-                        최근 라우팅: {routeStats.last} / M:{routeStats.geminiMain} · B:{routeStats.geminiBackup} · G:{routeStats.groq}
-                    </div>
-                )}
-                {!isMobile && (
-                    <div style={styles.badge}>
-                        지연: {routeStats.lastLatencyMs || 0}ms / 사유: {routeStats.lastReason || "-"}
-                    </div>
-                )}
-                {busy ? <div style={styles.badge}>생성 중...</div> : null}
-                <div style={styles.grow} />
-                <button
-                    onClick={newSession}
-                    style={{
-                        background: "#0ea5e9",
-                        color: "#0b0f14",
-                        border: "none",
-                        padding: isMobile ? "10px 14px" : "8px 12px",
-                        borderRadius: 8,
-                        cursor: "pointer",
-                        fontWeight: 700,
-                        fontSize: isMobile ? 14 : 13,
-                        minHeight: isMobile ? "40px" : "auto",
-                    }}
-                >
-                    {isMobile ? "새 세션" : "새 세션 시작"}
-                </button>
-            </header>
+        <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr", gap:16, padding:16, fontFamily:"system-ui, sans-serif" }}>
+            <div>
+                <Header run={run} onExit={backToSetup} onReset={resetRun} />
+                <Section title="기록"><LogView dayLog={run.dayLog} /></Section>
 
-            <main style={styles.main}>
-                <div style={{ padding: isMobile ? 12 : 16 }}>
-                    {hasMore ? (
-                        <button onClick={loadMoreOlder} style={styles.moreBtn} disabled={busy}>
-                            {isMobile ? "이전 로그" : "이전 로그 더 보기"}
-                        </button>
-                    ) : (
-                        <div style={{ 
-                            fontSize: isMobile ? 11 : 12, 
-                            color: "#64748b", 
-                            marginBottom: isMobile ? 6 : 8,
-                            textAlign: isMobile ? "center" : "left"
-                        }}>
-                            {isMobile ? "모든 로그 로드됨" : "모든 로그를 불러왔어요"}
+                {run.phase==="day" && (
+                    <Section title="낮 배치">
+                        <DayAssignments camp={run.camp} assignments={assignments} onChange={setAssignments} locked={false} />
+                        <div style={{ marginTop:8, display:"flex", gap:8 }}>
+                            <button onClick={nextPhase} style={btn()}>배치 확정 후 황혼으로</button>
+                            <small style={{ opacity:0.7 }}>Tip: 확정 안 해도 스페이스로 진행돼요.</small>
                         </div>
+                    </Section>
+                )}
+
+                <Section title="밤 사건">
+                    {run.phase==="night" && (
+                        <>
+                            {!run.currentEvents.length && !run.picked && <p>사건을 준비 중...</p>}
+                            {run.currentEvents.length>0 && !run.picked && <EventChoices events={run.currentEvents} onPick={pickOption} />}
+                            {run.picked && run.resolution && <ResolutionView resolution={run.resolution} />}
+                        </>
                     )}
-                </div>
-                <div style={styles.log} ref={logRef} className="touch-scroll">
-                    {history.map((h, i) =>
-                        h.role === "user" ? (
-                            <div key={i} style={styles.bubbleUser}>{h.text}</div>
-                        ) : (
-                            <div key={i} style={styles.bubbleAi}>
-                                {h.text}
-                                <div style={styles.metaRow}>
-                                    <span>by {h.provider}</span>
-                                    {h.model ? <span>· {h.model}</span> : null}
-                                </div>
-                            </div>
-                        )
-                    )}
-                </div>
-            </main>
+                    {run.phase!=="night" && <p style={{ opacity:0.8 }}>다음 단계로 진행해요.</p>}
+                </Section>
+            </div>
 
-            <footer style={styles.footer}>
-                <form onSubmit={onSubmit} style={styles.form}>
-                    <input
-                        style={styles.input}
-                        placeholder={isMobile ? "자유 행동 입력..." : "자유 행동을 입력해 모험을 이끌어봐 (예: '안개 속 노랫소리를 따라간다')"}
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        disabled={busy}
-                    />
-                    <button style={styles.send} disabled={busy}>전송</button>
-                </form>
-
-                <div style={styles.choicePanel}>
-                    <div style={styles.auxRow}>
-                        <button style={styles.auxBtn} onClick={() => setShowPrev((v) => !v)} disabled={busy}>
-                            이전 장면 보기
-                        </button>
-                        <div style={styles.summaryBox}>한 줄 요약: {cachedSummary}</div>
-                    </div>
-
-                    {showPrev ? (
-                        <div style={{ ...styles.summaryBox, marginBottom: 4 }}>{previousScene}</div>
-                    ) : null}
-
-                    <div style={{ 
-                        fontSize: isMobile ? 11 : 12, 
-                        color: "#94a3b8", 
-                        marginBottom: 4,
-                        textAlign: isMobile ? "center" : "left"
-                    }}>
-                        {isMobile ? "선택지" : "선택지 (숫자 1/2/3/4 단축키 지원)"}
-                    </div>
-                    {choices && choices.length > 0 ? (
-                        choices.map((c, idx) => (
-                            <button key={idx} style={styles.choiceBtn} onClick={() => onChoose(idx)} disabled={busy}>
-                                {idx + 1}. {c}
-                            </button>
-                        ))
-                    ) : (
-                        <div style={{ color: "#64748b", fontSize: 13 }}>
-                            선택지가 준비되는 중이야. 잠시만...
-                        </div>
-                    )}
-                </div>
-            </footer>
+            <aside style={{ display:"grid", gap:12 }}>
+                <Section title="캠프 상태"><CampStatus camp={run.camp} /></Section>
+                <Section title="조작">
+                    <button onClick={nextPhase} style={btn()}>
+                        {run.phase==="day" && "황혼으로(스페이스)"}
+                        {run.phase==="dusk" && "밤으로(스페이스)"}
+                        {run.phase==="night" && (run.picked? "새벽으로(스페이스)" : "선택이 필요합니다(1/2/3)")}
+                        {run.phase==="dawn" && "다음 날(스페이스)"}
+                    </button>
+                    <small style={{ opacity:0.7, display:"block", marginTop:6 }}>페이즈: {run.phase} · 시드: {run.rngSeed}</small>
+                    <ToneQuickEdit cfg={run.cfg} />
+                </Section>
+            </aside>
         </div>
     );
 }
+
+/* ========== 하위 컴포넌트 ========== */
+function Header({ run, onExit, onReset }){
+    return (
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:8 }}>
+            <h2 style={{ margin:0 }}>생존 캠프 연대기</h2>
+            <div style={{ display:"flex", gap:8 }}>
+                <button onClick={onExit} style={btnGhost()} disabled={run.cfg.advanced.ironman} title={run.cfg.advanced.ironman?"철인 모드에서는 제한됩니다":""}>설정으로</button>
+                <button onClick={onReset} style={btnGhost()} disabled={run.cfg.advanced.ironman} title={run.cfg.advanced.ironman?"철인 모드에서는 제한됩니다":""}>런 초기화</button>
+            </div>
+        </div>
+    );
+}
+function Section({ title, children }){ return <div style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:12 }}><div style={{ fontWeight:600, marginBottom:8 }}>{title}</div>{children}</div>; }
+function LogView({ dayLog }){
+    const ref=useRef(null);
+    useEffect(()=>{ if (ref.current) ref.current.scrollTop=ref.current.scrollHeight; }, [dayLog]);
+    return (
+        <div ref={ref} style={{ height:260, overflow:"auto", paddingRight:6 }}>
+            {dayLog.length===0 && <p style={{ opacity:0.7 }}>아직 기록이 없습니다.</p>}
+            {dayLog.map((l,i)=>(
+                <div key={i} style={{ marginBottom:8 }}>
+                    {l.kind==="day"? (
+                        <>
+                            <div style={{ fontWeight:600 }}>Day {l.day} · 낮 보고</div>
+                            <div>{l.summary}</div>
+                        </>
+                    ): l.event ? (
+                        <>
+                            <div style={{ fontWeight:600 }}>Day {l.day} · {l.event.title}</div>
+                            <div style={{ opacity:0.85 }}>{l.event.narration}</div>
+                            <div style={{ marginTop:4 }}><span style={{ fontSize:12, opacity:0.75 }}>선택: {l.picked} · {Math.round(l.successChance*100)}% → {l.success?"성공":"실패"}</span></div>
+                            <div style={{ marginTop:2 }}>{l.summary}</div>
+                        </>
+                    ) : (
+                        <>
+                            <div style={{ fontWeight:600 }}>Day {l.day} · 메모</div>
+                            <div>{l.summary}</div>
+                        </>
+                    )}
+                    <hr style={{ border:0, borderTop:"1px solid #eee", marginTop:8 }} />
+                </div>
+            ))}
+        </div>
+    );
+}
+function EventChoices({ events, onPick }){
+    return (
+        <div style={{ display:"grid", gap:12 }}>
+            {events.map((ev,idx)=>(
+                <div key={ev.id} style={{ border:"1px solid #ddd", borderRadius:8, padding:12 }}>
+                    <div style={{ fontWeight:600, marginBottom:4 }}>{idx+1}. {ev.title}</div>
+                    <TypeLine text={ev.narration} />
+                    <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
+                        {ev.options.map(opt=>(
+                            <button key={opt.key} onClick={()=>onPick(ev,opt.key)} style={btn()}>
+                                {opt.key}. {opt.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div style={{ opacity:0.7, fontSize:12, marginTop:4 }}>
+                        위험: {ev.options.map(o=>`${o.key}:${o.risk}`).join(" · ")}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+function ResolutionView({ resolution }){ return <div style={{ padding:12, border:"1px dashed #bbb", borderRadius:8 }}><div style={{ fontWeight:600, marginBottom:4 }}>결과</div><TypeLine text={resolution.summary} /></div>; }
+function CampStatus({ camp }){
+    const R=camp.resources; const pill=(v)=>({ padding:"2px 8px", borderRadius:999, border:"1px solid #ddd", background: v<5?"#fff0f0": v<10?"#fff8e5":"#f3f4f6" });
+    return (
+        <div style={{ display:"grid", gap:8 }}>
+            <div>Day {camp.day} · 날씨: {camp.weather}</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                <span style={pill(R.food)}>식량 {R.food}</span>
+                <span style={pill(R.water)}>물 {R.water}</span>
+                <span style={pill(R.fuel)}>연료 {R.fuel}</span>
+                <span style={pill(R.parts)}>부품 {R.parts}</span>
+            </div>
+            <div>사기 {camp.morale} · 내구도 {camp.durability}</div>
+            <div>생존자({camp.survivors.length})
+                <ul style={{ margin:"6px 0 0 16px" }}>
+                    {camp.survivors.map(s=>(
+                        <li key={s.id} style={{ opacity: s.hp<40?0.85:1 }}>{s.name} · {s.role} · HP {s.hp} · {s.traits.join(", ")}</li>
+                    ))}
+                </ul>
+            </div>
+        </div>
+    );
+}
+
+function DayAssignments({ camp, assignments, onChange, locked }){
+    const tasks = [
+        { value: "", label: "-" },
+        { value: "scout", label: "정찰" },
+        { value: "repair", label: "수리" },
+        { value: "craft", label: "제작" },
+        { value: "rest", label: "휴식" }
+    ];
+    const setTask = (id, val) => {
+        const next = { ...(assignments || {}) };
+        if (!val) delete next[id]; else next[id] = val;
+        if (onChange) onChange(next);
+    };
+    if (!camp) return null;
+    return (
+        <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {camp.survivors.map(s => (
+                    <div key={s.id} style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 10px" }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>{s.name} · {s.role}</div>
+                        <select
+                            value={(assignments && assignments[s.id]) || ""}
+                            onChange={e => setTask(s.id, e.target.value)}
+                            disabled={locked}
+                        >
+                            {tasks.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                    </div>
+                ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button onClick={() => onChange && onChange({})} style={btnGhost()} disabled={locked}>모두 해제</button>
+                <small style={{ opacity: 0.7 }}>작업: 정찰=물/식량 수집, 수리=내구 회복(부품 소모), 제작=소규모 보정, 휴식=HP 회복</small>
+            </div>
+        </div>
+    );
+}
+
+function ToneQuickEdit({ cfg }){
+    const [cur,setCur]=useState(cfg); useEffect(()=>setCur(cfg),[cfg]);
+    const updateTone=(key,val)=>{ const run=load(LS_RUN); if (!run) return; const next=sclone(run); next.cfg.narrative[key]=val; save(LS_RUN,next); window.location.reload(); };
+    return (
+        <div style={{ display:"grid", gap:6 }}>
+            <label style={{ fontSize:12, opacity:0.8 }}>톤/복선(런 중 일부 변경 가능)</label>
+            <select value={cur.narrative.tone} onChange={e=>updateTone("tone", e.target.value)}>
+                <option value="observer">담담한 관찰자</option>
+                <option value="omniscient_hint">전지적 독자 감성</option>
+                <option value="dry_log">드라이 로그</option>
+            </select>
+            <select value={cur.narrative.foreshadow} onChange={e=>updateTone("foreshadow", e.target.value)}>
+                <option value="low">복선 낮음</option>
+                <option value="medium">복선 보통</option>
+                <option value="high">복선 높음</option>
+            </select>
+        </div>
+    );
+}
+function TypeLine({ text }){
+    const [shown,setShown]=useState(""); const once=useRef(false);
+    useEffect(()=>{ if (once.current){ setShown(text); return; } once.current=true; let i=0; const n=Math.min(text.length,140); const iv=Math.max(8, Math.floor(900/n)); const h=setInterval(()=>{ i++; setShown(text.slice(0,i)); if (i>=text.length) clearInterval(h); }, iv); return ()=>clearInterval(h); }, [text]);
+    return <p style={{ margin:0 }}>{shown}</p>;
+}
+
+/* ========== 초기 설정 화면 ========== */
+function InitialSetup({ initial, onStart }){
+    const [cfg,setCfg]=useState(initial);
+    const [shareCode,setShareCode]=useState("");
+
+    const preview=useMemo(()=>{
+        const diff={casual:0.15, standard:0, hard:-0.15}[cfg.difficulty]||0;
+        const traits=(cfg.campTraits?.length||0)*0.05;
+        const tempo={short:0.03, normal:0, long:-0.02}[cfg.tempo]||0;
+        const avgSuccess=Math.round((0.55+diff+traits+tempo)*100);
+        return { avgSuccess, earlyDays: avgSuccess>=60?"완만": avgSuccess>=50?"보통":"험난", cost:{ frugal:"낮음", balanced:"보통", rich:"높음" }[cfg.costProfile] };
+    }, [cfg]);
+
+    const set=(path,value)=>{
+        setCfg(prev=>{
+            const next=sclone(prev);
+            const parts=path.split("."); let cur=next;
+            for (let i=0;i<parts.length-1;i++) cur=cur[parts[i]];
+            cur[parts.at(-1)]=value;
+            return next;
+        });
+    };
+    const start=()=>onStart({ ...cfg, createdAt: Date.now() });
+    const copyShare=()=>{ const code=encodePreset(cfg); navigator.clipboard?.writeText(code); alert("공유 코드가 복사되었습니다."); };
+    const importShare=()=>{ const obj=decodePreset(shareCode.trim()); if (!obj){ alert("코드 형식이 올바르지 않습니다."); return; } setCfg(obj); };
+
+    return (
+        <div style={{ maxWidth:980, margin:"0 auto", padding:16, display:"grid", gap:12, fontFamily:"system-ui, sans-serif" }}>
+            <h2 style={{ margin:"4px 0 12px" }}>새 런 설정</h2>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <button onClick={()=>setCfg(defaultConfig)} style={btn()}>빠르게 시작(권장)</button>
+                <button onClick={()=>set("difficulty","casual")} style={btnGhost()}>캐주얼</button>
+                <button onClick={()=>set("difficulty","hard")} style={btnGhost()}>하드</button>
+                <button onClick={()=>set("season","ice_age")} style={btnGhost()}>빙하기 시즌</button>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <Field label="게임 모드">
+                    <select value={cfg.mode} onChange={e=>set("mode", e.target.value)}>
+                        <option value="standard">표준 캠프</option>
+                        <option value="hardcore">하드코어(세이브 제한)</option>
+                        <option value="sandbox">샌드박스</option>
+                    </select>
+                </Field>
+
+                <Field label="세계관·시즌">
+                    <select value={cfg.season} onChange={e=>set("season", e.target.value)}>
+                        <option value="ruin">근미래 폐허</option>
+                        <option value="ice_age">빙하기</option>
+                        <option value="sandstorm">사막화</option>
+                        <option value="plague">전염병</option>
+                    </select>
+                </Field>
+
+                <Field label="난이도">
+                    <select value={cfg.difficulty} onChange={e=>set("difficulty", e.target.value)}>
+                        <option value="casual">캐주얼</option>
+                        <option value="standard">표준</option>
+                        <option value="hard">하드</option>
+                    </select>
+                </Field>
+
+                <Field label="진행 템포">
+                    <select value={cfg.tempo} onChange={e=>set("tempo", e.target.value)}>
+                        <option value="short">짧게</option>
+                        <option value="normal">보통</option>
+                        <option value="long">길게</option>
+                    </select>
+                </Field>
+
+                <Field label="사건 톤">
+                    <select value={cfg.narrative.tone} onChange={e=>set("narrative.tone", e.target.value)}>
+                        <option value="observer">담담한 관찰자</option>
+                        <option value="omniscient_hint">전지적 독자 감성</option>
+                        <option value="dry_log">드라이 로그</option>
+                    </select>
+                </Field>
+
+                <Field label="복선 강도">
+                    <select value={cfg.narrative.foreshadow} onChange={e=>set("narrative.foreshadow", e.target.value)}>
+                        <option value="low">낮음</option>
+                        <option value="medium">보통</option>
+                        <option value="high">높음</option>
+                    </select>
+                </Field>
+
+                <Field label="비용·퍼포먼스">
+                    <select value={cfg.costProfile} onChange={e=>set("costProfile", e.target.value)}>
+                        <option value="frugal">절약</option>
+                        <option value="balanced">균형</option>
+                        <option value="rich">풍성</option>
+                    </select>
+                </Field>
+
+                <Field label="시작 보너스">
+                    <select value={cfg.starter} onChange={e=>set("starter", e.target.value)}>
+                        <option value="food">식량 꾸러미</option>
+                        <option value="toolkit">공구 세트</option>
+                        <option value="medkit">의료 키트</option>
+                        <option value="fuel">연료 드럼</option>
+                        <option value="extra_hand">추가 인원 1명</option>
+                    </select>
+                </Field>
+
+                <Field label="캠프 특성(최대 2개)">
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {["discipline","engineering","community","stealth","medic"].map(tag=>{
+                            const picked=cfg.campTraits.includes(tag);
+                            return (
+                                <button key={tag} onClick={()=>{
+                                    const set2=new Set(cfg.campTraits);
+                                    if (picked) set2.delete(tag); else if (set2.size<2) set2.add(tag);
+                                    setCfg({ ...cfg, campTraits:Array.from(set2) });
+                                }} style={{ padding:"4px 8px", border:"1px solid #999", background:picked?"#111":"#fff", color:picked?"#fff":"#000", borderRadius:6 }}>
+                                    {tag}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </Field>
+            </div>
+
+            <details>
+                <summary style={{ cursor:"pointer" }}>고급 설정</summary>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:8 }}>
+                    <Field label="시드"><input value={cfg.advanced.seed} onChange={e=>set("advanced.seed", e.target.value)} placeholder="공유/재현용 코드" /></Field>
+                    <Field label="철인 모드"><input type="checkbox" checked={cfg.advanced.ironman} onChange={e=>set("advanced.ironman", e.target.checked)} /></Field>
+                    <Field label="이벤트 중복 쿨다운">
+                        <select value={cfg.advanced.eventCooldown} onChange={e=>set("advanced.eventCooldown", e.target.value)}>
+                            <option value="low">낮음</option><option value="normal">보통</option><option value="high">높음</option>
+                        </select>
+                    </Field>
+                    <Field label="금칙 태그(쉼표로 구분)">
+                        <input value={(cfg.advanced.banTags||[]).join(",")} onChange={e=>set("advanced.banTags", e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} placeholder="예: 의심, 약한 빛" />
+                    </Field>
+                    <Field label="LLM 사용">
+                        <label style={{ display:"flex", alignItems:"center", gap:8 }}>
+                            <input type="checkbox" checked={!!cfg.advanced.llm} onChange={e=>set("advanced.llm", e.target.checked)} />
+                            <span style={{ opacity:0.8, fontSize:12 }}>브라우저에서 Gemini/Groq API 직접 호출</span>
+                        </label>
+                    </Field>
+                </div>
+            </details>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div style={{ padding:12, border:"1px solid #eee", borderRadius:8 }}>
+                    <b>초반 체감:</b> {preview.earlyDays} · 평균 성공률: {preview.avgSuccess}% · 비용: {preview.cost}
+                </div>
+                <div style={{ padding:12, border:"1px solid #eee", borderRadius:8, display:"grid", gap:8 }}>
+                    <b>프리셋 공유</b>
+                    <div style={{ display:"flex", gap:8 }}>
+                        <button onClick={copyShare} style={btnGhost()}>공유 코드 복사</button>
+                        <input value={shareCode} onChange={e=>setShareCode(e.target.value)} placeholder="코드 붙여넣기" />
+                        <button onClick={importShare} style={btnGhost()}>불러오기</button>
+                    </div>
+                </div>
+            </div>
+
+            <div style={{ display:"flex", gap:8, marginTop:4 }}>
+                <button onClick={start} style={btn()}>시작하기</button>
+                <button onClick={()=>{ save(LS_CFG, cfg); alert("프리셋 저장 완료"); }} style={btnGhost()}>프리셋 저장</button>
+                <button onClick={()=>{ const saved=load(LS_CFG); if (saved) setCfg(saved); }} style={btnGhost()}>프리셋 불러오기</button>
+            </div>
+        </div>
+    );
+}
+function Field({ label, children }){ return (<div><div style={{ fontSize:12, opacity:0.8, marginBottom:4 }}>{label}</div>{children}</div>); }
+
+/* ========== 스타일/유틸 ========== */
+function btn(){ return { padding:"8px 12px", borderRadius:8, border:"1px solid #111", background:"#111", color:"#fff", cursor:"pointer" }; }
+function btnGhost(){ return { padding:"8px 12px", borderRadius:8, border:"1px solid #999", background:"#fff", color:"#111", cursor:"pointer" }; }
+function makeSeed(cfg){ return `${cfg.season}-${cfg.difficulty}-${Math.floor(Math.random()*1e6)}`.toUpperCase(); }
