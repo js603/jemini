@@ -1,17 +1,9 @@
-node_modules/
-
-# 환경 변수
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# 빌드 파일
-/build
-/dist
-
-# 로그 파일
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+/.settings
+*.TODO
+*.mo
+*.swp
+.idea
+lang/.DS_Store
+.DS_Store
+node_modules
+img/Thumbs.db

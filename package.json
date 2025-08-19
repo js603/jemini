@@ -11,11 +11,9 @@
     "@xenova/transformers": "^2.17.2",
     "firebase": "^11.10.0",
     "firebase-tools": "^14.9.0",
-    "prop-types": "^15.8.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-responsive": "^10.0.1",
-    "zustand": "^5.0.7"
+    "react-responsive": "^10.0.1"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
@@ -31,7 +29,7 @@
     "git:add": "git add .",
     "git:commit": "git commit -m \"new ready\"",
     "git:push": "git push origin main",
-    "release": "npm run git:add && npm run git:commit && npm run git:push && npm run deploy"
+    "release": "npm run git:add && npm run git:commit && npm run git:push  && npm run deploy"
   },
   "eslintConfig": {
     "extends": [
